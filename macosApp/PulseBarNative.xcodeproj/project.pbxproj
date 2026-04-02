@@ -1,0 +1,324 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		85AA2D70D709F28BAE296198 /* NativeMonitorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F734477819B3CB78AB99D5 /* NativeMonitorModel.swift */; };
+		937AAA32E1758CD15F85D3E6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC60E77E8032C84E8799FBB3 /* Models.swift */; };
+		BBED925F0EF5B8A6DB4CE32E /* PulseBarNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7842B00C463037D00FC517F /* PulseBarNativeApp.swift */; };
+		E53B97CEE26821B0B9F9A2D0 /* NativeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 948E7D74E792918846385A86 /* NativeSettingsView.swift */; };
+		F72802E924FF77ACD4ACD799 /* MenuBarContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13647FF6B43B48C18C587B08 /* MenuBarContentView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		13647FF6B43B48C18C587B08 /* MenuBarContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContentView.swift; sourceTree = "<group>"; };
+		50F734477819B3CB78AB99D5 /* NativeMonitorModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMonitorModel.swift; sourceTree = "<group>"; };
+		948E7D74E792918846385A86 /* NativeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSettingsView.swift; sourceTree = "<group>"; };
+		A7842B00C463037D00FC517F /* PulseBarNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseBarNativeApp.swift; sourceTree = "<group>"; };
+		EC60E77E8032C84E8799FBB3 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		F0D77DB5CC212B4742562DA9 /* PulseBarNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseBarNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		2DFCE13158EC6D49B0E70F9F = {
+			isa = PBXGroup;
+			children = (
+				727DCB65FF97C7E1AD3CEA3C /* PulseBarNative */,
+				9C2F5A22498D4676AC13B8CC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		727DCB65FF97C7E1AD3CEA3C /* PulseBarNative */ = {
+			isa = PBXGroup;
+			children = (
+				13647FF6B43B48C18C587B08 /* MenuBarContentView.swift */,
+				EC60E77E8032C84E8799FBB3 /* Models.swift */,
+				50F734477819B3CB78AB99D5 /* NativeMonitorModel.swift */,
+				948E7D74E792918846385A86 /* NativeSettingsView.swift */,
+				A7842B00C463037D00FC517F /* PulseBarNativeApp.swift */,
+			);
+			path = PulseBarNative;
+			sourceTree = "<group>";
+		};
+		9C2F5A22498D4676AC13B8CC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F0D77DB5CC212B4742562DA9 /* PulseBarNative.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		46177AD7402741C5BB0BA8F6 /* PulseBarNative */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CF681FC2C7CCA8FDF197F718 /* Build configuration list for PBXNativeTarget "PulseBarNative" */;
+			buildPhases = (
+				C0E12D043EF653339C12E09F /* Embed Swift Export */,
+				DDC62C50EB23AF131446D390 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PulseBarNative;
+			packageProductDependencies = (
+			);
+			productName = PulseBarNative;
+			productReference = F0D77DB5CC212B4742562DA9 /* PulseBarNative.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0C75E2F47881B55F7F7375A4 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 34F9831F14E3861CD56870D7 /* Build configuration list for PBXProject "PulseBarNative" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 2DFCE13158EC6D49B0E70F9F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9C2F5A22498D4676AC13B8CC /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				46177AD7402741C5BB0BA8F6 /* PulseBarNative */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		C0E12D043EF653339C12E09F /* Embed Swift Export */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Swift Export";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "cd \"$SRCROOT/..\"\nexport JAVA_HOME=\"$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home\"\nexport PATH=\"$JAVA_HOME/bin:$PATH\"\nexport GRADLE_USER_HOME=\"$SRCROOT/../.gradle-xcode\"\n./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		DDC62C50EB23AF131446D390 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F72802E924FF77ACD4ACD799 /* MenuBarContentView.swift in Sources */,
+				937AAA32E1758CD15F85D3E6 /* Models.swift in Sources */,
+				85AA2D70D709F28BAE296198 /* NativeMonitorModel.swift in Sources */,
+				E53B97CEE26821B0B9F9A2D0 /* NativeSettingsView.swift in Sources */,
+				BBED925F0EF5B8A6DB4CE32E /* PulseBarNativeApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		18D0843A9FFCE64C765FE268 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "PulseBar reads browser and Spotify metadata to show the current status in the menu bar.";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.kt.pulsebar.native;
+				PRODUCT_NAME = PulseBarNative;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		3B22910B6B9396175FDA73E5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "PulseBar reads browser and Spotify metadata to show the current status in the menu bar.";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.kt.pulsebar.native;
+				PRODUCT_NAME = PulseBarNative;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		72C8A9D521DE50BDBBB50AD6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		ED35E6389151E35AEF3BA1F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		34F9831F14E3861CD56870D7 /* Build configuration list for PBXProject "PulseBarNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				18D0843A9FFCE64C765FE268 /* Debug */,
+				3B22910B6B9396175FDA73E5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CF681FC2C7CCA8FDF197F718 /* Build configuration list for PBXNativeTarget "PulseBarNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				72C8A9D521DE50BDBBB50AD6 /* Debug */,
+				ED35E6389151E35AEF3BA1F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 0C75E2F47881B55F7F7375A4 /* Project object */;
+}

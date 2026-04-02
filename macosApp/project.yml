@@ -1,0 +1,29 @@
+name: PulseBarNative
+options:
+  minimumXcodeGenVersion: 2.45.3
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: io.github.kt.pulsebar.native
+    PRODUCT_NAME: PulseBarNative
+    SWIFT_VERSION: "6.0"
+    ENABLE_DEBUG_DYLIB: NO
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_LSUIElement: YES
+    INFOPLIST_KEY_NSAppleEventsUsageDescription: PulseBar reads browser and Spotify metadata to show the current status in the menu bar.
+targets:
+  PulseBarNative:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - PulseBarNative
+    preBuildScripts:
+      - name: Embed Swift Export
+        script: |
+          cd "$SRCROOT/.."
+          export JAVA_HOME="$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          export GRADLE_USER_HOME="$SRCROOT/../.gradle-xcode"
+          ./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode
