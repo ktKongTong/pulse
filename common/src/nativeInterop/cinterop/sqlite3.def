@@ -1,0 +1,3 @@
+headers = sqlite3.h
+headerFilter = sqlite3.h sqlite3ext.h
+linkerOpts = -lsqlite3

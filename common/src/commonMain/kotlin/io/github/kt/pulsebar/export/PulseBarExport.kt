@@ -1,7 +1,9 @@
 package io.github.kt.pulsebar.export
 
 class PulseBarUsageRow(
+    val key: String,
     val label: String,
+    val bundleId: String,
     val totalSeconds: Int
 )
 
@@ -9,6 +11,22 @@ enum class PulseBarTransport {
     WEBSOCKET,
     WEBHOOK,
     HTTP_BATCH
+}
+
+enum class PulseBarInteractionExecutionMode {
+    CONFIRM,
+    AUTO_ENQUEUE
+}
+
+enum class PulseBarInteractionPlaybackMode {
+    PLAY_NOW,
+    PLAY_NEXT
+}
+
+enum class PulseBarPlaybackCommand {
+    PREVIOUS,
+    TOGGLE_PLAY_PAUSE,
+    NEXT
 }
 
 class PulseBarConfig(
@@ -23,20 +41,33 @@ class PulseBarConfig(
     val heartbeatSeconds: Int,
     val appPollingMillis: Int,
     val pagePollingMillis: Int,
-    val mediaPollingMillis: Int
+    val mediaPollingMillis: Int,
+    val allowWebInteractions: Boolean,
+    val interactionExecutionMode: PulseBarInteractionExecutionMode,
+    val interactionExecutionModeName: String,
+    val interactionPlaybackMode: PulseBarInteractionPlaybackMode,
+    val interactionPlaybackModeName: String
 )
 
 class PulseBarMedia(
+    val providerId: String,
     val source: String,
+    val itemType: String,
     val title: String,
     val artist: String,
     val album: String?,
+    val albumArtist: String?,
     val artworkUrl: String?,
     val progressSeconds: Double,
     val durationSeconds: Int,
     val linkUrl: String?,
     val trackId: String?,
-    val isPlaying: Boolean
+    val isPlaying: Boolean,
+    val trackNumber: Int?,
+    val discNumber: Int?,
+    val collectionId: String?,
+    val collectionTitle: String?,
+    val collectionLinkUrl: String?
 )
 
 class PulseBarSnapshot(
@@ -54,8 +85,56 @@ class PulseBarMenuState(
     val thirdUsage: PulseBarUsageRow?
 )
 
+class PulseBarStatsPage(
+    val dayIso: String,
+    val totalSeconds: Int,
+    val items: List<PulseBarUsageRow>
+)
+
+class PulseBarLocalStats(
+    val dayIso: String,
+    val appFocusSeconds: Int,
+    val pageFocusSeconds: Int,
+    val mediaPlaybackSeconds: Int,
+    val idleSeconds: Int,
+    val focusSwitchCount: Int,
+    val pageSwitchCount: Int,
+    val mediaSwitchCount: Int,
+    val sessionCount: Int,
+    val longestFocusStreakSeconds: Int,
+    val topApps: List<PulseBarUsageRow>,
+    val topPages: List<PulseBarUsageRow>,
+    val topMedia: List<PulseBarUsageRow>
+)
+
+class PulseBarInteractionItem(
+    val requestId: String,
+    val status: String,
+    val provider: String,
+    val uri: String,
+    val title: String?,
+    val issuedAtIso8601: String,
+    val updatedAtIso8601: String,
+    val targetDeviceId: String?,
+    val errorCode: String?,
+    val errorMessage: String?
+)
+
+class PulseBarInteractionState(
+    val pendingCount: Int,
+    val items: List<PulseBarInteractionItem>,
+    val lastStatus: String?
+)
+
 expect class PulseBarBridge() {
     fun readMenuState(): PulseBarMenuState
     fun readConfig(): PulseBarConfig
     fun updateConfig(config: PulseBarConfig)
+    fun readStats(dayIso: String, limit: Int): PulseBarStatsPage
+    fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats
+    fun readInteractionState(): PulseBarInteractionState
+    fun acceptInteraction(requestId: String): Boolean
+    fun dismissInteraction(requestId: String): Boolean
+    fun mediaCommand(command: PulseBarPlaybackCommand): Boolean
+    fun seekMedia(progressSeconds: Double): Boolean
 }

@@ -6,8 +6,13 @@ import PulseBarShared
 final class NativeMonitorModel: ObservableObject {
     @Published private(set) var snapshot: LiveSnapshot?
     @Published private(set) var todayStats: [UsageRow] = []
+    @Published private(set) var todayTotalSeconds: Int = 0
+    @Published private(set) var interactionItems: [InteractionItem] = []
+    @Published private(set) var interactionPendingCount: Int = 0
+    @Published private(set) var interactionLastStatus: String?
     @Published var settingsDraft = SettingsDraft()
     @Published var isPaused = false
+    @Published var dashboardSelection: DashboardSection = .dashboard
 
     private var loopTask: Task<Void, Never>?
     private let bridge = PulseBarBridge()
@@ -32,13 +37,38 @@ final class NativeMonitorModel: ObservableObject {
     func refresh() async {
         let state = bridge.readMenuState()
         snapshot = state.snapshot.map(Self.mapSnapshot(_:))
-        todayStats = [state.firstUsage, state.secondUsage, state.thirdUsage]
-            .compactMap { $0 }
-            .map(Self.mapUsageRow(_:))
+
+        let today = Self.todayIsoString()
+        let statsPage = bridge.readStats(dayIso: today, limit: 100)
+        todayStats = statsPage.items.map(Self.mapUsageRow(_:))
+        todayTotalSeconds = Int(statsPage.totalSeconds)
+
+        let interactionState = bridge.readInteractionState()
+        interactionItems = interactionState.items.map(Self.mapInteractionItem(_:))
+        interactionPendingCount = Int(interactionState.pendingCount)
+        interactionLastStatus = interactionState.lastStatus
     }
 
     func saveConfig() {
         bridge.updateConfig(config: Self.makeConfig(from: settingsDraft))
+    }
+
+    func mediaCommand(_ command: PulseBarPlaybackCommand) {
+        _ = bridge.mediaCommand(command: command)
+    }
+
+    func seekMedia(to progressSeconds: Double) {
+        _ = bridge.seekMedia(progressSeconds: progressSeconds)
+    }
+
+    func acceptInteraction(_ requestId: String) {
+        _ = bridge.acceptInteraction(requestId: requestId)
+        Task { await refresh() }
+    }
+
+    func dismissInteraction(_ requestId: String) {
+        _ = bridge.dismissInteraction(requestId: requestId)
+        Task { await refresh() }
     }
 
     private static func mapSnapshot(_ snapshot: PulseBarSnapshot) -> LiveSnapshot {
@@ -55,24 +85,57 @@ final class NativeMonitorModel: ObservableObject {
     private static func mapMedia(_ media: PulseBarMedia) -> MediaInfo {
         MediaInfo(
             id: media.trackId ?? UUID().uuidString,
+            providerId: media.providerId,
             source: media.source,
+            itemType: media.itemType,
             title: media.title,
             artist: media.artist,
             album: media.album,
+            albumArtist: media.albumArtist,
             artworkURL: media.artworkUrl.flatMap(URL.init(string:)),
             progressSeconds: media.progressSeconds,
             durationSeconds: media.durationSeconds > 0 ? Int(media.durationSeconds) : nil,
             link: media.linkUrl,
-            isPlaying: media.isPlaying
+            isPlaying: media.isPlaying,
+            trackNumber: media.trackNumber.map(Int.init).flatMap { $0 > 0 ? $0 : nil },
+            discNumber: media.discNumber.map(Int.init).flatMap { $0 > 0 ? $0 : nil },
+            collectionId: media.collectionId,
+            collectionTitle: media.collectionTitle,
+            collectionLink: media.collectionLinkUrl
         )
     }
 
     private static func mapUsageRow(_ row: PulseBarUsageRow) -> UsageRow {
         UsageRow(
-            id: UUID().uuidString,
+            id: row.key,
+            key: row.key,
             label: row.label,
+            bundleId: row.bundleId,
             totalSeconds: Int(row.totalSeconds)
         )
+    }
+
+    private static func mapInteractionItem(_ item: PulseBarInteractionItem) -> InteractionItem {
+        let formatter = ISO8601DateFormatter()
+        return InteractionItem(
+            id: item.requestId,
+            requestId: item.requestId,
+            status: item.status,
+            provider: item.provider,
+            uri: item.uri,
+            title: item.title,
+            issuedAt: formatter.date(from: item.issuedAtIso8601) ?? Date(),
+            updatedAt: formatter.date(from: item.updatedAtIso8601) ?? Date(),
+            targetDeviceId: item.targetDeviceId,
+            errorCode: item.errorCode,
+            errorMessage: item.errorMessage
+        )
+    }
+
+    private static func todayIsoString() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
     }
 
     private static func mapConfig(_ config: PulseBarConfig) -> SettingsDraft {
@@ -87,7 +150,10 @@ final class NativeMonitorModel: ObservableObject {
             heartbeatSeconds: Int(config.heartbeatSeconds),
             appPollingMillis: Int(config.appPollingMillis),
             pagePollingMillis: Int(config.pagePollingMillis),
-            mediaPollingMillis: Int(config.mediaPollingMillis)
+            mediaPollingMillis: Int(config.mediaPollingMillis),
+            allowWebInteractions: config.allowWebInteractions,
+            interactionExecutionMode: mapInteractionModeName(config.interactionExecutionModeName),
+            interactionPlaybackMode: mapInteractionPlaybackModeName(config.interactionPlaybackModeName)
         )
     }
 
@@ -104,7 +170,12 @@ final class NativeMonitorModel: ObservableObject {
             heartbeatSeconds: Int32(draft.heartbeatSeconds),
             appPollingMillis: Int32(draft.appPollingMillis),
             pagePollingMillis: Int32(draft.pagePollingMillis),
-            mediaPollingMillis: Int32(draft.mediaPollingMillis)
+            mediaPollingMillis: Int32(draft.mediaPollingMillis),
+            allowWebInteractions: draft.allowWebInteractions,
+            interactionExecutionMode: mapInteractionMode(draft.interactionExecutionMode),
+            interactionExecutionModeName: draft.interactionExecutionMode.rawValue,
+            interactionPlaybackMode: mapInteractionPlaybackMode(draft.interactionPlaybackMode),
+            interactionPlaybackModeName: draft.interactionPlaybackMode.rawValue
         )
     }
 
@@ -138,6 +209,42 @@ final class NativeMonitorModel: ObservableObject {
             return .HTTP_BATCH
         case .websocket:
             return .WEBSOCKET
+        }
+    }
+
+    private static func mapInteractionModeName(_ raw: String) -> InteractionExecutionMode {
+        switch raw {
+        case "AUTO_ENQUEUE":
+            return .autoEnqueue
+        default:
+            return .confirm
+        }
+    }
+
+    private static func mapInteractionMode(_ mode: InteractionExecutionMode) -> PulseBarInteractionExecutionMode {
+        switch mode {
+        case .autoEnqueue:
+            return .AUTO_ENQUEUE
+        case .confirm:
+            return .CONFIRM
+        }
+    }
+
+    private static func mapInteractionPlaybackModeName(_ raw: String) -> InteractionPlaybackMode {
+        switch raw {
+        case "PLAY_NOW":
+            return .playNow
+        default:
+            return .playNext
+        }
+    }
+
+    private static func mapInteractionPlaybackMode(_ mode: InteractionPlaybackMode) -> PulseBarInteractionPlaybackMode {
+        switch mode {
+        case .playNow:
+            return .PLAY_NOW
+        case .playNext:
+            return .PLAY_NEXT
         }
     }
 }

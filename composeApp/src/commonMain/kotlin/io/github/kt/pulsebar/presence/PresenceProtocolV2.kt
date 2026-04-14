@@ -261,100 +261,33 @@ data class MediaPlayback(
 
 @Serializable
 data class PresenceDevice(
+    val name: String,
     val platform: PresencePlatform,
-    val osVersion: String? = null,
-    val appVersion: String,
-    val deviceName: String
+    val appVersion: String? = null,
+    val mode: String? = null,
+    val userName: String? = null
 )
 
 @Serializable
 data class PresenceCapabilities(
-    val focusApp: Boolean,
-    val focusWindow: Boolean,
-    val browserPage: Boolean,
-    val mediaNowPlaying: Boolean
+    val pageTitle: Boolean = false,
+    val pageUrl: Boolean = false,
+    val media: Boolean = false,
+    val localPlayback: Boolean = false,
+    val remotePlayback: Boolean = false
 )
 
 @Serializable
 data class PresenceExtensions(
-    val platform: JsonObject? = null,
-    val providers: JsonObject? = null
+    val values: JsonObject? = null
 )
 
 @Serializable
 data class PresenceStreamEnvelope(
     val protocol: String = PRESENCE_STREAM_PROTOCOL_V2,
-    val workspaceId: String,
-    val revision: Long,
     val kind: PresenceStreamKind,
-    val sentAt: String,
-    val payload: PresenceStreamPayload
-)
-
-@Serializable
-sealed class PresenceStreamPayload
-
-@Serializable
-@SerialName("snapshot")
-data class PresenceSnapshotUpdatedPayload(
-    val current: PresenceCurrentState,
-    val devices: List<PresenceDeviceState>
-) : PresenceStreamPayload()
-
-@Serializable
-@SerialName("stats")
-data class PresenceStatsUpdatedPayload(
-    val today: PresenceStatsToday
-) : PresenceStreamPayload()
-
-@Serializable
-@SerialName("sync_reset")
-data class PresenceSyncResetPayload(
-    val current: PresenceCurrentState,
-    val devices: List<PresenceDeviceState>,
-    val today: PresenceStatsToday
-) : PresenceStreamPayload()
-
-@Serializable
-@SerialName("error")
-data class PresenceStreamErrorPayload(
-    val code: String,
-    val message: String
-) : PresenceStreamPayload()
-
-@Serializable
-data class PresenceCurrentState(
-    val deviceId: String,
-    val state: PresenceStatePayload,
-    val anchor: PresenceAnchor
-)
-
-@Serializable
-data class PresenceDeviceState(
-    val deviceId: String,
-    val state: PresenceStatePayload,
-    val anchor: PresenceAnchor
-)
-
-@Serializable
-data class PresenceAnchor(
-    val observedAt: String,
-    val serverReceivedAt: String,
-    val mediaProgressSeconds: Double? = null,
-    val mediaProgressRate: Double,
-    val validUntil: String? = null
-)
-
-@Serializable
-data class PresenceStatsToday(
-    val apps: List<PresenceAggregateRow> = emptyList(),
-    val pages: List<PresenceAggregateRow> = emptyList(),
-    val media: List<PresenceAggregateRow> = emptyList()
-)
-
-@Serializable
-data class PresenceAggregateRow(
-    val id: String,
-    val label: String,
-    val totalSeconds: Long
+    val revision: Long,
+    val workspaceId: String,
+    val deviceId: String? = null,
+    val payload: JsonObject? = null
 )

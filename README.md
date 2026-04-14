@@ -102,10 +102,79 @@ xcodebuild -project macosApp/PulseBarNative.xcodeproj \
   - 旧的 Compose Desktop 壳，保留作迁移参考
 - `macosApp`
   - 原生 SwiftUI 菜单栏应用和 Xcode 工程
+- `apps/realtime-worker`
+  - Cloudflare Worker + Durable Object 服务端，接收设备与浏览器状态并维护房间快照
+- `apps/realtime-demo`
+  - 基于 React Router 的独立 demo，用于演示全站在线人数与文章阅读状态
+- `packages/realtime-protocol`
+  - TS 侧协议包，承载 `presence.v2` mirror、`web.v1` 浏览器协议和 `realtime.v1-stream`
+- `docs`
+  - 协议与架构文档
+
+## 文档
+
+- [Realtime Protocols](/Users/kt/Documents/Playground/pulse/docs/realtime-protocols.md)
+  - 详细描述 `presence.v2`、`web.v1`、房间聚合以及各端内部模型变换
+- [Protocol Evolution](/Users/kt/Documents/Playground/pulse/docs/protocol-evolution.md)
+  - 单独描述 SDK / wire protocol / canonical model 的演进策略与兼容矩阵
+
+## Realtime Workspace
+
+`pulse/` 现在同时是：
+
+- Gradle/KMP 工程
+- pnpm workspace
+
+新增 JS workspace 使用：
+
+```bash
+pnpm install
+pnpm -r typecheck
+pnpm -r test
+pnpm -r build
+```
+
+本地开发：
+
+```bash
+pnpm --filter @pulse/realtime-worker dev
+pnpm --filter @pulse/realtime-demo dev
+```
+
+默认 demo 地址：
+
+- Worker: `http://127.0.0.1:8787`
+- Demo: `http://127.0.0.1:5173`
+
+## Realtime Routes
+
+Worker 当前暴露：
+
+- `POST /v2/presence/ingest`
+- `GET /v2/presence/stream/ws`
+- `GET /v2/presence/stream/sse`
+- `POST /v1/web/ingest`
+- `GET /v1/realtime/ws`
+- `GET /v1/realtime/sse`
+- `GET /v1/realtime/snapshot`
+
+Durable Object 房间：
+
+- `global`
+- `page:<canonicalUrl>`
+
+浏览器侧 `web.v1` 事件：
+
+- `page_view`
+- `reading_progress`
+- `heartbeat`
+- `session_end`
 
 ## 当前实现的边界
 
 - 浏览器标签读取目前覆盖 Safari、Chrome、Brave、Edge、Chromium、Vivaldi、Arc。
-- 媒体读取目前覆盖 Spotify 和 Music。
+- 媒体采集是 provider-agnostic 的自动探测，不要求用户手动选择平台。
+- `Spotify` 与 `Apple Music` 当前是已接通的 richer metadata provider。
+- `NeteaseMusic / QQMusic` 当前作为 best-effort probe 入口存在，未安装时会静默跳过，不会弹系统选择器。
 - 应用级监控是稳定可用的；页面级和媒体级能力取决于目标应用是否暴露 AppleScript 接口以及用户是否授权。
 - `presence.v2` 已经落地到共享协议模型和 Compose 端上报链路；原生 SwiftUI 菜单栏 UI 仍在消费本地共享状态，而不是直接接入服务端 stream。

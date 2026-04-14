@@ -18,7 +18,5 @@ dependencyResolutionManagement {
 rootProject.name = "PulseBar"
 
 include(":common")
-include(":composeApp")
 
 project(":common").projectDir = file("common")
-project(":composeApp").projectDir = file("composeApp")

@@ -23,3 +23,15 @@ DerivedData/
 *.swp
 gradle-dist/
 local.properties
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+.wrangler/
+apps/**/dist/
+apps/**/.react-router/
+wrangler.jsonc
+worker-configuration.d.ts
+.wrangler
+.react-router
+.konan-local

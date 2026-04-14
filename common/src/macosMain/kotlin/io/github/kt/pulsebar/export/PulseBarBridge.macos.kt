@@ -1,6 +1,38 @@
 package io.github.kt.pulsebar.export
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.darwin.Darwin
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.request.url
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
+import io.ktor.http.content.TextContent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
 import platform.AppKit.NSWorkspace
 import platform.Foundation.NSAppleScript
 import platform.Foundation.NSDate
@@ -10,27 +42,79 @@ import platform.Foundation.NSHomeDirectory
 import platform.Foundation.NSJSONReadingMutableContainers
 import platform.Foundation.NSJSONSerialization
 import platform.Foundation.NSNumber
-import platform.Foundation.NSString
-import platform.Foundation.NSUTF8StringEncoding
-import platform.Foundation.timeIntervalSinceReferenceDate
-import platform.Foundation.writeToFile
+import platform.Foundation.NSUserDefaults
+import platform.Foundation.NSUserName
 
 private data class SessionState(
     val signature: String,
+    val statKey: String,
     val label: String,
     val startedAtMillis: Long
 )
 
+private data class FrontApp(
+    val appName: String,
+    val bundleId: String
+)
+
+private data class MediaProbeSpec(
+    val providerId: String,
+    val sourceLabel: String,
+    val bundleIds: List<String>,
+    val parser: (List<String>) -> PulseBarMedia?
+)
+
+@OptIn(ExperimentalForeignApi::class)
 actual class PulseBarBridge actual constructor() {
+    private val store = PulseBarPreferencesStore()
+    private val reporter = PulseBarEndpointReporter()
+    private val interactionClient = PulseBarInteractionClient(store)
+    private val mediaProbes by lazy {
+        listOf(
+            MediaProbeSpec(
+                providerId = "spotify",
+                sourceLabel = "Spotify",
+                bundleIds = listOf("com.spotify.client"),
+                parser = ::parseSpotifyMedia
+            ),
+            MediaProbeSpec(
+                providerId = "apple-music",
+                sourceLabel = "Music",
+                bundleIds = listOf("com.apple.Music"),
+                parser = ::parseITunesStyleMedia
+            ),
+            MediaProbeSpec(
+                providerId = "netease-music",
+                sourceLabel = "Netease Music",
+                bundleIds = listOf("com.netease.163music", "com.netease.music"),
+                parser = ::parseITunesStyleMedia
+            ),
+            MediaProbeSpec(
+                providerId = "qq-music",
+                sourceLabel = "QQ Music",
+                bundleIds = listOf("com.tencent.qqmusic", "com.tencent.qqmusic.mac"),
+                parser = ::parseITunesStyleMedia
+            )
+        )
+    }
     private var currentSession: SessionState? = null
     private var lastObservedAtMillis: Long? = null
-    private val statsByKey = linkedMapOf<String, PulseBarUsageRow>()
-    private var lastVisibleApp: Pair<String, String>? = null
+    private var lastVisibleApp: FrontApp? = null
+    private var lastSelectedMediaProviderId: String? = null
+    private var pendingElapsedMillis: Long = 0L
+
+    init {
+        store.importLegacyFilesIfNeeded()
+        interactionClient.updateConfig(store.readConfig())
+    }
 
     actual fun readMenuState(): PulseBarMenuState {
+        interactionClient.updateConfig(store.readConfig())
         val snapshot = readSnapshot()
+        interactionClient.reconcilePlayback(snapshot.media)
         updateUsage(snapshot)
-        val rows = topRows()
+        reporter.sync(snapshot, store.readConfig())
+        val rows = store.topRowsForDay(todayKey(), 3)
         return PulseBarMenuState(
             snapshot = snapshot,
             firstUsage = rows.getOrNull(0),
@@ -39,94 +123,142 @@ actual class PulseBarBridge actual constructor() {
         )
     }
 
-    @OptIn(ExperimentalForeignApi::class)
-    actual fun readConfig(): PulseBarConfig {
-        val path = configPath()
-        val data = NSFileManager.defaultManager.contentsAtPath(path)
-        if (data == null) {
-            return defaultConfig()
-        }
-        val json = NSJSONSerialization.JSONObjectWithData(data, NSJSONReadingMutableContainers, null) as? Map<*, *>
-            ?: return defaultConfig()
-
-        val endpoint = json["endpoint"] as? Map<*, *>
-        val transport = when (endpoint?.get("transport") as? String) {
-            "WEBHOOK" -> PulseBarTransport.WEBHOOK
-            "HTTP_BATCH" -> PulseBarTransport.HTTP_BATCH
-            else -> PulseBarTransport.WEBSOCKET
-        }
-
-        return PulseBarConfig(
-            endpointEnabled = endpoint?.get("enabled") as? Boolean ?: false,
-            transport = transport,
-            transportName = transport.name,
-            endpointUrl = endpoint?.get("url") as? String ?: "",
-            apiKey = endpoint?.get("apiKey") as? String ?: "",
-            batchWindowSeconds = numberValue(endpoint?.get("batchWindowSeconds")).ifZero(15),
-            idleThresholdSeconds = numberValue(json["idleThresholdSeconds"]).ifZero(300),
-            changeStabilityMillis = numberValue(json["changeStabilityMillis"]).ifZero(1200),
-            heartbeatSeconds = numberValue(json["heartbeatSeconds"]).ifZero(60),
-            appPollingMillis = numberValue(json["appPollingMillis"]).ifZero(500),
-            pagePollingMillis = numberValue(json["pagePollingMillis"]).ifZero(2000),
-            mediaPollingMillis = numberValue(json["mediaPollingMillis"]).ifZero(500)
+    actual fun readStats(dayIso: String, limit: Int): PulseBarStatsPage {
+        val rows = store.topRowsForDay(dayIso, limit)
+        return PulseBarStatsPage(
+            dayIso = dayIso,
+            totalSeconds = rows.sumOf { it.totalSeconds },
+            items = rows
         )
     }
 
-    @OptIn(ExperimentalForeignApi::class)
+    actual fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats =
+        PulseBarLocalStats(
+            dayIso = dayIso,
+            appFocusSeconds = store.totalSecondsForDay(dayIso, UsageSlice.APP),
+            pageFocusSeconds = store.totalSecondsForDay(dayIso, UsageSlice.PAGE),
+            mediaPlaybackSeconds = store.totalSecondsForDay(dayIso, UsageSlice.MEDIA),
+            idleSeconds = 0,
+            focusSwitchCount = store.readCounter(dayIso, "focus_switch_count"),
+            pageSwitchCount = store.readCounter(dayIso, "page_switch_count"),
+            mediaSwitchCount = store.readCounter(dayIso, "media_switch_count"),
+            sessionCount = store.readCounter(dayIso, "session_count"),
+            longestFocusStreakSeconds = store.readCounter(dayIso, "longest_focus_streak_seconds"),
+            topApps = store.rowsForDay(dayIso, UsageSlice.APP, limit),
+            topPages = store.rowsForDay(dayIso, UsageSlice.PAGE, limit),
+            topMedia = store.rowsForDay(dayIso, UsageSlice.MEDIA, limit)
+        )
+
+    actual fun readConfig(): PulseBarConfig = store.readConfig()
+
     actual fun updateConfig(config: PulseBarConfig) {
-        val root = NSHomeDirectory() + "/Library/Application Support/PulseBar"
-        NSFileManager.defaultManager.createDirectoryAtPath(root, true, null, null)
-        val json = """
-            {
-              "idleThresholdSeconds": ${config.idleThresholdSeconds},
-              "changeStabilityMillis": ${config.changeStabilityMillis},
-              "heartbeatSeconds": ${config.heartbeatSeconds},
-              "appPollingMillis": ${config.appPollingMillis},
-              "pagePollingMillis": ${config.pagePollingMillis},
-              "mediaPollingMillis": ${config.mediaPollingMillis},
-              "endpoint": {
-                "enabled": ${config.endpointEnabled},
-                "transport": "${config.transport.name}",
-                "url": "${escapeJson(config.endpointUrl)}",
-                "apiKey": "${escapeJson(config.apiKey)}",
-                "batchWindowSeconds": ${config.batchWindowSeconds}
-              },
-              "appRules": []
-            }
-        """.trimIndent()
-        (json as NSString).writeToFile(configPath(), true, NSUTF8StringEncoding, null)
+        store.writeConfig(config)
+        reporter.resetIfDisabled(config)
+        interactionClient.updateConfig(config)
     }
 
-    @OptIn(ExperimentalForeignApi::class)
+    actual fun readInteractionState(): PulseBarInteractionState =
+        interactionClient.readState()
+
+    actual fun acceptInteraction(requestId: String): Boolean =
+        interactionClient.accept(requestId)
+
+    actual fun dismissInteraction(requestId: String): Boolean =
+        interactionClient.dismiss(requestId)
+
+    actual fun mediaCommand(command: PulseBarPlaybackCommand): Boolean {
+        val spotifyCommand = when (command) {
+            PulseBarPlaybackCommand.PREVIOUS -> "previous track"
+            PulseBarPlaybackCommand.TOGGLE_PLAY_PAUSE -> "playpause"
+            PulseBarPlaybackCommand.NEXT -> "next track"
+        }
+        val spotifyScript = """
+            tell application "Spotify"
+                if it is running then
+                    $spotifyCommand
+                    return "ok"
+                end if
+            end tell
+        """.trimIndent()
+        if (runAppleScript(spotifyScript) == "ok") {
+            pushRealtimeSnapshot()
+            return true
+        }
+
+        val musicCommand = when (command) {
+            PulseBarPlaybackCommand.PREVIOUS -> "previous track"
+            PulseBarPlaybackCommand.TOGGLE_PLAY_PAUSE -> "playpause"
+            PulseBarPlaybackCommand.NEXT -> "next track"
+        }
+        val musicScript = """
+            tell application "Music"
+                if it is running then
+                    $musicCommand
+                    return "ok"
+                end if
+            end tell
+        """.trimIndent()
+        val success = runAppleScript(musicScript) == "ok"
+        if (success) {
+            pushRealtimeSnapshot()
+        }
+        return success
+    }
+
+    actual fun seekMedia(progressSeconds: Double): Boolean {
+        val normalized = progressSeconds.toString()
+        val spotifyScript = """
+            tell application "Spotify"
+                if it is running then
+                    set player position to $normalized
+                    return "ok"
+                end if
+            end tell
+        """.trimIndent()
+        if (runAppleScript(spotifyScript) == "ok") {
+            pushRealtimeSnapshot()
+            return true
+        }
+
+        val musicScript = """
+            tell application "Music"
+                if it is running then
+                    set player position to $normalized
+                    return "ok"
+                end if
+            end tell
+        """.trimIndent()
+        val success = runAppleScript(musicScript) == "ok"
+        if (success) {
+            pushRealtimeSnapshot()
+        }
+        return success
+    }
+
     private fun readSnapshot(): PulseBarSnapshot {
         val frontApp = resolvedFrontmostApplication()
-        val effectiveApp = if (frontApp.second in excludedBundleIds || frontApp.first == "Unknown App") {
+        val effectiveApp = if (frontApp.bundleId in excludedStatsBundleIds || frontApp.appName == "Unknown App") {
             lastVisibleApp ?: frontApp
         } else {
             frontApp.also { lastVisibleApp = it }
         }
-        val appName = effectiveApp.first
-        val bundleId = effectiveApp.second
-        val observedAt = iso8601Now()
-        val pageTitle = browserPageTitle(bundleId)
-        val media = spotifyMedia()
-
+        val pageTitle = browserPageTitle(effectiveApp.bundleId)
+        val media = mediaContext(effectiveApp.bundleId)
         return PulseBarSnapshot(
-            appName = appName,
-            bundleId = bundleId,
+            appName = effectiveApp.appName,
+            bundleId = effectiveApp.bundleId,
             pageTitle = pageTitle,
-            observedAtIso8601 = observedAt,
+            observedAtIso8601 = iso8601Now(),
             media = media
         )
     }
 
-    @OptIn(ExperimentalForeignApi::class)
-    private fun resolvedFrontmostApplication(): Pair<String, String> {
+    private fun resolvedFrontmostApplication(): FrontApp {
         val app = NSWorkspace.sharedWorkspace.frontmostApplication
         val name = app?.localizedName ?: "Unknown App"
         val bundleId = app?.bundleIdentifier ?: "unknown"
-        if (bundleId !in excludedBundleIds && name != "PulseBarNative") {
-            return name to bundleId
+        if (bundleId !in excludedStatsBundleIds && name != "PulseBarNative") {
+            return FrontApp(name, bundleId)
         }
 
         val script = """
@@ -136,18 +268,31 @@ actual class PulseBarBridge actual constructor() {
                 end tell
             end tell
         """.trimIndent()
-        val resolved = runAppleScript(script)?.lines() ?: return name to bundleId
-        val fallbackName = resolved.getOrNull(0)?.ifBlank { name } ?: name
-        val fallbackBundle = resolved.getOrNull(1)?.ifBlank { bundleId } ?: bundleId
-        return fallbackName to fallbackBundle
+        val resolved = runAppleScript(script)?.lines().orEmpty()
+        return FrontApp(
+            appName = resolved.getOrNull(0)?.ifBlank { name } ?: name,
+            bundleId = resolved.getOrNull(1)?.ifBlank { bundleId } ?: bundleId
+        )
     }
 
     private fun updateUsage(snapshot: PulseBarSnapshot) {
         val nowMillis = currentTimeMillis()
+        val day = todayKey()
         val label = buildString {
             append(snapshot.appName)
             snapshot.pageTitle?.takeIf { it.isNotBlank() }?.let {
                 append(" / ")
+                append(it)
+            }
+        }
+        val statKey = buildString {
+            append(snapshot.bundleId)
+            snapshot.pageTitle?.takeIf { it.isNotBlank() }?.let {
+                append("::")
+                append(it)
+            }
+            snapshot.media?.trackId?.takeIf { it.isNotBlank() }?.let {
+                append("::media:")
                 append(it)
             }
         }
@@ -160,23 +305,55 @@ actual class PulseBarBridge actual constructor() {
         }
 
         currentSession?.let { session ->
-            val elapsedSeconds = (((nowMillis - (lastObservedAtMillis ?: session.startedAtMillis)).coerceAtLeast(0L)) / 1000L).toInt()
+            val deltaMillis = (nowMillis - (lastObservedAtMillis ?: session.startedAtMillis)).coerceAtLeast(0L)
+            val accumulatedMillis = pendingElapsedMillis + deltaMillis
+            val elapsedSeconds = (accumulatedMillis / 1000L).toInt()
+            pendingElapsedMillis = accumulatedMillis % 1000L
+            store.debug("pulsebar.debug.lastDay", day)
+            store.debug("pulsebar.debug.lastLabel", session.label)
+            store.debug("pulsebar.debug.lastStatKey", session.statKey)
+            store.debug("pulsebar.debug.lastElapsed", elapsedSeconds.toString())
+            store.debug("pulsebar.debug.lastDeltaMillis", deltaMillis.toString())
+            store.debug("pulsebar.debug.lastPendingMillis", pendingElapsedMillis.toString())
             if (elapsedSeconds > 0) {
-                val sessionKey = "live:${session.signature}"
-                val previous = statsByKey[sessionKey]
-                statsByKey[sessionKey] = PulseBarUsageRow(
+                store.incrementUsage(
+                    day = day,
+                    key = session.statKey,
                     label = session.label,
-                    totalSeconds = (previous?.totalSeconds ?: 0) + elapsedSeconds
+                    seconds = elapsedSeconds
                 )
+                store.debug("pulsebar.debug.lastStored", store.debugReadUsage(day, session.statKey).toString())
             }
         }
 
         if (currentSession?.signature != signature) {
+            currentSession?.let { previous ->
+                val previousParts = parseSessionParts(previous)
+                val nextParts = SessionParts(
+                    bundleId = snapshot.bundleId,
+                    pageTitle = snapshot.pageTitle,
+                    mediaKey = snapshot.media?.trackId ?: snapshot.media?.title
+                )
+                val streakSeconds = ((nowMillis - previous.startedAtMillis).coerceAtLeast(0L) / 1000L).toInt()
+                store.updateMaxCounter(day, "longest_focus_streak_seconds", streakSeconds)
+                store.incrementCounter(day, "session_count")
+                if (previousParts.bundleId != nextParts.bundleId) {
+                    store.incrementCounter(day, "focus_switch_count")
+                }
+                if (previousParts.pageTitle != nextParts.pageTitle) {
+                    store.incrementCounter(day, "page_switch_count")
+                }
+                if (previousParts.mediaKey != nextParts.mediaKey && !previousParts.mediaKey.isNullOrBlank()) {
+                    store.incrementCounter(day, "media_switch_count")
+                }
+            } ?: store.incrementCounter(day, "session_count")
             currentSession = SessionState(
                 signature = signature,
+                statKey = statKey,
                 label = label,
                 startedAtMillis = nowMillis
             )
+            pendingElapsedMillis = 0L
         }
 
         lastObservedAtMillis = nowMillis
@@ -203,93 +380,211 @@ actual class PulseBarBridge actual constructor() {
         return runAppleScript(script)?.takeIf { it.isNotBlank() }
     }
 
-    private fun spotifyMedia(): PulseBarMedia? {
-        val script = """
-            tell application "Spotify"
-                if it is running then
-                    if player state is playing or player state is paused then
-                        return (id of current track) & linefeed & (player state as text) & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (artwork url of current track) & linefeed & (player position as text) & linefeed & (duration of current track as text) & linefeed & (spotify url of current track)
+    private fun mediaContext(frontBundleId: String): PulseBarMedia? {
+        val candidates = mediaProbes.mapNotNull { probe ->
+            val media = probe.bundleIds.firstNotNullOfOrNull { bundleId ->
+                val raw = runAppleScript(buildMediaProbeScript(bundleId, probe.providerId, probe.sourceLabel))
+                raw?.lines()?.let(probe.parser)
+            }
+            media?.let { probe to it }
+        }
+        if (candidates.isEmpty()) return null
+
+        candidates.firstOrNull { (probe, media) ->
+            frontBundleId in probe.bundleIds && media.isPlaying
+        }?.let {
+            lastSelectedMediaProviderId = it.first.providerId
+            return it.second
+        }
+
+        candidates.firstOrNull { (_, media) ->
+            media.isPlaying
+        }?.let {
+            lastSelectedMediaProviderId = it.first.providerId
+            return it.second
+        }
+
+        candidates.firstOrNull { (probe, _) ->
+            probe.providerId == lastSelectedMediaProviderId
+        }?.let { return it.second }
+
+        candidates.firstOrNull { (probe, _) ->
+            frontBundleId in probe.bundleIds
+        }?.let {
+            lastSelectedMediaProviderId = it.first.providerId
+            return it.second
+        }
+
+        return candidates.firstOrNull()?.also {
+            lastSelectedMediaProviderId = it.first.providerId
+        }?.second
+    }
+
+    private fun buildMediaProbeScript(bundleId: String, providerId: String, sourceLabel: String): String =
+        when (providerId) {
+            "spotify" -> """
+                tell application id "$bundleId"
+                    if it is running then
+                        if player state is playing or player state is paused then
+                            return "$providerId" & linefeed & "$sourceLabel" & linefeed & "track" & linefeed & (player state as text) & linefeed & (player position as text) & linefeed & (id of current track) & linefeed & (spotify url of current track) & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (album artist of current track) & linefeed & (duration of current track as text) & linefeed & (track number of current track as text) & linefeed & (disc number of current track as text) & linefeed & (artwork url of current track)
+                        end if
                     end if
-                end if
-            end tell
-        """.trimIndent()
-        val raw = runAppleScript(script) ?: return null
-        val lines = raw.lines()
-        if (lines.size < 9) return null
-        val rawDuration = lines[7].toIntOrNull() ?: 0
+                end tell
+            """.trimIndent()
+
+            "apple-music" -> """
+                tell application id "$bundleId"
+                    if it is running then
+                        if player state is playing or player state is paused then
+                            set trackId to ""
+                            set artworkLink to ""
+                            set playlistId to ""
+                            set playlistName to ""
+                            try
+                                set trackId to (persistent ID of current track)
+                            end try
+                            try
+                                set artworkLink to (artwork url of current track)
+                            end try
+                            try
+                                set playlistId to (persistent ID of current playlist)
+                                set playlistName to (name of current playlist)
+                            end try
+                            return "$providerId" & linefeed & "$sourceLabel" & linefeed & (class of current track as text) & linefeed & (player state as text) & linefeed & (player position as text) & linefeed & trackId & linefeed & "" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (album artist of current track) & linefeed & (duration of current track as text) & linefeed & (track number of current track as text) & linefeed & (disc number of current track as text) & linefeed & artworkLink & linefeed & playlistId & linefeed & playlistName
+                        end if
+                    end if
+                end tell
+            """.trimIndent()
+
+            else -> """
+                tell application id "$bundleId"
+                    if it is running then
+                        if player state is playing or player state is paused then
+                            set trackId to ""
+                            set artworkLink to ""
+                            set playlistId to ""
+                            set playlistName to ""
+                            try
+                                set trackId to (persistent ID of current track)
+                            end try
+                            try
+                                set artworkLink to (artwork url of current track)
+                            end try
+                            try
+                                set playlistId to (persistent ID of current playlist)
+                                set playlistName to (name of current playlist)
+                            end try
+                            return "$providerId" & linefeed & "$sourceLabel" & linefeed & "track" & linefeed & (player state as text) & linefeed & (player position as text) & linefeed & trackId & linefeed & "" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (album artist of current track) & linefeed & (duration of current track as text) & linefeed & (track number of current track as text) & linefeed & (disc number of current track as text) & linefeed & artworkLink & linefeed & playlistId & linefeed & playlistName
+                        end if
+                    end if
+                end tell
+            """.trimIndent()
+
+        }
+
+    private fun parseSpotifyMedia(lines: List<String>): PulseBarMedia? {
+        val values = lines.map { it.trim() }
+        if (values.size < 15) return null
+        val rawDuration = values[11].toIntOrNull() ?: 0
         val durationSeconds = if (rawDuration > 10_000) rawDuration / 1000 else rawDuration
         return PulseBarMedia(
-            source = "Spotify",
-            title = lines[2],
-            artist = lines[3],
-            album = lines[4].ifBlank { null },
-            artworkUrl = lines[5].ifBlank { null },
-            progressSeconds = lines[6].replace(',', '.').toDoubleOrNull() ?: 0.0,
+            providerId = values[0],
+            source = values[1],
+            itemType = normalizeItemType(values[2]),
+            title = values[7],
+            artist = values[8],
+            album = values[9].ifBlank { null },
+            albumArtist = values[10].ifBlank { null },
+            artworkUrl = values[14].ifBlank { null },
+            progressSeconds = values[4].replace(',', '.').toDoubleOrNull() ?: 0.0,
             durationSeconds = durationSeconds,
-            linkUrl = lines[8].ifBlank { null },
-            trackId = lines[0].ifBlank { null },
-            isPlaying = lines[1] == "playing"
+            linkUrl = values[6].ifBlank { null },
+            trackId = values[5].ifBlank { null },
+            isPlaying = values[3] == "playing",
+            trackNumber = values[12].toIntOrNull(),
+            discNumber = values[13].toIntOrNull(),
+            collectionId = null,
+            collectionTitle = null,
+            collectionLinkUrl = null
         )
+    }
+
+    private fun parseITunesStyleMedia(lines: List<String>): PulseBarMedia? {
+        val values = lines.map { it.trim() }
+        if (values.size < 17) return null
+        val durationSeconds = values[11].replace(',', '.').toDoubleOrNull()?.toInt() ?: 0
+        val playlistId = values.getOrNull(15)?.ifBlank { null }
+        val playlistTitle = values.getOrNull(16)?.ifBlank { null }
+        return PulseBarMedia(
+            providerId = values[0],
+            source = values[1],
+            itemType = normalizeItemType(values[2]),
+            title = values[7],
+            artist = values[8],
+            album = values[9].ifBlank { null },
+            albumArtist = values[10].ifBlank { null },
+            artworkUrl = values[14].ifBlank { null },
+            progressSeconds = values[4].replace(',', '.').toDoubleOrNull() ?: 0.0,
+            durationSeconds = durationSeconds,
+            linkUrl = null,
+            trackId = values[5].ifBlank { null },
+            isPlaying = values[3] == "playing",
+            trackNumber = values[12].toIntOrNull(),
+            discNumber = values[13].toIntOrNull(),
+            collectionId = playlistId,
+            collectionTitle = playlistTitle,
+            collectionLinkUrl = playlistId?.let { "music://playlist/$it" }
+        )
+    }
+
+    private fun normalizeItemType(raw: String?): String {
+        val value = raw?.trim()?.lowercase().orEmpty()
+        return when {
+            value.contains("track") || value.contains("song") || value.contains("file") -> "track"
+            value.contains("album") -> "album"
+            value.contains("playlist") -> "playlist"
+            value.contains("episode") || value.contains("podcast") -> "episode"
+            value.contains("stream") || value.contains("radio") -> "stream"
+            else -> "unknown"
+        }
+    }
+
+    private fun runAppleScript(script: String): String? {
+        val appleScript = NSAppleScript(source = script)
+        val result = appleScript.executeAndReturnError(null)
+        return result.stringValue?.trim()
+    }
+
+    private fun pushRealtimeSnapshot() {
+        val config = store.readConfig()
+        if (!config.endpointEnabled) return
+        reporter.forceSync(readSnapshot(), config)
     }
 
     private fun currentTimeMillis(): Long =
         (NSDate().timeIntervalSinceReferenceDate * 1000.0).toLong()
 
-    private fun topRows(): List<PulseBarUsageRow> =
-        statsByKey.values.sortedByDescending { it.totalSeconds }.take(3)
-
-    private fun configPath(): String =
-        NSHomeDirectory() + "/Library/Application Support/PulseBar/config.json"
-
-    private fun defaultConfig() = PulseBarConfig(
-        endpointEnabled = false,
-        transport = PulseBarTransport.WEBSOCKET,
-        transportName = PulseBarTransport.WEBSOCKET.name,
-        endpointUrl = "",
-        apiKey = "",
-        batchWindowSeconds = 15,
-        idleThresholdSeconds = 300,
-        changeStabilityMillis = 1200,
-        heartbeatSeconds = 60,
-        appPollingMillis = 500,
-        pagePollingMillis = 2000,
-        mediaPollingMillis = 500
-    )
-
-    private fun numberValue(value: Any?): Int =
-        when (value) {
-            is NSNumber -> value.intValue
-            is Int -> value
-            is Long -> value.toInt()
-            is Double -> value.toInt()
-            else -> 0
-        }
-
-    private fun Int.ifZero(defaultValue: Int): Int =
-        if (this == 0) defaultValue else this
-
-    companion object {
-        private val excludedBundleIds = setOf(
-            "io.github.kt.pulsebar.native",
-            "com.apple.FollowUpUI"
-        )
-    }
-
-    private fun escapeJson(text: String): String =
-        text.replace("\\", "\\\\").replace("\"", "\\\"")
-
-    @OptIn(ExperimentalForeignApi::class)
-    private fun runAppleScript(script: String): String? {
-        val appleScript = NSAppleScript(source = script) ?: return null
-        val result = appleScript.executeAndReturnError(null) ?: return null
-        return result.stringValue?.trim()
-    }
-
-    @OptIn(ExperimentalForeignApi::class)
     private fun iso8601Now(): String {
         val formatter = NSDateFormatter().apply {
             dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX"
         }
         return formatter.stringFromDate(NSDate())
     }
+
+    private fun todayKey(): String = iso8601Now().substring(0, 10)
+}
+
+private data class SessionParts(
+    val bundleId: String,
+    val pageTitle: String?,
+    val mediaKey: String?
+)
+
+private fun parseSessionParts(session: SessionState): SessionParts {
+    val parts = session.signature.split("::")
+    return SessionParts(
+        bundleId = parts.getOrElse(0) { "unknown" },
+        pageTitle = parts.getOrNull(1)?.takeIf { it.isNotBlank() },
+        mediaKey = parts.getOrNull(2)?.takeIf { it.isNotBlank() }
+    )
 }

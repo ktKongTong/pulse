@@ -22,8 +22,52 @@ actual class PulseBarBridge actual constructor() {
             heartbeatSeconds = 60,
             appPollingMillis = 500,
             pagePollingMillis = 2000,
-            mediaPollingMillis = 500
+            mediaPollingMillis = 500,
+            allowWebInteractions = true,
+            interactionExecutionMode = PulseBarInteractionExecutionMode.CONFIRM,
+            interactionExecutionModeName = PulseBarInteractionExecutionMode.CONFIRM.name,
+            interactionPlaybackMode = PulseBarInteractionPlaybackMode.PLAY_NEXT,
+            interactionPlaybackModeName = PulseBarInteractionPlaybackMode.PLAY_NEXT.name
         )
 
     actual fun updateConfig(config: PulseBarConfig) = Unit
+
+    actual fun readStats(dayIso: String, limit: Int): PulseBarStatsPage =
+        PulseBarStatsPage(
+            dayIso = dayIso,
+            totalSeconds = 0,
+            items = emptyList()
+        )
+
+    actual fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats =
+        PulseBarLocalStats(
+            dayIso = dayIso,
+            appFocusSeconds = 0,
+            pageFocusSeconds = 0,
+            mediaPlaybackSeconds = 0,
+            idleSeconds = 0,
+            focusSwitchCount = 0,
+            pageSwitchCount = 0,
+            mediaSwitchCount = 0,
+            sessionCount = 0,
+            longestFocusStreakSeconds = 0,
+            topApps = emptyList(),
+            topPages = emptyList(),
+            topMedia = emptyList()
+        )
+
+    actual fun readInteractionState(): PulseBarInteractionState =
+        PulseBarInteractionState(
+            pendingCount = 0,
+            items = emptyList(),
+            lastStatus = null
+        )
+
+    actual fun acceptInteraction(requestId: String): Boolean = false
+
+    actual fun dismissInteraction(requestId: String): Boolean = false
+
+    actual fun mediaCommand(command: PulseBarPlaybackCommand): Boolean = false
+
+    actual fun seekMedia(progressSeconds: Double): Boolean = false
 }
