@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { ChatRoomPanel } from "@/components/chat-room-panel";
 import { Separator } from "@/components/ui/separator";
 import {
   useGlobalPresenceSnapshot,
@@ -43,6 +44,7 @@ export function statusMeta() {
 
 export function StatusPage() {
   const pageContext = useMemo(() => getStatusPageContext(), []);
+  const chatRoomId = useMemo(() => "chat:status", []);
   usePagePresence(pageContext);
   const now = useNowTick();
 
@@ -91,7 +93,13 @@ export function StatusPage() {
             <StatusAggregateHistory deviceId={viewModel.deviceId} />
           </div>
         </div>
+
       </section>
+      <ChatRoomPanel
+        roomId={chatRoomId}
+        title="Status chat"
+        subtitle="Everyone on the status page joins the same chat room automatically."
+      />
     </main>
   );
 }

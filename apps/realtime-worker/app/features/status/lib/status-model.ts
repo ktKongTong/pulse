@@ -1,4 +1,4 @@
-import type { RoomSnapshot } from "@pulse/realtime-protocol";
+import type { GlobalRoomSnapshot } from "@pulse/realtime-protocol";
 
 export interface StatusMediaModel {
   providerId?: string;
@@ -11,7 +11,7 @@ export interface StatusMediaModel {
   durationLabel: string;
 }
 
-export function buildStatusViewModel(snapshot: RoomSnapshot | null, nowMs: number) {
+export function buildStatusViewModel(snapshot: GlobalRoomSnapshot | null, nowMs: number) {
   const deviceReaders = (snapshot?.activeReaders ?? []).filter(
     (reader) => reader.source === "device"
   );
