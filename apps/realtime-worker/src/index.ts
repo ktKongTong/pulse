@@ -4,29 +4,20 @@ import {
   InteractionRequestSchema,
   InteractionStateSchema,
   type InteractionState,
-  type PresenceIngestAck,
   PresenceIngestRequestSchema,
   RealtimeMetaResponseSchema,
   StatsPeriodSchema,
-  type WebIngestAck,
   WebIngestRequestSchema
 } from "@pulse/realtime-protocol";
 
-import type { Env } from "./env";
 import { deviceSessionTtlMs, isAllowedOriginForRequest, webSessionTtlMs } from "./env";
-import { pageRoomId } from "./lib/url";
 import { InteractionHub } from "./interaction-hub-do";
 import { InteractionInbox } from "./interaction-inbox-do";
 import { RealtimeRoom } from "./room-do";
 import { RealtimeSession } from "./session-do";
+import { DeviceDO } from "./device-do";
 
-interface InternalWebAck extends WebIngestAck {
-  pageTransitions: Array<{
-    eventId: string;
-    currentRoomId?: string;
-    previousRoomId?: string;
-  }>;
-}
+type Env = Cloudflare.Env;
 
 const app = new Hono<{ Bindings: Env }>()
 
@@ -60,112 +51,52 @@ app.get("/", (c) =>
   c.json({
     name: "pulse-realtime-worker",
     protocol: ["presence.v2", "web.v1", "realtime.v1-stream"],
-    endpoints: [
-      "POST /api/v2/presence/ingest",
-      "GET /api/v2/presence/stream/ws",
-      "GET /api/v2/presence/stream/sse",
-      "POST /api/v1/web/ingest",
-      "GET /api/v1/stats/global",
-      "GET /api/v1/stats/global/history",
-      "GET /api/v1/stats/pages",
-      "GET /api/v1/stats/pages/history",
-      "GET /api/v1/stats/rooms",
-      "GET /api/v1/stats/rooms/history",
-      "GET /api/v1/stats/device/:deviceId",
-      "GET /api/v1/stats/device/:deviceId/history",
-      "POST /api/v1/interaction/requests",
-      "GET /api/v1/interaction/requests/:requestId",
-      "GET /api/v1/interaction/stream/sse",
-      "GET /api/v1/device-interactions/ws",
-      "GET /api/v1/realtime/ws",
-      "GET /api/v1/realtime/sse",
-      "GET /api/v1/realtime/snapshot"
-    ]
   })
 );
 
 app.get("/v1/stats/global", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
   const day = c.req.query("day") ?? new Date().toISOString().slice(0, 10);
-  if (workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "workspace_mismatch" }, 403);
-  }
-  return fetchRoom(c.env, workspaceId, "global", `/internal/stats/global?day=${encodeURIComponent(day)}`);
+  if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
+
+  const room = roomStub(c.env, workspaceId, "global");
+  return c.json(await room.getGlobalStats(day));
 });
 
 app.get("/v1/stats/pages", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
   const day = c.req.query("day") ?? new Date().toISOString().slice(0, 10);
   const limit = c.req.query("limit") ?? "20";
-  if (workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "workspace_mismatch" }, 403);
-  }
-  return fetchRoom(c.env, workspaceId, "global", `/internal/stats/pages?day=${encodeURIComponent(day)}&limit=${encodeURIComponent(limit)}`);
+  if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
+
+  const room = roomStub(c.env, workspaceId, "global");
+  return c.json(await room.getPageStats(day, parseInt(limit)));
 });
 
 app.get("/v1/stats/rooms", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
   const day = c.req.query("day") ?? new Date().toISOString().slice(0, 10);
   const limit = c.req.query("limit") ?? "20";
-  if (workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "workspace_mismatch" }, 403);
-  }
-  return fetchRoom(c.env, workspaceId, "global", `/internal/stats/rooms?day=${encodeURIComponent(day)}&limit=${encodeURIComponent(limit)}`);
+  if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
+
+  const room = roomStub(c.env, workspaceId, "global");
+  return c.json(await room.getRoomStats(day, parseInt(limit)));
 });
 
 app.get("/v1/stats/device/:deviceId", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
   const day = c.req.query("day") ?? new Date().toISOString().slice(0, 10);
   const deviceId = c.req.param("deviceId");
-  if (workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "workspace_mismatch" }, 403);
-  }
-  return fetchRoom(c.env, workspaceId, "global", `/internal/stats/device?day=${encodeURIComponent(day)}&deviceId=${encodeURIComponent(deviceId)}`);
-});
-
-app.get("/v1/stats/global/history", async (c) => {
-  const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  const period = StatsPeriodSchema.parse(c.req.query("period") ?? "day");
-  const limit = c.req.query("limit") ?? (period === "day" ? "90" : period === "week" ? "12" : period === "month" ? "12" : "5");
-  const anchorDay = c.req.query("anchorDay") ?? new Date().toISOString().slice(0, 10);
   if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-  return fetchRoom(c.env, workspaceId, "global", `/internal/stats/global/history?period=${encodeURIComponent(period)}&limit=${encodeURIComponent(limit)}&anchorDay=${encodeURIComponent(anchorDay)}`);
-});
 
-app.get("/v1/stats/pages/history", async (c) => {
-  const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  const period = StatsPeriodSchema.parse(c.req.query("period") ?? "day");
-  const limit = c.req.query("limit") ?? (period === "day" ? "90" : period === "week" ? "12" : period === "month" ? "12" : "5");
-  const itemLimit = c.req.query("itemLimit") ?? "10";
-  const anchorDay = c.req.query("anchorDay") ?? new Date().toISOString().slice(0, 10);
-  if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-  return fetchRoom(c.env, workspaceId, "global", `/internal/stats/pages/history?period=${encodeURIComponent(period)}&limit=${encodeURIComponent(limit)}&itemLimit=${encodeURIComponent(itemLimit)}&anchorDay=${encodeURIComponent(anchorDay)}`);
-});
-
-app.get("/v1/stats/rooms/history", async (c) => {
-  const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  const period = StatsPeriodSchema.parse(c.req.query("period") ?? "day");
-  const limit = c.req.query("limit") ?? (period === "day" ? "90" : period === "week" ? "12" : period === "month" ? "12" : "5");
-  const itemLimit = c.req.query("itemLimit") ?? "10";
-  const anchorDay = c.req.query("anchorDay") ?? new Date().toISOString().slice(0, 10);
-  if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-  return fetchRoom(c.env, workspaceId, "global", `/internal/stats/rooms/history?period=${encodeURIComponent(period)}&limit=${encodeURIComponent(limit)}&itemLimit=${encodeURIComponent(itemLimit)}&anchorDay=${encodeURIComponent(anchorDay)}`);
-});
-
-app.get("/v1/stats/device/:deviceId/history", async (c) => {
-  const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  const period = StatsPeriodSchema.parse(c.req.query("period") ?? "day");
-  const limit = c.req.query("limit") ?? (period === "day" ? "90" : period === "week" ? "12" : period === "month" ? "12" : "5");
-  const anchorDay = c.req.query("anchorDay") ?? new Date().toISOString().slice(0, 10);
-  const deviceId = c.req.param("deviceId");
-  if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-  return fetchRoom(c.env, workspaceId, "global", `/internal/stats/device/history?period=${encodeURIComponent(period)}&limit=${encodeURIComponent(limit)}&anchorDay=${encodeURIComponent(anchorDay)}&deviceId=${encodeURIComponent(deviceId)}`);
+  const room = roomStub(c.env, workspaceId, "global");
+  return c.json(await room.getDeviceStats(day, deviceId));
 });
 
 app.get("/v1/meta", (c) =>
   c.json(
     RealtimeMetaResponseSchema.parse({
-      serverVersion: "2026.04.09",
+      serverVersion: "2026.04.14",
       ingestProtocols: {
         presence: ["presence.v2"],
         web: ["web.v1"]
@@ -174,7 +105,7 @@ app.get("/v1/meta", (c) =>
       capabilities: {
         presence: true,
         multiRoom: true,
-        chat: false,
+        chat: true,
         richMedia: true,
         interaction: true,
         statsPush: true
@@ -191,10 +122,21 @@ app.post("/v2/presence/ingest", async (c) => {
     return c.json({ error: "workspace_mismatch" }, 403);
   }
 
-  const ack = await fetchRoomJson<PresenceIngestAck>(c.env, payload.workspaceId, "global", "/internal/ingest/device", {
-    request: payload,
-    ttlMs: deviceSessionTtlMs(c.env)
-  });
+  const device = deviceStub(c.env, payload.workspaceId, payload.deviceId);
+  const ack = await device.handlePresenceIngest(payload, deviceSessionTtlMs(c.env));
+  console.log("presence", payload)
+  return c.json(ack);
+});
+
+// Added for HISTORY_INGEST support
+app.post("/v2/history/ingest", async (c) => {
+  const payload = await c.req.json();
+  if (payload.workspaceId !== c.env.WORKSPACE_ID) {
+    return c.json({ error: "workspace_mismatch" }, 403);
+  }
+
+  const device = deviceStub(c.env, payload.workspaceId, payload.deviceId);
+  const ack = await device.handleHistoryIngest(payload);
 
   return c.json(ack);
 });
@@ -211,230 +153,90 @@ app.post("/v1/web/ingest", async (c) => {
   }
 
   const ttlMs = webSessionTtlMs(c.env);
-  const ack = await fetchRoomJson<InternalWebAck>(c.env, payload.workspaceId, "global", "/internal/ingest/web", {
-    request: payload,
-    ttlMs
-  });
 
-  for (const transition of ack.pageTransitions) {
-    const event = payload.events.find((item) => item.eventId === transition.eventId);
-    if (!event) continue;
+  // Always write to global room (site-wide presence)
+  const globalRoom = roomStub(c.env, payload.workspaceId, "global");
+  const ack = await globalRoom.handleWebIngest(payload, "global", ttlMs);
 
-    if (transition.previousRoomId && transition.previousRoomId !== transition.currentRoomId) {
-      await fetchRoomJson(
-        c.env,
-        payload.workspaceId,
-        transition.previousRoomId,
-        "/internal/page-leave",
-        {
-          sessionId: payload.sessionId,
-          observedAt: event.observedAt
-        }
-      );
-    }
-
-    if (transition.currentRoomId) {
-      await fetchRoomJson(
-        c.env,
-        payload.workspaceId,
-        transition.currentRoomId,
-        "/internal/page-event",
-        {
-          workspaceId: payload.workspaceId,
-          siteId: payload.siteId,
-          sessionId: payload.sessionId,
-          userId: payload.userId,
-          event,
-          ttlMs
-        }
-      );
-    }
+  // Additionally fan out to page-specific room if we can extract a canonical URL
+  const lastEvent = payload.events[payload.events.length - 1];
+  if (lastEvent && lastEvent.kind !== "session_end" && lastEvent.page?.url) {
+    const canonicalUrl = lastEvent.page.canonicalUrl ?? lastEvent.page.url;
+    const pageRoomId = `page:${canonicalUrl}`;
+    const pageRoom = roomStub(c.env, payload.workspaceId, pageRoomId);
+    // Fire-and-forget: don't block the ack response on the page room write
+    c.executionCtx.waitUntil(pageRoom.handleWebIngest(payload, pageRoomId, ttlMs).catch(() => { }));
   }
 
   return c.json(ack);
 });
 
-app.post("/v1/interaction/requests", async (c) => {
-  const payload = InteractionRequestSchema.parse(await c.req.json());
-  if (payload.workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "workspace_mismatch" }, 403);
-  }
-  const isSupportedCommand =
-    (payload.command.provider === "spotify" && payload.command.uri.startsWith("spotify:track:")) ||
-    payload.command.provider === "apple-music";
-  if (!isSupportedCommand) {
-    return c.json({ error: "unsupported_command" }, 400);
-  }
-
-  const targetDevice = await resolveActiveDevice(c.env, payload.workspaceId, payload.command.provider);
-  if (!targetDevice) {
-    const rejected = InteractionStateSchema.parse({
-      protocol: INTERACTION_PROTOCOL_V1,
-      requestId: payload.requestId,
-      workspaceId: payload.workspaceId,
-      status: "rejected",
-      issuedAt: payload.issuedAt,
-      updatedAt: new Date().toISOString(),
-      actor: payload.actor,
-      command: payload.command,
-      constraints: payload.constraints,
-      error: {
-        code: "no_target_device",
-        message: "No active compatible PulseBar device is available."
-      }
-    });
-    await updateInteractionState(c.env, payload.workspaceId, rejected);
-    return c.json(rejected, 202);
-  }
-
-  const queued = InteractionStateSchema.parse({
-    protocol: INTERACTION_PROTOCOL_V1,
-    requestId: payload.requestId,
-    workspaceId: payload.workspaceId,
-    targetDeviceId: targetDevice.deviceId,
-    status: "queued",
-    issuedAt: payload.issuedAt,
-    updatedAt: new Date().toISOString(),
-    actor: payload.actor,
-    command: payload.command,
-    constraints: payload.constraints
-  });
-
-  await updateInteractionState(c.env, payload.workspaceId, queued);
-  const delivered = InteractionStateSchema.parse({
-    ...queued,
-    status: "delivered",
-    updatedAt: new Date().toISOString()
-  });
-  await updateInteractionState(c.env, payload.workspaceId, delivered);
-  await interactionInboxStub(c.env, payload.workspaceId, targetDevice.deviceId).fetch(
-    new Request("https://interaction.internal/internal/enqueue", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-workspace-id": payload.workspaceId,
-        "x-device-id": targetDevice.deviceId
-      },
-      body: JSON.stringify(delivered)
-    })
-  );
-
-  return c.json(delivered, 202);
-});
-
-app.get("/v1/interaction/requests/:requestId", async (c) => {
-  const requestId = c.req.param("requestId");
-  const response = await interactionHubStub(c.env, c.env.WORKSPACE_ID).fetch(
-    new Request(`https://interaction.internal/internal/get-request?requestId=${encodeURIComponent(requestId)}`, {
-      headers: {
-        "x-workspace-id": c.env.WORKSPACE_ID
-      }
-    })
-  );
-  return response;
-});
-
-app.get("/v1/interaction/stream/sse", async (c) => {
-  return interactionHubStub(c.env, c.env.WORKSPACE_ID).fetch(
-    new Request("https://interaction.internal/internal/stream", {
-      headers: {
-        "x-workspace-id": c.env.WORKSPACE_ID
-      }
-    })
-  );
-});
-
-app.get("/v1/device-interactions/ws", async (c) => {
-  const workspaceId = c.req.query("workspaceId");
-  const deviceId = c.req.query("deviceId");
-  if (!workspaceId || !deviceId) {
-    return c.json({ error: "workspaceId_and_deviceId_required" }, 400);
-  }
-  if (workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "workspace_mismatch" }, 403);
-  }
-  return interactionInboxStub(c.env, workspaceId, deviceId).fetch(
-    new Request(c.req.raw, {
-      headers: new Headers(c.req.raw.headers)
-    })
-  );
-});
+// WEBSOCKETS via Hibernation
 
 app.get("/v1/realtime/snapshot", async (c) => {
   const workspaceId = c.req.query("workspaceId");
   const roomId = c.req.query("roomId");
 
-  if (!workspaceId || !roomId) {
-    return c.json({ error: "workspaceId_and_roomId_required" }, 400);
-  }
-  if (workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "workspace_mismatch" }, 403);
-  }
-  if (!isAllowedRoomId(roomId)) {
-    return c.json({ error: "invalid_room_id" }, 400);
+  if (!workspaceId || !roomId || workspaceId !== c.env.WORKSPACE_ID) {
+    return c.json({ error: "invalid_params" }, 400);
   }
 
-  const snapshot = await fetchRoom(c.env, workspaceId, roomId, "/internal/snapshot");
-  return snapshot;
-});
-
-app.get("/v1/realtime/sse", async (c) => {
-  const workspaceId = c.req.query("workspaceId");
-  const roomId = c.req.query("roomId");
-  if (!workspaceId || !roomId) {
-    return c.json({ error: "workspaceId_and_roomId_required" }, 400);
-  }
-  if (workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "workspace_mismatch" }, 403);
-  }
-  if (!isAllowedRoomId(roomId)) {
-    return c.json({ error: "invalid_room_id" }, 400);
-  }
-
-  return fetchRoom(c.env, workspaceId, roomId, "/internal/sse");
+  const room = roomStub(c.env, workspaceId, roomId);
+  return c.json(await room.getSnapshot(workspaceId, roomId));
 });
 
 app.get("/v1/realtime/ws", async (c) => {
   const workspaceId = c.req.query("workspaceId");
   const roomId = c.req.query("roomId");
-  if (!workspaceId) {
-    return c.json({ error: "workspaceId_required" }, 400);
-  }
-  if (workspaceId !== c.env.WORKSPACE_ID) {
+  if (!workspaceId || workspaceId !== c.env.WORKSPACE_ID) {
     return c.json({ error: "workspace_mismatch" }, 403);
   }
+
   if (roomId) {
-    if (!isAllowedRoomId(roomId)) {
-      return c.json({ error: "invalid_room_id" }, 400);
-    }
-    return fetchRoom(c.env, workspaceId, roomId, "/internal/ws", c.req.raw);
+    return c.json({ error: "roomId_not_supported_on_ws_route_directly" }, 400);
   }
 
   const id = c.env.REALTIME_SESSION.newUniqueId();
   const stub = c.env.REALTIME_SESSION.get(id);
+  console.log("[realtime.ws.route] upgrade", {
+    workspaceId,
+    sessionDoId: id.toString(),
+    url: c.req.url,
+    userAgent: c.req.header("User-Agent") ?? null,
+  });
+
+  // Forward original upgrade request to DO
   return stub.fetch(c.req.raw);
 });
 
-app.get("/v2/presence/stream/sse", async (c) => {
-  const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  return fetchRoom(c.env, workspaceId, "global", "/internal/sse");
+app.onError((err, c) => {
+  console.error("Hono Error:", err);
+  return c.json({
+    error: "internal_server_error",
+    message: err.message,
+    stack: err.stack
+  }, 500);
 });
 
-app.get("/v2/presence/stream/ws", async (c) => {
-  const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  return fetchRoom(c.env, workspaceId, "global", "/internal/ws", c.req.raw);
-});
+// Legacy macOS device-interactions endpoint — disabled, returns 410 Gone
+app.all("/v1/device-interactions/*", (c) => c.json({ error: "endpoint_disabled" }, 410));
 
 app.notFound((c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default app;
-export { RealtimeRoom, RealtimeSession, InteractionHub, InteractionInbox };
+export { RealtimeRoom, RealtimeSession, InteractionHub, InteractionInbox, DeviceDO };
 
-function roomStub(env: Env, workspaceId: string, roomId: string) {
+function roomStub(env: Env, workspaceId: string, roomId: string): DurableObjectStub<RealtimeRoom> {
   const id = env.REALTIME_ROOM.idFromName(`${workspaceId}:${roomId}`);
-  return env.REALTIME_ROOM.get(id);
+  return env.REALTIME_ROOM.get(id) as unknown as DurableObjectStub<RealtimeRoom>;
 }
 
+function deviceStub(env: Env, workspaceId: string, deviceId: string): DurableObjectStub<DeviceDO> {
+  const id = env.DEVICE_DO.idFromName(`${workspaceId}:${deviceId}`);
+  return env.DEVICE_DO.get(id) as unknown as DurableObjectStub<DeviceDO>;
+}
+
+// Stubs for non-refactored objects
 function interactionHubStub(env: Env, workspaceId: string) {
   const id = env.INTERACTION_HUB.idFromName(workspaceId);
   return env.INTERACTION_HUB.get(id);
@@ -443,94 +245,4 @@ function interactionHubStub(env: Env, workspaceId: string) {
 function interactionInboxStub(env: Env, workspaceId: string, deviceId: string) {
   const id = env.INTERACTION_INBOX.idFromName(`${workspaceId}:${deviceId}`);
   return env.INTERACTION_INBOX.get(id);
-}
-
-async function fetchRoomJson<T>(
-  env: Env,
-  workspaceId: string,
-  roomId: string,
-  path: string,
-  body: unknown
-): Promise<T> {
-  const response = await fetchRoom(
-    env,
-    workspaceId,
-    roomId,
-    path,
-    new Request(`https://room.internal${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    })
-  );
-  return (await response.json()) as T;
-}
-
-function fetchRoom(
-  env: Env,
-  workspaceId: string,
-  roomId: string,
-  path: string,
-  request?: Request
-): Promise<Response> {
-  const url = new URL(`https://room.internal${path}`);
-  const headers = new Headers(request?.headers);
-  headers.set("x-workspace-id", workspaceId);
-  headers.set("x-room-id", roomId);
-  const target = request
-    ? new Request(url.toString(), {
-        method: request.method,
-        headers,
-        body: request.body,
-        redirect: request.redirect
-      })
-    : new Request(url.toString(), { headers });
-  return roomStub(env, workspaceId, roomId).fetch(target);
-}
-
-function isAllowedRoomId(roomId: string): boolean {
-  return roomId === "global" || roomId.startsWith("page:https://") || roomId.startsWith("page:http://");
-}
-
-async function resolveActiveDevice(env: Env, workspaceId: string, provider: "spotify" | "apple-music"): Promise<{ deviceId: string } | null> {
-  const roomResponse = await fetchRoom(env, workspaceId, "global", "/internal/snapshot");
-  const roomSnapshot = await roomResponse.json() as { activeReaders: Array<{ source: string; presenceState: string; updatedAt: string; device?: { deviceId?: string } }> };
-  const devicesResponse = await interactionHubStub(env, workspaceId).fetch(
-    new Request("https://interaction.internal/internal/list-devices", {
-      headers: {
-        "x-workspace-id": workspaceId
-      }
-    })
-  );
-  const registeredDevices = await devicesResponse.json() as Array<{ deviceId: string; connected: boolean; capabilities: { mediaRecommendTrack: boolean; providersSpotify: boolean; providersAppleMusic: boolean } }>;
-
-  const supportedIds = new Set(
-    registeredDevices
-      .filter((device) => {
-        if (!device.connected || !device.capabilities.mediaRecommendTrack) return false;
-        return provider === "spotify" ? device.capabilities.providersSpotify : device.capabilities.providersAppleMusic;
-      })
-      .map((device) => device.deviceId)
-  );
-
-  return roomSnapshot.activeReaders
-    .filter((reader) => reader.source === "device" && reader.presenceState === "active")
-    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
-    .map((reader) => reader.device?.deviceId)
-    .filter((deviceId): deviceId is string => Boolean(deviceId && supportedIds.has(deviceId)))
-    .map((deviceId) => ({ deviceId }))
-    .at(0) ?? null;
-}
-
-async function updateInteractionState(env: Env, workspaceId: string, state: InteractionState) {
-  await interactionHubStub(env, workspaceId).fetch(
-    new Request("https://interaction.internal/internal/update-request", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-workspace-id": workspaceId
-      },
-      body: JSON.stringify(state)
-    })
-  );
 }

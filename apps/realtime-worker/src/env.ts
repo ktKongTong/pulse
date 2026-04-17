@@ -1,15 +1,7 @@
-export interface Env {
-  REALTIME_ROOM: DurableObjectNamespace;
-  REALTIME_SESSION: DurableObjectNamespace;
-  INTERACTION_HUB: DurableObjectNamespace;
-  INTERACTION_INBOX: DurableObjectNamespace;
-  ASSETS: Fetcher;
-  WORKSPACE_ID: string;
-  SITE_ID: string;
-  ALLOWED_ORIGINS: string;
-  ROOM_SESSION_TTL_SECONDS?: string;
-  WEB_HEARTBEAT_SECONDS?: string;
-}
+import {RealtimeRoom} from "./room-do";
+import type {RealtimeSession} from "./session-do";
+
+export type Env = Cloudflare.Env
 
 export function allowedOrigins(env: Env): Set<string> {
   return new Set(
