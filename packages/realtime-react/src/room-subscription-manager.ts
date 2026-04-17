@@ -1,4 +1,6 @@
 import type {
+  ChatEventEnvelope,
+  ChatRoomSnapshot,
   DeviceAggregate,
   PageAggregate,
   RealtimeMetaResponse,
@@ -14,11 +16,13 @@ import { RealtimeMetaResponseSchema } from "@pulse/realtime-protocol";
 import type { PulseRealtimeConfig } from "./types";
 import type { PresenceSubscriptionIntent } from "./room-resolver";
 import { presenceSubscriptionKey, resolveRoomId } from "./room-resolver";
-import { fetchRealtimeMeta, subscribeRoomLegacy } from "./realtime";
+import { fetchRealtimeMeta } from "./realtime";
 import type { RealtimeTransportState } from "./realtime-transport";
 import { RealtimeTransport } from "./realtime-transport";
 
 type SnapshotListener = (snapshot: RoomSnapshot) => void;
+type ChatSnapshotListener = (snapshot: ChatRoomSnapshot) => void;
+type ChatEventListener = (event: ChatEventEnvelope) => void;
 type StatsPayloadByTarget = {
   global: StatsSummary;
   device: DeviceAggregate | null;
@@ -29,15 +33,25 @@ type UntypedStatsListener = (payload: unknown) => void;
 type ErrorListener = (error: string) => void;
 type DebugListener = (state: RoomSubscriptionDebugState) => void;
 
+interface ActiveChatMembership {
+  roomId: string;
+  refCount: number;
+  displayName: string;
+  userId?: string;
+  snapshotListeners: Set<ChatSnapshotListener>;
+  eventListeners: Set<ChatEventListener>;
+  errorListeners: Set<ErrorListener>;
+  unsubscribeRoom: () => void;
+}
+
 interface ActiveRoomSubscription {
   key: string;
   roomId: string;
   subscriptionId: string;
   refCount: number;
-  mode: "ws" | "sse";
+  mode: "ws";
   listeners: Set<SnapshotListener>;
   errorListeners: Set<ErrorListener>;
-  legacyUnsubscribe?: () => void;
 }
 
 interface ActiveStatsSubscription {
@@ -51,13 +65,13 @@ interface ActiveStatsSubscription {
 
 export interface RoomSubscriptionDebugState {
   transport: RealtimeTransportState;
-  activeMode: "ws" | "sse" | "unknown";
+  activeMode: "ws" | "unknown";
   subscriptions: Array<{
     key: string;
     roomId: string;
     subscriptionId: string;
     refCount: number;
-    mode: "ws" | "sse";
+    mode: "ws";
   }>;
   statsSubscriptions: Array<{
     key: string;
@@ -82,6 +96,7 @@ export class RoomSubscriptionManager {
   private transport: RealtimeTransport;
   private subscriptions = new Map<string, ActiveRoomSubscription>();
   private statsSubscriptions = new Map<string, ActiveStatsSubscription>();
+  private chatMemberships = new Map<string, ActiveChatMembership>();
   private subscriptionIdCounter = 0;
   private metaPromise: Promise<RealtimeMetaResponse> | null = null;
   private resolvedMeta: RealtimeMetaResponse | null = null;
@@ -93,25 +108,37 @@ export class RoomSubscriptionManager {
     this.transport = new RealtimeTransport(config);
     this.transport.onMessage((message) => {
       if (message.type === "snapshot") return this.handleSnapshot(message);
+      if (message.type === "chat_event") return this.handleChatEvent(message);
       if (message.type === "stats") return this.handleStats(message);
       if (message.type === "stats_error") return this.handleStatsError(message.subscriptionId, message.message);
       if (message.type === "error") this.handleError(message.subscriptionId, message.message);
     });
     this.transport.onReady(() => {
       for (const subscription of this.subscriptions.values()) {
-        if (subscription.mode === "ws") {
-          this.transport.send({
-            protocol: "realtime.ws.v1",
-            type: "subscribe",
-            subscriptions: [{ subscriptionId: subscription.subscriptionId, roomId: subscription.roomId }],
-          });
-        }
+        this.debug("transport.onReady.subscribeRoom", {
+          roomId: subscription.roomId,
+          subscriptionId: subscription.subscriptionId,
+        });
+        this.transport.send({
+          protocol: "realtime.ws.v1",
+          type: "subscribe",
+          subscriptions: [{ subscriptionId: subscription.subscriptionId, roomId: subscription.roomId }],
+        });
       }
       for (const subscription of this.statsSubscriptions.values()) {
         this.transport.send({
           protocol: "realtime.ws.v1",
           type: "subscribe_stats",
           subscriptions: [subscription.request],
+        });
+      }
+      for (const membership of this.chatMemberships.values()) {
+        this.transport.send({
+          protocol: "realtime.ws.v1",
+          type: "chat_join",
+          roomId: membership.roomId,
+          displayName: membership.displayName,
+          userId: membership.userId,
         });
       }
       this.emitDebugState();
@@ -145,6 +172,76 @@ export class RoomSubscriptionManager {
     return this.subscribeStats<"rooms">({ target: "rooms", day, limit }, onStats, onError);
   }
 
+  async subscribeChatRoom(
+    roomId: string,
+    participant: { displayName: string; userId?: string },
+    onSnapshot: ChatSnapshotListener,
+    onEvent?: ChatEventListener,
+    onError?: ErrorListener,
+  ): Promise<() => void> {
+    const key = `chat:${roomId}`;
+    const snapshotKey = `raw:${roomId}`;
+    const existing = this.chatMemberships.get(key);
+    if (existing) {
+      existing.refCount += 1;
+      existing.snapshotListeners.add(onSnapshot);
+      if (onEvent) existing.eventListeners.add(onEvent);
+      if (onError) existing.errorListeners.add(onError);
+      this.emitDebugState();
+      return () => this.unsubscribeChatRoom(key, onSnapshot, onEvent, onError);
+    }
+
+    const unsubscribeRoom = await this.subscribeRawRoomInternal(
+      snapshotKey,
+      roomId,
+      (snapshot) => {
+        if (snapshot.roomKind !== "chat") {
+          onError?.("unexpected_room_kind");
+          return;
+        }
+        this.chatMemberships.get(key)?.snapshotListeners.forEach((listener) => listener(snapshot));
+      },
+      onError,
+    );
+    if (!this.subscriptions.has(snapshotKey)) {
+      return () => {};
+    }
+
+    const membership: ActiveChatMembership = {
+      roomId,
+      refCount: 1,
+      displayName: participant.displayName,
+      userId: participant.userId,
+      snapshotListeners: new Set([onSnapshot]),
+      eventListeners: onEvent ? new Set([onEvent]) : new Set(),
+      errorListeners: onError ? new Set([onError]) : new Set(),
+      unsubscribeRoom,
+    };
+    this.chatMemberships.set(key, membership);
+
+    if (this.transport.isReady) {
+      this.transport.send({
+        protocol: "realtime.ws.v1",
+        type: "chat_join",
+        roomId,
+        displayName: participant.displayName,
+        userId: participant.userId,
+      });
+    }
+
+    this.emitDebugState();
+    return () => this.unsubscribeChatRoom(key, onSnapshot, onEvent, onError);
+  }
+
+  sendChatMessage(roomId: string, content: string) {
+    this.transport.send({
+      protocol: "realtime.ws.v1",
+      type: "chat_send",
+      roomId,
+      content,
+    });
+  }
+
   onDebugState(handler: DebugListener): () => void {
     this.debugListeners.add(handler);
     handler(this.currentDebugState());
@@ -175,42 +272,53 @@ export class RoomSubscriptionManager {
       roomId,
       subscriptionId: `sub-${++this.subscriptionIdCounter}`,
       refCount: 1,
-      mode: "sse",
+      mode: "ws",
       listeners: new Set([onSnapshot]),
       errorListeners: onError ? new Set([onError]) : new Set(),
     };
     this.subscriptions.set(key, subscription);
+    this.debug("subscribeRoom.begin", {
+      key,
+      roomId,
+      subscriptionId: subscription.subscriptionId,
+    });
 
     try {
       const meta = await this.meta();
       const useWs = meta.streamProtocols.includes("realtime.ws.v1") && meta.capabilities.presence && meta.capabilities.multiRoom;
-      if (useWs) {
-        subscription.mode = "ws";
-        this.transport.connect();
-        if (this.transport.isReady) {
-          this.transport.send({
-            protocol: "realtime.ws.v1",
-            type: "subscribe",
-            subscriptions: [{ subscriptionId: subscription.subscriptionId, roomId }],
-          });
-        }
-      } else {
-        subscription.legacyUnsubscribe = subscribeRoomLegacy(
-          this.config,
+      this.debug("subscribeRoom.meta", {
+        roomId,
+        subscriptionId: subscription.subscriptionId,
+        useWs,
+      });
+      if (!useWs) {
+        throw new Error("room_ws_not_supported");
+      }
+      this.transport.connect();
+      if (this.transport.isReady) {
+        this.debug("subscribeRoom.sendImmediate", {
           roomId,
-          (snapshot) => subscription.listeners.forEach((listener) => listener(snapshot)),
-          (error) => subscription.errorListeners.forEach((listener) => listener(error instanceof Error ? error.message : "stream_error"))
-        );
+          subscriptionId: subscription.subscriptionId,
+        });
+        this.transport.send({
+          protocol: "realtime.ws.v1",
+          type: "subscribe",
+          subscriptions: [{ subscriptionId: subscription.subscriptionId, roomId }],
+        });
       }
     } catch (error) {
-      subscription.mode = "sse";
-      subscription.legacyUnsubscribe = subscribeRoomLegacy(
-        this.config,
+      this.debug("subscribeRoom.metaError", {
         roomId,
-        (snapshot) => subscription.listeners.forEach((listener) => listener(snapshot)),
-        (rawError) => subscription.errorListeners.forEach((listener) => listener(rawError instanceof Error ? rawError.message : "stream_error"))
-      );
+        subscriptionId: subscription.subscriptionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.subscriptions.delete(key);
       subscription.errorListeners.forEach((listener) => listener(error instanceof Error ? error.message : "meta_error"));
+      this.emitDebugState();
+      if (this.subscriptions.size === 0 && this.statsSubscriptions.size === 0) {
+        this.transport.disconnect();
+      }
+      return () => {};
     }
 
     this.emitDebugState();
@@ -276,15 +384,11 @@ export class RoomSubscriptionManager {
       this.emitDebugState();
       return;
     }
-    if (subscription.legacyUnsubscribe) {
-      subscription.legacyUnsubscribe();
-    } else {
-      this.transport.send({
-        protocol: "realtime.ws.v1",
-        type: "unsubscribe",
-        subscriptionIds: [subscription.subscriptionId],
-      });
-    }
+    this.transport.send({
+      protocol: "realtime.ws.v1",
+      type: "unsubscribe",
+      subscriptionIds: [subscription.subscriptionId],
+    });
     this.subscriptions.delete(key);
     if (this.subscriptions.size === 0 && this.statsSubscriptions.size === 0) {
       this.transport.disconnect();
@@ -315,6 +419,11 @@ export class RoomSubscriptionManager {
   }
 
   private handleSnapshot(message: RealtimeSnapshotEnvelope) {
+    this.debug("handleSnapshot", {
+      roomId: message.roomId,
+      subscriptionId: message.subscriptionId,
+      revision: message.payload.revision,
+    });
     const subscription = [...this.subscriptions.values()].find((item) => item.subscriptionId === message.subscriptionId);
     if (!subscription) return;
     this.lastSnapshotMeta = {
@@ -325,6 +434,12 @@ export class RoomSubscriptionManager {
     };
     this.emitDebugState();
     subscription.listeners.forEach((listener) => listener(message.payload));
+  }
+
+  private handleChatEvent(message: ChatEventEnvelope) {
+    const membership = this.chatMemberships.get(`chat:${message.roomId}`);
+    if (!membership) return;
+    membership.eventListeners.forEach((listener) => listener(message));
   }
 
   private handleStats(message: RealtimeStatsEnvelope) {
@@ -355,8 +470,10 @@ export class RoomSubscriptionManager {
 
   private meta(): Promise<RealtimeMetaResponse> {
     if (!this.metaPromise) {
+      this.debug("meta.fetch.start");
       this.metaPromise = fetchRealtimeMeta(this.config).then((parsed) => {
         this.resolvedMeta = RealtimeMetaResponseSchema.parse(parsed);
+        this.debug("meta.fetch.success", this.resolvedMeta);
         this.emitDebugState();
         return this.resolvedMeta;
       });
@@ -392,6 +509,37 @@ export class RoomSubscriptionManager {
       lastStatsMeta: this.lastStatsMeta,
       meta: this.resolvedMeta,
     };
+  }
+
+  private debug(event: string, payload?: unknown) {
+    if (typeof window === "undefined") return;
+    console.log("[room.subscriptions]", event, payload ?? "");
+  }
+
+  private unsubscribeChatRoom(
+    key: string,
+    onSnapshot: ChatSnapshotListener,
+    onEvent?: ChatEventListener,
+    onError?: ErrorListener,
+  ) {
+    const membership = this.chatMemberships.get(key);
+    if (!membership) return;
+    membership.refCount -= 1;
+    membership.snapshotListeners.delete(onSnapshot);
+    if (onEvent) membership.eventListeners.delete(onEvent);
+    if (onError) membership.errorListeners.delete(onError);
+    if (membership.refCount > 0) {
+      this.emitDebugState();
+      return;
+    }
+    this.transport.send({
+      protocol: "realtime.ws.v1",
+      type: "chat_leave",
+      roomId: membership.roomId,
+    });
+    membership.unsubscribeRoom();
+    this.chatMemberships.delete(key);
+    this.emitDebugState();
   }
 }
 

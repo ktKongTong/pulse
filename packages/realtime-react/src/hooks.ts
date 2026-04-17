@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ChatEventEnvelope,
+  ChatRoomSnapshot,
   DeviceAggregate,
   DeviceAggregateHistoryPoint,
+  GlobalRoomSnapshot,
   InteractionState,
+  PageRoomSnapshot,
   PageAggregate,
   PageAggregateHistoryPoint,
   RoomAggregate,
@@ -13,6 +17,10 @@ import type {
   StatsSummaryHistoryPoint,
   WebEvent,
   WebPresence,
+} from "@pulse/realtime-protocol";
+import {
+  isGlobalRoomSnapshot,
+  isPageRoomSnapshot,
 } from "@pulse/realtime-protocol";
 
 import { usePulseRealtimeClient } from "./provider";
@@ -47,7 +55,7 @@ export function useRoomSnapshot(roomId: string) {
 
 export function useGlobalPresenceSnapshot() {
   const client = usePulseRealtimeClient();
-  const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<GlobalRoomSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,6 +64,10 @@ export function useGlobalPresenceSnapshot() {
       .subscribePresence(
         { capability: "presence", scope: "site", subject: "global" },
         (next) => {
+          if (!isGlobalRoomSnapshot(next)) {
+            setError("unexpected_room_kind");
+            return;
+          }
           setSnapshot(next);
           setError(null);
         },
@@ -72,7 +84,7 @@ export function useGlobalPresenceSnapshot() {
 
 export function usePagePresenceSnapshot(canonicalUrl: string) {
   const client = usePulseRealtimeClient();
-  const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<PageRoomSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,6 +93,10 @@ export function usePagePresenceSnapshot(canonicalUrl: string) {
       .subscribePresence(
         { capability: "presence", scope: "page", canonicalUrl },
         (next) => {
+          if (!isPageRoomSnapshot(next)) {
+            setError("unexpected_room_kind");
+            return;
+          }
           setSnapshot(next);
           setError(null);
         },
@@ -93,6 +109,46 @@ export function usePagePresenceSnapshot(canonicalUrl: string) {
   }, [client, canonicalUrl]);
 
   return { snapshot, error };
+}
+
+export function useChatRoom(options: {
+  roomId: string;
+  displayName: string;
+  userId?: string;
+}) {
+  const client = usePulseRealtimeClient();
+  const [snapshot, setSnapshot] = useState<ChatRoomSnapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [events, setEvents] = useState<ChatEventEnvelope[]>([]);
+
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    void client.subscriptions
+      .subscribeChatRoom(
+        options.roomId,
+        { displayName: options.displayName, userId: options.userId },
+        (next) => {
+          setSnapshot(next);
+          setError(null);
+        },
+        (event) => setEvents((previous) => [...previous.slice(-19), event]),
+        (message) => setError(message),
+      )
+      .then((unsubscribe) => {
+        cleanup = unsubscribe;
+      });
+
+    return () => cleanup?.();
+  }, [client, options.displayName, options.roomId, options.userId]);
+
+  return {
+    snapshot,
+    events,
+    error,
+    sendMessage(content: string) {
+      client.subscriptions.sendChatMessage(options.roomId, content);
+    },
+  };
 }
 
 export function useRealtimeDebugState() {
