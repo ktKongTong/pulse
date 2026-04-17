@@ -26,4 +26,5 @@ targets:
           export JAVA_HOME="$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home"
           export PATH="$JAVA_HOME/bin:$PATH"
           export GRADLE_USER_HOME="$SRCROOT/../.gradle-xcode"
+          export KONAN_DATA_DIR="$SRCROOT/../.konan-local"
           ./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode

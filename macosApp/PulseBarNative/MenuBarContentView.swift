@@ -465,10 +465,26 @@ struct AppIconView: View {
     }
 
     private func appImage() -> NSImage? {
+        AppIconCache.shared.image(for: bundleId)
+    }
+}
+
+private final class AppIconCache {
+    static let shared = AppIconCache()
+
+    private let cache = NSCache<NSString, NSImage>()
+
+    func image(for bundleId: String) -> NSImage? {
+        let key = bundleId as NSString
+        if let image = cache.object(forKey: key) {
+            return image
+        }
         guard let path = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)?.path else {
             return nil
         }
-        return NSWorkspace.shared.icon(forFile: path)
+        let image = NSWorkspace.shared.icon(forFile: path)
+        cache.setObject(image, forKey: key)
+        return image
     }
 }
 

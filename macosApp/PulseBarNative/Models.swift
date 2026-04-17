@@ -51,6 +51,23 @@ struct LiveSnapshot: Equatable {
     let media: MediaInfo?
 }
 
+struct SyncStatusInfo: Equatable {
+    let enabled: Bool
+    let transportName: String
+    let endpointURL: String
+    let status: String
+    let lastStatus: String?
+    let pendingCount: Int
+    let needsAttention: Bool
+    let lastAttemptAt: Date?
+    let lastProbeAt: Date?
+    let lastSuccessAt: Date?
+    let lastFailureAt: Date?
+    let lastErrorMessage: String?
+    let acknowledgedSeqMax: Int
+    let acknowledgedAt: Date?
+}
+
 enum DashboardSection: String, CaseIterable, Identifiable {
     case dashboard
     case activity

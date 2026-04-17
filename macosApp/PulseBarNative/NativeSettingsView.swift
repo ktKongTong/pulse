@@ -227,13 +227,22 @@ private struct DashboardSyncPane: View {
                 DashboardPageHeader(
                     title: "Sync",
                     subtitle: "Transport and sampling settings that affect delivery."
-                )
+                ) {
+                    Button("Reconnect Now") {
+                        monitor.retryEndpoint()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!(monitor.syncState?.enabled ?? false))
+                }
 
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
                     DashboardSectionSurface {
                         VStack(alignment: .leading, spacing: 14) {
                             Text("Endpoint")
                                 .font(.headline.weight(.semibold))
+                            if let sync = monitor.syncState {
+                                SyncStatusBadge(sync: sync)
+                            }
                             DashboardKeyValueRow(key: "Enabled", value: monitor.settingsDraft.endpointEnabled ? "Yes" : "No")
                             DashboardKeyValueRow(key: "Transport", value: monitor.settingsDraft.transport.title)
                             DashboardKeyValueRow(
@@ -241,6 +250,17 @@ private struct DashboardSyncPane: View {
                                 value: monitor.settingsDraft.endpointUrl.isEmpty ? "Not configured" : monitor.settingsDraft.endpointUrl
                             )
                             DashboardKeyValueRow(key: "Batch", value: "\(monitor.settingsDraft.batchWindowSeconds)s")
+                            if let sync = monitor.syncState {
+                                DashboardKeyValueRow(key: "Pending", value: "\(sync.pendingCount)")
+                                DashboardKeyValueRow(key: "Ack Seq", value: "\(sync.acknowledgedSeqMax)")
+                                DashboardKeyValueRow(key: "Last Status", value: sync.lastStatus ?? "—")
+                                DashboardKeyValueRow(key: "Last Probe", value: formatSyncDate(sync.lastProbeAt))
+                                DashboardKeyValueRow(key: "Last Success", value: formatSyncDate(sync.lastSuccessAt))
+                                DashboardKeyValueRow(key: "Last Failure", value: formatSyncDate(sync.lastFailureAt))
+                                if let error = sync.lastErrorMessage, !error.isEmpty {
+                                    DashboardKeyValueRow(key: "Error", value: error)
+                                }
+                            }
                         }
                     }
 
@@ -259,6 +279,46 @@ private struct DashboardSyncPane: View {
                 }
             }
             .padding(28)
+        }
+    }
+}
+
+private struct SyncStatusBadge: View {
+    let sync: SyncStatusInfo
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 10, height: 10)
+            Text(statusLabel)
+                .font(.subheadline.weight(.semibold))
+            if sync.needsAttention {
+                Text("Attention needed")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var statusLabel: String {
+        sync.status
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+    }
+
+    private var statusColor: Color {
+        switch sync.status {
+        case "healthy":
+            return .green
+        case "probing":
+            return .orange
+        case "disabled":
+            return .secondary
+        case "idle":
+            return .secondary
+        default:
+            return .red
         }
     }
 }
@@ -808,4 +868,9 @@ private func percentageString(_ seconds: Int, total: Int) -> String {
     guard total > 0 else { return "0%" }
     let percent = Int((Double(seconds) / Double(total) * 100).rounded())
     return "\(percent)%"
+}
+
+private func formatSyncDate(_ date: Date?) -> String {
+    guard let date else { return "—" }
+    return date.formatted(date: .omitted, time: .standard)
 }

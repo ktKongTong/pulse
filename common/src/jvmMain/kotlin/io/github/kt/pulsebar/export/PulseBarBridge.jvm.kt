@@ -63,6 +63,26 @@ actual class PulseBarBridge actual constructor() {
             lastStatus = null
         )
 
+    actual fun readSyncState(): PulseBarSyncState =
+        PulseBarSyncState(
+            enabled = false,
+            transportName = PulseBarTransport.WEBSOCKET.name,
+            endpointUrl = "",
+            status = "disabled",
+            lastStatus = null,
+            pendingCount = 0,
+            needsAttention = false,
+            lastAttemptAtIso8601 = null,
+            lastProbeAtIso8601 = null,
+            lastSuccessAtIso8601 = null,
+            lastFailureAtIso8601 = null,
+            lastErrorMessage = null,
+            acknowledgedSeqMax = 0,
+            acknowledgedAtIso8601 = null
+        )
+
+    actual fun retryEndpoint(): Boolean = false
+
     actual fun acceptInteraction(requestId: String): Boolean = false
 
     actual fun dismissInteraction(requestId: String): Boolean = false

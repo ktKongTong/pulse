@@ -126,6 +126,23 @@ class PulseBarInteractionState(
     val lastStatus: String?
 )
 
+class PulseBarSyncState(
+    val enabled: Boolean,
+    val transportName: String,
+    val endpointUrl: String,
+    val status: String,
+    val lastStatus: String?,
+    val pendingCount: Int,
+    val needsAttention: Boolean,
+    val lastAttemptAtIso8601: String?,
+    val lastProbeAtIso8601: String?,
+    val lastSuccessAtIso8601: String?,
+    val lastFailureAtIso8601: String?,
+    val lastErrorMessage: String?,
+    val acknowledgedSeqMax: Long,
+    val acknowledgedAtIso8601: String?
+)
+
 expect class PulseBarBridge() {
     fun readMenuState(): PulseBarMenuState
     fun readConfig(): PulseBarConfig
@@ -133,6 +150,8 @@ expect class PulseBarBridge() {
     fun readStats(dayIso: String, limit: Int): PulseBarStatsPage
     fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats
     fun readInteractionState(): PulseBarInteractionState
+    fun readSyncState(): PulseBarSyncState
+    fun retryEndpoint(): Boolean
     fun acceptInteraction(requestId: String): Boolean
     fun dismissInteraction(requestId: String): Boolean
     fun mediaCommand(command: PulseBarPlaybackCommand): Boolean

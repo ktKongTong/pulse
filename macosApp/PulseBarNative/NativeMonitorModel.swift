@@ -10,12 +10,23 @@ final class NativeMonitorModel: ObservableObject {
     @Published private(set) var interactionItems: [InteractionItem] = []
     @Published private(set) var interactionPendingCount: Int = 0
     @Published private(set) var interactionLastStatus: String?
+    @Published private(set) var syncState: SyncStatusInfo?
     @Published var settingsDraft = SettingsDraft()
     @Published var isPaused = false
     @Published var dashboardSelection: DashboardSection = .dashboard
 
     private var loopTask: Task<Void, Never>?
     private let bridge = PulseBarBridge()
+    private var lastStatsRefreshAt: Date = .distantPast
+    private var lastInteractionRefreshAt: Date = .distantPast
+    private var lastSyncRefreshAt: Date = .distantPast
+
+    private static let iso8601Formatter = ISO8601DateFormatter()
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 
     func start() {
         guard loopTask == nil else { return }
@@ -25,9 +36,13 @@ final class NativeMonitorModel: ObservableObject {
                 if !isPaused {
                     await refresh()
                 }
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .milliseconds(pollIntervalMillis))
             }
         }
+    }
+
+    deinit {
+        loopTask?.cancel()
     }
 
     func togglePaused() {
@@ -38,15 +53,28 @@ final class NativeMonitorModel: ObservableObject {
         let state = bridge.readMenuState()
         snapshot = state.snapshot.map(Self.mapSnapshot(_:))
 
+        let now = Date()
         let today = Self.todayIsoString()
-        let statsPage = bridge.readStats(dayIso: today, limit: 100)
-        todayStats = statsPage.items.map(Self.mapUsageRow(_:))
-        todayTotalSeconds = Int(statsPage.totalSeconds)
+        if now.timeIntervalSince(lastStatsRefreshAt) >= 5 {
+            let statsPage = bridge.readStats(dayIso: today, limit: 100)
+            todayStats = statsPage.items.map(Self.mapUsageRow(_:))
+            todayTotalSeconds = Int(statsPage.totalSeconds)
+            lastStatsRefreshAt = now
+        }
 
-        let interactionState = bridge.readInteractionState()
-        interactionItems = interactionState.items.map(Self.mapInteractionItem(_:))
-        interactionPendingCount = Int(interactionState.pendingCount)
-        interactionLastStatus = interactionState.lastStatus
+        if now.timeIntervalSince(lastInteractionRefreshAt) >= 2 {
+            let interactionState = bridge.readInteractionState()
+            interactionItems = interactionState.items.map(Self.mapInteractionItem(_:))
+            interactionPendingCount = Int(interactionState.pendingCount)
+            interactionLastStatus = interactionState.lastStatus
+            lastInteractionRefreshAt = now
+        }
+
+        if now.timeIntervalSince(lastSyncRefreshAt) >= 2 {
+            let syncState = bridge.readSyncState()
+            self.syncState = Self.mapSyncState(syncState)
+            lastSyncRefreshAt = now
+        }
     }
 
     func saveConfig() {
@@ -63,21 +91,28 @@ final class NativeMonitorModel: ObservableObject {
 
     func acceptInteraction(_ requestId: String) {
         _ = bridge.acceptInteraction(requestId: requestId)
+        lastInteractionRefreshAt = .distantPast
         Task { await refresh() }
     }
 
     func dismissInteraction(_ requestId: String) {
         _ = bridge.dismissInteraction(requestId: requestId)
+        lastInteractionRefreshAt = .distantPast
+        Task { await refresh() }
+    }
+
+    func retryEndpoint() {
+        _ = bridge.retryEndpoint()
+        lastSyncRefreshAt = .distantPast
         Task { await refresh() }
     }
 
     private static func mapSnapshot(_ snapshot: PulseBarSnapshot) -> LiveSnapshot {
-        let formatter = ISO8601DateFormatter()
         return LiveSnapshot(
             appName: snapshot.appName,
             bundleId: snapshot.bundleId,
             pageTitle: snapshot.pageTitle,
-            observedAt: formatter.date(from: snapshot.observedAtIso8601) ?? Date(),
+            observedAt: iso8601Formatter.date(from: snapshot.observedAtIso8601) ?? Date(),
             media: snapshot.media.map(mapMedia(_:))
         )
     }
@@ -116,7 +151,6 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     private static func mapInteractionItem(_ item: PulseBarInteractionItem) -> InteractionItem {
-        let formatter = ISO8601DateFormatter()
         return InteractionItem(
             id: item.requestId,
             requestId: item.requestId,
@@ -124,18 +158,39 @@ final class NativeMonitorModel: ObservableObject {
             provider: item.provider,
             uri: item.uri,
             title: item.title,
-            issuedAt: formatter.date(from: item.issuedAtIso8601) ?? Date(),
-            updatedAt: formatter.date(from: item.updatedAtIso8601) ?? Date(),
+            issuedAt: iso8601Formatter.date(from: item.issuedAtIso8601) ?? Date(),
+            updatedAt: iso8601Formatter.date(from: item.updatedAtIso8601) ?? Date(),
             targetDeviceId: item.targetDeviceId,
             errorCode: item.errorCode,
             errorMessage: item.errorMessage
         )
     }
 
+    private static func mapSyncState(_ state: PulseBarSyncState) -> SyncStatusInfo {
+        return SyncStatusInfo(
+            enabled: state.enabled,
+            transportName: state.transportName,
+            endpointURL: state.endpointUrl,
+            status: state.status,
+            lastStatus: state.lastStatus,
+            pendingCount: Int(state.pendingCount),
+            needsAttention: state.needsAttention,
+            lastAttemptAt: state.lastAttemptAtIso8601.flatMap(iso8601Formatter.date(from:)),
+            lastProbeAt: state.lastProbeAtIso8601.flatMap(iso8601Formatter.date(from:)),
+            lastSuccessAt: state.lastSuccessAtIso8601.flatMap(iso8601Formatter.date(from:)),
+            lastFailureAt: state.lastFailureAtIso8601.flatMap(iso8601Formatter.date(from:)),
+            lastErrorMessage: state.lastErrorMessage,
+            acknowledgedSeqMax: Int(state.acknowledgedSeqMax),
+            acknowledgedAt: state.acknowledgedAtIso8601.flatMap(iso8601Formatter.date(from:))
+        )
+    }
+
     private static func todayIsoString() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: Date())
+        dayFormatter.string(from: Date())
+    }
+
+    private var pollIntervalMillis: Int {
+        min(max(settingsDraft.appPollingMillis, 750), 5_000)
     }
 
     private static func mapConfig(_ config: PulseBarConfig) -> SettingsDraft {

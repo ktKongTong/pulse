@@ -120,7 +120,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "cd \"$SRCROOT/..\"\nexport JAVA_HOME=\"$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home\"\nexport PATH=\"$JAVA_HOME/bin:$PATH\"\nexport GRADLE_USER_HOME=\"$SRCROOT/../.gradle-xcode\"\n./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode\n";
+			shellScript = "cd \"$SRCROOT/..\"\nexport JAVA_HOME=\"$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home\"\nexport PATH=\"$JAVA_HOME/bin:$PATH\"\nexport GRADLE_USER_HOME=\"$SRCROOT/../.gradle-xcode\"\nexport KONAN_DATA_DIR=\"$SRCROOT/../.konan-local\"\n./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

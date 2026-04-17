@@ -2,6 +2,8 @@ package io.github.kt.pulsebar.export
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -32,34 +34,59 @@ import platform.Foundation.NSUserName
 @OptIn(ExperimentalForeignApi::class)
 internal class PulseBarEndpointReporter {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val client = HttpClient(Darwin)
+    private val client = HttpClient(Darwin) {
+        install(HttpTimeout) {
+            requestTimeoutMillis = 5_000
+        }
+    }
     private val json = Json {
         encodeDefaults = true
         explicitNulls = false
     }
     private val workspaceId = "pulse-demo"
+    private val healthyProbeIntervalMillis = 30_000L
+    private val unhealthyProbeIntervalMillis = 5_000L
     private val sessionId = randomId()
     private val deviceId = slugify("macos-${NSUserName()}")
     private val rawJournal = PulseBarRawJournalStore()
     private val replayMutex = Mutex()
+    private val probeMutex = Mutex()
     private val defaults = NSUserDefaults.standardUserDefaults
     private var lastSignature: String? = null
     private var lastPublishedAtMillis: Long? = null
     private var lastMediaState: MediaReporterState? = null
+    private var lastProbeIssuedAtMillis: Long? = null
+    private var lastReplayIssuedAtMillis: Long? = null
+    private var syncState = EndpointSyncSnapshot()
+
+    fun migrateStorageIfNeeded() {
+        rawJournal.migrateToRoomIfNeeded()
+    }
 
     fun sync(snapshot: PulseBarSnapshot, config: PulseBarConfig) {
         if (!config.endpointEnabled) {
             defaults.setObject("skip:endpoint_disabled", "pulsebar.debug.endpoint.lastStatus")
             defaults.synchronize()
+            syncState = syncState.copy(
+                status = "disabled",
+                lastStatus = "skip:endpoint_disabled",
+                lastErrorMessage = null
+            )
             return
         }
         val endpointUrl = resolvedEndpointUrl(config.endpointUrl)
         if (endpointUrl == null) {
             defaults.setObject("skip:invalid_endpoint_url", "pulsebar.debug.endpoint.lastStatus")
             defaults.synchronize()
+            syncState = syncState.copy(
+                status = "misconfigured",
+                lastStatus = "skip:invalid_endpoint_url",
+                lastErrorMessage = "Invalid endpoint URL"
+            )
             return
         }
-        replayPending(endpointUrl, config.apiKey)
+        scheduleHealthProbe(endpointUrl, config.apiKey, force = false)
+        maybeReplayPending(endpointUrl, config.apiKey, force = false)
         val signature = buildString {
             append(snapshot.bundleId)
             append("::")
@@ -80,6 +107,9 @@ internal class PulseBarEndpointReporter {
         if (!shouldSendSnapshot && !shouldSendHeartbeat) {
             defaults.setObject("skip:no_change", "pulsebar.debug.endpoint.lastStatus")
             defaults.synchronize()
+            if (syncState.status == "idle") {
+                syncState = syncState.copy(lastStatus = "skip:no_change")
+            }
             return
         }
 
@@ -95,7 +125,8 @@ internal class PulseBarEndpointReporter {
     fun forceSync(snapshot: PulseBarSnapshot, config: PulseBarConfig) {
         if (!config.endpointEnabled) return
         val endpointUrl = resolvedEndpointUrl(config.endpointUrl) ?: return
-        replayPending(endpointUrl, config.apiKey)
+        scheduleHealthProbe(endpointUrl, config.apiKey, force = true)
+        maybeReplayPending(endpointUrl, config.apiKey, force = true)
         val signature = buildString {
             append(snapshot.bundleId)
             append("::")
@@ -114,11 +145,67 @@ internal class PulseBarEndpointReporter {
         rememberPublishedSnapshot(snapshot, signature, nowMillis)
     }
 
+    fun readSyncState(config: PulseBarConfig): PulseBarSyncState {
+        val endpointUrl = resolvedEndpointUrl(config.endpointUrl)
+        val checkpoint = endpointUrl?.let(rawJournal::readCheckpoint)
+        val pendingCount = endpointUrl?.let(rawJournal::pendingCount) ?: 0
+        val status = when {
+            !config.endpointEnabled -> "disabled"
+            endpointUrl == null -> "misconfigured"
+            syncState.status == "disabled" || syncState.status == "misconfigured" -> "idle"
+            else -> syncState.status
+        }
+        return PulseBarSyncState(
+            enabled = config.endpointEnabled,
+            transportName = config.transportName,
+            endpointUrl = config.endpointUrl,
+            status = status,
+            lastStatus = syncState.lastStatus,
+            pendingCount = pendingCount,
+            needsAttention = config.endpointEnabled && (
+                status == "degraded" ||
+                    status == "misconfigured" ||
+                    pendingCount > 0
+                ),
+            lastAttemptAtIso8601 = syncState.lastAttemptAtIso8601,
+            lastProbeAtIso8601 = syncState.lastProbeAtIso8601,
+            lastSuccessAtIso8601 = syncState.lastSuccessAtIso8601 ?: checkpoint?.acknowledgedAtIso8601,
+            lastFailureAtIso8601 = syncState.lastFailureAtIso8601,
+            lastErrorMessage = syncState.lastErrorMessage,
+            acknowledgedSeqMax = checkpoint?.acknowledgedSeqMax ?: 0L,
+            acknowledgedAtIso8601 = checkpoint?.acknowledgedAtIso8601
+        )
+    }
+
+    fun retry(snapshot: PulseBarSnapshot, config: PulseBarConfig): Boolean {
+        if (!config.endpointEnabled) {
+            syncState = syncState.copy(
+                status = "disabled",
+                lastStatus = "retry:disabled",
+                lastErrorMessage = "Endpoint is disabled"
+            )
+            return false
+        }
+        val endpointUrl = resolvedEndpointUrl(config.endpointUrl)
+        if (endpointUrl == null) {
+            syncState = syncState.copy(
+                status = "misconfigured",
+                lastStatus = "retry:invalid_endpoint_url",
+                lastErrorMessage = "Invalid endpoint URL"
+            )
+            return false
+        }
+        forceSync(snapshot, config)
+        return true
+    }
+
     fun resetIfDisabled(config: PulseBarConfig) {
         if (!config.endpointEnabled) {
             lastSignature = null
             lastPublishedAtMillis = null
             lastMediaState = null
+            lastProbeIssuedAtMillis = null
+            syncState = EndpointSyncSnapshot(status = "disabled", lastStatus = "skip:endpoint_disabled")
         }
     }
 
@@ -270,7 +357,66 @@ internal class PulseBarEndpointReporter {
 
     private fun enqueue(endpointUrl: String, apiKey: String, entry: RawJournalEntry) {
         rawJournal.append(entry)
-        replayPending(endpointUrl, apiKey)
+        maybeReplayPending(endpointUrl, apiKey, force = false)
+    }
+
+    private fun scheduleHealthProbe(endpointUrl: String, apiKey: String, force: Boolean) {
+        val nowMillis = nativeCurrentTimeMillis()
+        val intervalMillis = if (syncState.status == "healthy") healthyProbeIntervalMillis else unhealthyProbeIntervalMillis
+        if (!force) {
+            val lastIssuedAt = lastProbeIssuedAtMillis
+            if (lastIssuedAt != null && nowMillis - lastIssuedAt < intervalMillis) return
+        }
+        lastProbeIssuedAtMillis = nowMillis
+        val probeAtIso8601 = nativeIso8601Now()
+        scope.launch {
+            if (!probeMutex.tryLock()) return@launch
+            try {
+                syncState = syncState.copy(
+                    status = if (syncState.status == "healthy") "healthy" else "probing",
+                    lastAttemptAtIso8601 = probeAtIso8601,
+                    lastProbeAtIso8601 = probeAtIso8601,
+                    lastStatus = "probe:started"
+                )
+                val statusCode = runCatching {
+                    client.get {
+                        url(resolvedProbeUrl(endpointUrl))
+                        if (apiKey.isNotBlank()) {
+                            header("Authorization", "Bearer $apiKey")
+                        }
+                    }.status.value
+                }.getOrElse { error ->
+                    syncState = syncState.copy(
+                        status = "degraded",
+                        lastStatus = "probe:error",
+                        lastFailureAtIso8601 = probeAtIso8601,
+                        lastErrorMessage = error.message ?: error::class.simpleName ?: "unknown"
+                    )
+                    null
+                }
+
+                if (statusCode == null) return@launch
+
+                if (statusCode in 200..299) {
+                    syncState = syncState.copy(
+                        status = "healthy",
+                        lastStatus = "probe:ok:$statusCode",
+                        lastSuccessAtIso8601 = probeAtIso8601,
+                        lastErrorMessage = null
+                    )
+                    replayPending(endpointUrl, apiKey)
+                } else {
+                    syncState = syncState.copy(
+                        status = "degraded",
+                        lastStatus = "probe:http:$statusCode",
+                        lastFailureAtIso8601 = probeAtIso8601,
+                        lastErrorMessage = "Health probe returned HTTP $statusCode"
+                    )
+                }
+            } finally {
+                probeMutex.unlock()
+            }
+        }
     }
 
     private fun replayPending(endpointUrl: String, apiKey: String) {
@@ -283,6 +429,11 @@ internal class PulseBarEndpointReporter {
                     if (batch.isEmpty()) break
                     val body = buildReplayBody(batch)
                     val bodyText = json.encodeToString(JsonObject.serializer(), body)
+                    val attemptAtIso8601 = nativeIso8601Now()
+                    syncState = syncState.copy(
+                        lastAttemptAtIso8601 = attemptAtIso8601,
+                        lastStatus = "replay:attempt:${batch.size}"
+                    )
                     val ackSeq = runCatching {
                         val response = client.post {
                             url(endpointUrl)
@@ -306,6 +457,12 @@ internal class PulseBarEndpointReporter {
                         )
                         defaults.setObject(bodyText, "pulsebar.debug.endpoint.lastBody")
                         defaults.synchronize()
+                        syncState = syncState.copy(
+                            status = "degraded",
+                            lastStatus = "replay:error",
+                            lastFailureAtIso8601 = attemptAtIso8601,
+                            lastErrorMessage = error.message ?: error::class.simpleName ?: "unknown"
+                        )
                         null
                     }
                     if (ackSeq == null) break
@@ -319,6 +476,12 @@ internal class PulseBarEndpointReporter {
                         "pulsebar.debug.endpoint.lastStatus"
                     )
                     defaults.synchronize()
+                    syncState = syncState.copy(
+                        status = "healthy",
+                        lastStatus = "replay:ok:${checkpoint.acknowledgedSeqMax}",
+                        lastSuccessAtIso8601 = attemptAtIso8601,
+                        lastErrorMessage = null
+                    )
                 }
             } finally {
                 replayMutex.unlock()
@@ -338,4 +501,33 @@ internal class PulseBarEndpointReporter {
             }
         }
     }
+
+    private fun resolvedProbeUrl(endpointUrl: String): String =
+        endpointUrl.replace("/api/v2/presence/ingest", "/api/v1/meta")
+
+    private fun maybeReplayPending(endpointUrl: String, apiKey: String, force: Boolean) {
+        val nowMillis = nativeCurrentTimeMillis()
+        if (!force) {
+            val lastIssuedAt = lastReplayIssuedAtMillis
+            val replayIntervalMillis = when (syncState.status) {
+                "healthy", "idle" -> 0L
+                else -> unhealthyProbeIntervalMillis
+            }
+            if (lastIssuedAt != null && nowMillis - lastIssuedAt < replayIntervalMillis) {
+                return
+            }
+        }
+        lastReplayIssuedAtMillis = nowMillis
+        replayPending(endpointUrl, apiKey)
+    }
 }
+
+private data class EndpointSyncSnapshot(
+    val status: String = "idle",
+    val lastStatus: String? = null,
+    val lastAttemptAtIso8601: String? = null,
+    val lastProbeAtIso8601: String? = null,
+    val lastSuccessAtIso8601: String? = null,
+    val lastFailureAtIso8601: String? = null,
+    val lastErrorMessage: String? = null
+)

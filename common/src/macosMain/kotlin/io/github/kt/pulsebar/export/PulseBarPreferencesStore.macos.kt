@@ -1,5 +1,6 @@
 package io.github.kt.pulsebar.export
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSHomeDirectory
@@ -12,12 +13,86 @@ import platform.Foundation.NSUserDefaults
 internal class PulseBarPreferencesStore {
     private val defaults = NSUserDefaults.standardUserDefaults
     private val rootPath = NSHomeDirectory() + "/Library/Application Support/PulseBar"
+    private val database get() = PulseBarRoomProvider.database
+    private val usageDao get() = database.usageDao()
 
     fun importLegacyFilesIfNeeded() {
         if (defaults.boolForKey("pulsebar.migration.legacy-json-import")) return
         importLegacyConfig()
         importLegacyUsage()
         defaults.setBool(true, "pulsebar.migration.legacy-json-import")
+    }
+
+    fun migrateRoomUsageIfNeeded() {
+        if (defaults.boolForKey("pulsebar.migration.room.usage-v1")) return
+
+        val dictionary = defaults.dictionaryRepresentation()
+        val usageRows = linkedMapOf<String, Pair<String, Int>>()
+        val counters = linkedMapOf<Pair<String, String>, Int>()
+        val keysToRemove = mutableListOf<String>()
+
+        dictionary.forEach { (rawKey, rawValue) ->
+            val key = rawKey as? String ?: return@forEach
+            when {
+                key.startsWith("pulsebar.usage.") && key.endsWith(".label") -> {
+                    val body = key.removePrefix("pulsebar.usage.").removeSuffix(".label")
+                    val day = body.substringBefore(".")
+                    val statKey = body.substringAfter(".", "")
+                    if (statKey.isEmpty()) return@forEach
+                    val compositeKey = "$day::$statKey"
+                    val previous = usageRows[compositeKey]
+                    usageRows[compositeKey] = (rawValue as? String ?: "Unknown") to (previous?.second ?: 0)
+                    keysToRemove += key
+                }
+                key.startsWith("pulsebar.usage.") && key.endsWith(".seconds") -> {
+                    val body = key.removePrefix("pulsebar.usage.").removeSuffix(".seconds")
+                    val day = body.substringBefore(".")
+                    val statKey = body.substringAfter(".", "")
+                    if (statKey.isEmpty()) return@forEach
+                    val compositeKey = "$day::$statKey"
+                    val previous = usageRows[compositeKey]
+                    usageRows[compositeKey] = (previous?.first ?: "Unknown") to numberValue(rawValue)
+                    keysToRemove += key
+                }
+                key.startsWith("pulsebar.stats.") -> {
+                    val body = key.removePrefix("pulsebar.stats.")
+                    val day = body.substringBefore(".")
+                    val counterKey = body.substringAfter(".", "")
+                    if (counterKey.isEmpty()) return@forEach
+                    counters[day to counterKey] = numberValue(rawValue)
+                    keysToRemove += key
+                }
+            }
+        }
+
+        runBlocking {
+            usageRows.forEach { (compositeKey, value) ->
+                val dayIso = compositeKey.substringBefore("::")
+                val statKey = compositeKey.substringAfter("::")
+                usageDao.upsertUsageRow(
+                    UsageRowEntity(
+                        dayIso = dayIso,
+                        statKey = statKey,
+                        bundleId = statKey.substringBefore("::"),
+                        label = value.first,
+                        totalSeconds = value.second
+                    )
+                )
+            }
+            counters.forEach { (compositeKey, value) ->
+                usageDao.upsertUsageCounter(
+                    UsageCounterEntity(
+                        dayIso = compositeKey.first,
+                        counterKey = compositeKey.second,
+                        value = value
+                    )
+                )
+            }
+        }
+
+        keysToRemove.forEach(defaults::removeObjectForKey)
+        defaults.setBool(true, "pulsebar.migration.room.usage-v1")
+        defaults.synchronize()
     }
 
     fun readConfig(): PulseBarConfig {
@@ -73,31 +148,33 @@ internal class PulseBarPreferencesStore {
     }
 
     fun incrementUsage(day: String, key: String, label: String, seconds: Int) {
-        val prefix = "pulsebar.usage.$day.$key"
-        val existing = defaults.integerForKey("$prefix.seconds").toInt()
-        defaults.setObject(label, "$prefix.label")
-        defaults.setInteger((existing + seconds).toLong(), "$prefix.seconds")
-        defaults.synchronize()
+        if (seconds <= 0) return
+        runBlocking {
+            usageDao.incrementUsage(
+                dayIso = day,
+                statKey = key,
+                bundleId = key.substringBefore("::"),
+                label = label,
+                seconds = seconds
+            )
+        }
     }
 
     fun incrementCounter(day: String, key: String, delta: Int = 1) {
-        val storageKey = "pulsebar.stats.$day.$key"
-        val existing = defaults.integerForKey(storageKey).toInt()
-        defaults.setInteger((existing + delta).toLong(), storageKey)
-        defaults.synchronize()
+        if (delta == 0) return
+        runBlocking {
+            usageDao.incrementCounter(dayIso = day, counterKey = key, delta = delta)
+        }
     }
 
     fun updateMaxCounter(day: String, key: String, candidate: Int) {
-        val storageKey = "pulsebar.stats.$day.$key"
-        val existing = defaults.integerForKey(storageKey).toInt()
-        if (candidate > existing) {
-            defaults.setInteger(candidate.toLong(), storageKey)
-            defaults.synchronize()
+        runBlocking {
+            usageDao.updateMaxCounter(dayIso = day, counterKey = key, candidate = candidate)
         }
     }
 
     fun readCounter(day: String, key: String): Int =
-        defaults.integerForKey("pulsebar.stats.$day.$key").toInt()
+        runBlocking { usageDao.readCounter(dayIso = day, counterKey = key) ?: 0 }
 
     fun debug(key: String, value: String) {
         defaults.setObject(value, key)
@@ -105,38 +182,18 @@ internal class PulseBarPreferencesStore {
     }
 
     fun debugReadUsage(day: String, key: String): Int =
-        defaults.integerForKey("pulsebar.usage.$day.$key.seconds").toInt()
+        runBlocking { usageDao.readUsageSeconds(dayIso = day, statKey = key) ?: 0 }
 
     fun topRowsForDay(day: String, limit: Int): List<PulseBarUsageRow> =
         rowsForDay(day, UsageSlice.APP, limit)
 
     fun rowsForDay(day: String, slice: UsageSlice, limit: Int): List<PulseBarUsageRow> {
-        val prefix = "pulsebar.usage.$day."
-        val dictionary = defaults.dictionaryRepresentation()
-        val rawGrouped = linkedMapOf<String, Pair<String, Int>>()
-
-        dictionary.forEach { (rawKey, rawValue) ->
-            val key = rawKey as? String ?: return@forEach
-            if (!key.startsWith(prefix)) return@forEach
-            when {
-                key.endsWith(".label") -> {
-                    val statKey = key.removePrefix(prefix).removeSuffix(".label")
-                    val label = rawValue as? String ?: "Unknown"
-                    val previous = rawGrouped[statKey]
-                    rawGrouped[statKey] = label to (previous?.second ?: 0)
-                }
-                key.endsWith(".seconds") -> {
-                    val statKey = key.removePrefix(prefix).removeSuffix(".seconds")
-                    val seconds = numberValue(rawValue)
-                    val previous = rawGrouped[statKey]
-                    rawGrouped[statKey] = (previous?.first ?: "Unknown") to seconds
-                }
-            }
-        }
+        val rawRows = runBlocking { usageDao.rowsForDay(day) }
 
         val grouped = linkedMapOf<String, Pair<String, Int>>()
-        rawGrouped.forEach { (statKey, value) ->
-            val bundleId = statKey.substringBefore("::")
+        rawRows.forEach { row ->
+            val statKey = row.statKey
+            val bundleId = row.bundleId
             if (bundleId in excludedStatsBundleIds) {
                 return@forEach
             }
@@ -144,23 +201,23 @@ internal class PulseBarPreferencesStore {
             val hasMedia = statKey.contains("::media:")
             when (slice) {
                 UsageSlice.APP -> {
-                    val appLabel = value.first.substringBefore(" / ")
+                    val appLabel = row.label.substringBefore(" / ")
                     val previous = grouped[bundleId]
                     val mergedLabel = if (previous == null || previous.first == "Unknown") appLabel else previous.first
-                    val mergedSeconds = (previous?.second ?: 0) + value.second
+                    val mergedSeconds = (previous?.second ?: 0) + row.totalSeconds
                     grouped[bundleId] = mergedLabel to mergedSeconds
                 }
                 UsageSlice.PAGE -> {
                     if (!hasPage || hasMedia) return@forEach
                     val previous = grouped[statKey]
-                    val mergedSeconds = (previous?.second ?: 0) + value.second
-                    grouped[statKey] = value.first to mergedSeconds
+                    val mergedSeconds = (previous?.second ?: 0) + row.totalSeconds
+                    grouped[statKey] = row.label to mergedSeconds
                 }
                 UsageSlice.MEDIA -> {
                     if (!hasMedia) return@forEach
                     val previous = grouped[statKey]
-                    val mergedSeconds = (previous?.second ?: 0) + value.second
-                    grouped[statKey] = value.first to mergedSeconds
+                    val mergedSeconds = (previous?.second ?: 0) + row.totalSeconds
+                    grouped[statKey] = row.label to mergedSeconds
                 }
             }
         }
@@ -225,7 +282,7 @@ internal class PulseBarPreferencesStore {
     }
 
     private fun NSUserDefaults.containsKey(key: String): Boolean =
-        dictionaryRepresentation().containsKey(key)
+        objectForKey(key) != null
 
     private fun numberValue(value: Any?, defaultValue: Int = 0): Int =
         when (value) {

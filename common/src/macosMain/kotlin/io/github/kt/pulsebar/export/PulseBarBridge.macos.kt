@@ -105,6 +105,8 @@ actual class PulseBarBridge actual constructor() {
 
     init {
         store.importLegacyFilesIfNeeded()
+        store.migrateRoomUsageIfNeeded()
+        reporter.migrateStorageIfNeeded()
         interactionClient.updateConfig(store.readConfig())
     }
 
@@ -159,6 +161,12 @@ actual class PulseBarBridge actual constructor() {
 
     actual fun readInteractionState(): PulseBarInteractionState =
         interactionClient.readState()
+
+    actual fun readSyncState(): PulseBarSyncState =
+        reporter.readSyncState(store.readConfig())
+
+    actual fun retryEndpoint(): Boolean =
+        reporter.retry(readSnapshot(), store.readConfig())
 
     actual fun acceptInteraction(requestId: String): Boolean =
         interactionClient.accept(requestId)
@@ -309,12 +317,6 @@ actual class PulseBarBridge actual constructor() {
             val accumulatedMillis = pendingElapsedMillis + deltaMillis
             val elapsedSeconds = (accumulatedMillis / 1000L).toInt()
             pendingElapsedMillis = accumulatedMillis % 1000L
-            store.debug("pulsebar.debug.lastDay", day)
-            store.debug("pulsebar.debug.lastLabel", session.label)
-            store.debug("pulsebar.debug.lastStatKey", session.statKey)
-            store.debug("pulsebar.debug.lastElapsed", elapsedSeconds.toString())
-            store.debug("pulsebar.debug.lastDeltaMillis", deltaMillis.toString())
-            store.debug("pulsebar.debug.lastPendingMillis", pendingElapsedMillis.toString())
             if (elapsedSeconds > 0) {
                 store.incrementUsage(
                     day = day,
@@ -322,7 +324,6 @@ actual class PulseBarBridge actual constructor() {
                     label = session.label,
                     seconds = elapsedSeconds
                 )
-                store.debug("pulsebar.debug.lastStored", store.debugReadUsage(day, session.statKey).toString())
             }
         }
 
@@ -368,6 +369,7 @@ actual class PulseBarBridge actual constructor() {
                     end if
                 end tell
             """.trimIndent()
+
             "com.google.Chrome" -> """
                 tell application "Google Chrome"
                     if it is running and (count of windows) > 0 then
@@ -375,6 +377,7 @@ actual class PulseBarBridge actual constructor() {
                     end if
                 end tell
             """.trimIndent()
+
             else -> return null
         }
         return runAppleScript(script)?.takeIf { it.isNotBlank() }
@@ -484,25 +487,26 @@ actual class PulseBarBridge actual constructor() {
 
     private fun parseSpotifyMedia(lines: List<String>): PulseBarMedia? {
         val values = lines.map { it.trim() }
-        if (values.size < 15) return null
-        val rawDuration = values[11].toIntOrNull() ?: 0
+        if (values.size < 8) return null
+        val padded = values + List((15 - values.size).coerceAtLeast(0)) { "" }
+        val rawDuration = padded[11].toIntOrNull() ?: 0
         val durationSeconds = if (rawDuration > 10_000) rawDuration / 1000 else rawDuration
         return PulseBarMedia(
-            providerId = values[0],
-            source = values[1],
-            itemType = normalizeItemType(values[2]),
-            title = values[7],
-            artist = values[8],
-            album = values[9].ifBlank { null },
-            albumArtist = values[10].ifBlank { null },
-            artworkUrl = values[14].ifBlank { null },
-            progressSeconds = values[4].replace(',', '.').toDoubleOrNull() ?: 0.0,
+            providerId = padded[0],
+            source = padded[1],
+            itemType = normalizeItemType(padded[2]),
+            title = padded[7],
+            artist = padded[8],
+            album = padded[9].ifBlank { null },
+            albumArtist = padded[10].ifBlank { null },
+            artworkUrl = padded[14].ifBlank { null },
+            progressSeconds = padded[4].replace(',', '.').toDoubleOrNull() ?: 0.0,
             durationSeconds = durationSeconds,
-            linkUrl = values[6].ifBlank { null },
-            trackId = values[5].ifBlank { null },
-            isPlaying = values[3] == "playing",
-            trackNumber = values[12].toIntOrNull(),
-            discNumber = values[13].toIntOrNull(),
+            linkUrl = padded[6].ifBlank { null },
+            trackId = padded[5].ifBlank { null },
+            isPlaying = padded[3] == "playing",
+            trackNumber = padded[12].toIntOrNull(),
+            discNumber = padded[13].toIntOrNull(),
             collectionId = null,
             collectionTitle = null,
             collectionLinkUrl = null
@@ -552,6 +556,9 @@ actual class PulseBarBridge actual constructor() {
     private fun runAppleScript(script: String): String? {
         val appleScript = NSAppleScript(source = script)
         val result = appleScript.executeAndReturnError(null)
+        if (result.stringValue == null) {
+            println("[pulsebar.appleScript] emptyResult")
+        }
         return result.stringValue?.trim()
     }
 
