@@ -7,6 +7,7 @@ import {
 } from "@pulse/realtime-protocol";
 
 import type { PulseRealtimeConfig } from "./types";
+import { createRealtimeLogger } from "./logger";
 
 type MessageHandler = (message: RealtimeServerMessage) => void;
 type ReadyHandler = () => void;
@@ -30,6 +31,7 @@ export class RealtimeTransport {
   private messageHandlers = new Set<MessageHandler>();
   private readyHandlers = new Set<ReadyHandler>();
   private stateHandlers = new Set<StateHandler>();
+  private readonly logger;
 
   private state: RealtimeTransportState = {
     status: "idle",
@@ -39,7 +41,9 @@ export class RealtimeTransport {
     lastMessageType: null,
   };
 
-  constructor(private readonly config: PulseRealtimeConfig) {}
+  constructor(private readonly config: PulseRealtimeConfig) {
+    this.logger = createRealtimeLogger(config.debug ?? false);
+  }
 
   connect() {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
@@ -186,7 +190,6 @@ export class RealtimeTransport {
   }
 
   private debug(event: string, payload?: unknown) {
-    if (typeof window === "undefined") return;
-    console.log("[realtime.transport]", event, payload ?? "");
+    this.logger.debug("[realtime.transport]", event, payload ?? "");
   }
 }

@@ -1,32 +1,50 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  RealtimeStatsEnvelopeSchema,
-  RealtimeStatsErrorEnvelopeSchema,
   REALTIME_WS_PROTOCOL_V1,
   RealtimeClientMessageSchema,
   RealtimeHelloAckSchema,
   RealtimeSnapshotEnvelopeSchema,
-  type RealtimeStatsSubscription,
   type RoomSnapshot
 } from "@pulse/realtime-protocol";
 
 import type { Env } from "./env";
-import type { RealtimeRoom } from "./room-do";
+import { createWorkerLogger } from "./logger";
+import type { RoomRpc } from "./durable-stubs";
+import { pageRoomId } from "./lib/url";
+
+interface SessionPresenceContext {
+  sessionId: string;
+  tabId: string;
+  userId?: string;
+  page: {
+    title: string;
+    url: string;
+    canonicalUrl?: string;
+  };
+}
 
 interface StoredSessionState {
   workspaceId: string;
   selectedProtocol: string | null;
   roomSubscriptions: Record<string, string>;
   chatMemberships: Record<string, { displayName: string; userId?: string }>;
+  presenceContext?: SessionPresenceContext;
 }
-
-const SESSION_STATE_KEY = "session-state";
 
 export class RealtimeSession extends DurableObject<Env> {
   private sessionState?: StoredSessionState;
+  private readonly logger;
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
+    this.logger = createWorkerLogger(env, "session.do");
+    const restored = this.ctx
+      .getWebSockets()
+      .map((socket) => socket.deserializeAttachment() as StoredSessionState | null)
+      .find(Boolean);
+    if (restored) {
+      this.sessionState = restored;
+    }
   }
 
   // --- External Fetch (WS Handshake) ---
@@ -36,17 +54,18 @@ export class RealtimeSession extends DurableObject<Env> {
       return new Response("Expected websocket", { status: 426 });
     }
 
-    const sessionState = await this.getState(this.env.WORKSPACE_ID);
-    
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
+    const sessionState = this.getState(this.env.WORKSPACE_ID);
 
-    console.log("[session.fetch] accept", {
+    this.logger.debug("accept websocket", {
       sessionDoId: this.ctx.id.toString(),
       workspaceId: sessionState.workspaceId,
       url: request.url,
     });
     this.ctx.acceptWebSocket(server);
+    server.serializeAttachment(sessionState);
+    this.sessionState = sessionState;
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -54,7 +73,7 @@ export class RealtimeSession extends DurableObject<Env> {
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
-    console.log("[session.wsMessage] inbound", {
+    this.logger.debug("ws message inbound", {
       sessionDoId: this.ctx.id.toString(),
       raw,
     });
@@ -69,15 +88,15 @@ export class RealtimeSession extends DurableObject<Env> {
       return;
     }
 
-    const sessionState = await this.getState();
+    const sessionState = this.getState();
     switch (parsed.data.type) {
       case "hello": {
         const selectedProtocol = parsed.data.supportedProtocols.includes(REALTIME_WS_PROTOCOL_V1)
           ? REALTIME_WS_PROTOCOL_V1
           : parsed.data.supportedProtocols[0];
         sessionState.selectedProtocol = selectedProtocol;
-        await this.persist(sessionState);
-        console.log("[session.hello] ack", {
+        this.persist(sessionState);
+        this.logger.debug("hello ack", {
           sessionDoId: this.ctx.id.toString(),
           selectedProtocol,
         });
@@ -91,8 +110,7 @@ export class RealtimeSession extends DurableObject<Env> {
               multiRoom: true,
               chat: true,
               richMedia: true,
-              interaction: true,
-              statsPush: true
+              interaction: true
             }
           })
         );
@@ -106,7 +124,7 @@ export class RealtimeSession extends DurableObject<Env> {
           try {
             const previousSubscriptionId = sessionState.roomSubscriptions[roomId];
             if (previousSubscriptionId && previousSubscriptionId !== item.subscriptionId) {
-              console.log("[session.subscribe] replacingExisting", {
+              this.logger.debug("replace existing subscription", {
                 sessionDoId: this.ctx.id.toString(),
                 roomId,
                 previousSubscriptionId,
@@ -115,8 +133,8 @@ export class RealtimeSession extends DurableObject<Env> {
               await this.roomStub(sessionState.workspaceId, roomId).unsubscribeSession(this.ctx.id.toString());
             }
             sessionState.roomSubscriptions[roomId] = item.subscriptionId;
-            await this.persist(sessionState);
-            console.log("[session.subscribe] stored", {
+            this.persist(sessionState);
+            this.logger.debug("subscription stored", {
               sessionDoId: this.ctx.id.toString(),
               workspaceId: sessionState.workspaceId,
               roomId,
@@ -125,20 +143,20 @@ export class RealtimeSession extends DurableObject<Env> {
             });
 
             const roomStub = this.roomStub(sessionState.workspaceId, roomId);
-            console.log("[session.subscribe] subscribingRoom", {
+            this.logger.debug("subscribe room start", {
               sessionDoId: this.ctx.id.toString(),
               roomId,
               subscriptionId: item.subscriptionId,
             });
             await roomStub.subscribeSession(sessionState.workspaceId, roomId, this.ctx.id.toString());
-            console.log("[session.subscribe] roomSubscribed", {
+            this.logger.debug("subscribe room success", {
               sessionDoId: this.ctx.id.toString(),
               roomId,
               subscriptionId: item.subscriptionId,
             });
             
             const snapshot = await roomStub.getSnapshot(sessionState.workspaceId, roomId) as RoomSnapshot;
-            console.log("[session.subscribe] initialSnapshot", {
+            this.logger.debug("initial snapshot", {
               sessionDoId: this.ctx.id.toString(),
               roomId,
               subscriptionId: item.subscriptionId,
@@ -147,7 +165,7 @@ export class RealtimeSession extends DurableObject<Env> {
             });
             this.sendSnapshot(socket, item.subscriptionId, roomId, snapshot);
           } catch (error) {
-            console.error("[session.subscribe] failed", {
+            this.logger.error("subscribe failed", {
               sessionDoId: this.ctx.id.toString(),
               workspaceId: sessionState.workspaceId,
               roomId,
@@ -166,14 +184,6 @@ export class RealtimeSession extends DurableObject<Env> {
         }
         return;
       }
-      case "subscribe_stats": {
-        // Stats omitted for brevity
-        return;
-      }
-      case "unsubscribe_stats": {
-        // Stats omitted for brevity
-        return;
-      }
       case "unsubscribe": {
         for (const subscriptionId of parsed.data.subscriptionIds) {
           const roomId = findRoomIdBySubscriptionId(sessionState.roomSubscriptions, subscriptionId);
@@ -188,8 +198,8 @@ export class RealtimeSession extends DurableObject<Env> {
             );
           }
           delete sessionState.roomSubscriptions[roomId];
-          await this.persist(sessionState);
-          console.log("[session.unsubscribe] removed", {
+          this.persist(sessionState);
+          this.logger.debug("unsubscribe removed", {
             sessionDoId: this.ctx.id.toString(),
             roomId,
             subscriptionId,
@@ -205,7 +215,7 @@ export class RealtimeSession extends DurableObject<Env> {
           displayName: parsed.data.displayName,
           userId: parsed.data.userId,
         };
-        await this.persist(sessionState);
+        this.persist(sessionState);
         await this.roomStub(sessionState.workspaceId, parsed.data.roomId).joinChat(
           sessionState.workspaceId,
           parsed.data.roomId,
@@ -218,7 +228,7 @@ export class RealtimeSession extends DurableObject<Env> {
       case "chat_leave": {
         if (sessionState.chatMemberships[parsed.data.roomId]) {
           delete sessionState.chatMemberships[parsed.data.roomId];
-          await this.persist(sessionState);
+          this.persist(sessionState);
           await this.roomStub(sessionState.workspaceId, parsed.data.roomId).leaveChat(
             sessionState.workspaceId,
             parsed.data.roomId,
@@ -249,26 +259,47 @@ export class RealtimeSession extends DurableObject<Env> {
         );
         return;
       }
+      case "presence_context": {
+        sessionState.presenceContext = {
+          sessionId: parsed.data.sessionId,
+          tabId: parsed.data.tabId,
+          userId: parsed.data.userId,
+          page: parsed.data.page,
+        };
+        this.persist(sessionState);
+        return;
+      }
     }
   }
 
   async webSocketClose(_socket: WebSocket): Promise<void> {
-    const sessionState = await this.getState();
-    console.log("[session.close] closing", {
+    const sessionState = this.getState();
+    this.logger.debug("websocket close", {
       sessionDoId: this.ctx.id.toString(),
       roomSubscriptions: sessionState.roomSubscriptions,
     });
+    await this.notifyPresenceEnded(sessionState);
     await this.unsubscribeFromAllRooms(sessionState);
-    await this.ctx.storage.delete(SESSION_STATE_KEY);
+    this.sessionState = undefined;
+  }
+
+  async webSocketError(_socket: WebSocket, error: unknown): Promise<void> {
+    const sessionState = this.getState();
+    this.logger.warn("websocket error", {
+      sessionDoId: this.ctx.id.toString(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    await this.notifyPresenceEnded(sessionState);
+    await this.unsubscribeFromAllRooms(sessionState);
     this.sessionState = undefined;
   }
 
   // --- RPC Inbound API ---
   
   async pushRoomSnapshot(roomId: string, snapshot: RoomSnapshot): Promise<void> {
-    const sessionState = await this.getState();
+    const sessionState = this.getState();
     const subscriptionId = sessionState.roomSubscriptions[roomId];
-    console.log("[session.pushRoomSnapshot] inbound", {
+    this.logger.debug("push room snapshot inbound", {
       sessionDoId: this.ctx.id.toString(),
       roomId,
       subscriptionId: subscriptionId ?? null,
@@ -278,7 +309,7 @@ export class RealtimeSession extends DurableObject<Env> {
       socketCount: this.ctx.getWebSockets().length,
     });
     if (!subscriptionId) {
-      console.warn("[session.pushRoomSnapshot] missingSubscription", {
+      this.logger.warn("push room snapshot missing subscription", {
         sessionDoId: this.ctx.id.toString(),
         roomId,
         knownSubscriptions: sessionState.roomSubscriptions,
@@ -293,16 +324,6 @@ export class RealtimeSession extends DurableObject<Env> {
       payload: snapshot
     });
     this.sendToAll(payload);
-  }
-
-  async pushDeviceUpdate(deviceId: string, state: any): Promise<void> {
-    // Currently, DeviceUpdates are pushed through to all websockets on this session 
-    // Usually they listen on global channel
-    this.sendToAll({
-        type: "device_update",
-        deviceId,
-        state
-    });
   }
 
   // --- Helpers ---
@@ -330,14 +351,14 @@ export class RealtimeSession extends DurableObject<Env> {
 
   private send(socket: WebSocket, message: unknown) {
     try {
-      console.log("[session.send] single", {
+      this.logger.debug("send single", {
         sessionDoId: this.ctx.id.toString(),
         type: (message as { type?: string })?.type ?? "unknown",
       });
       socket.send(JSON.stringify(message));
     } catch (e) {
       // socket closed
-      console.warn("[session.send] failed", {
+      this.logger.warn("send single failed", {
         sessionDoId: this.ctx.id.toString(),
         error: e instanceof Error ? e.message : String(e),
       });
@@ -346,7 +367,7 @@ export class RealtimeSession extends DurableObject<Env> {
 
   private sendToAll(message: unknown) {
     const payload = JSON.stringify(message);
-    console.log("[session.sendToAll] begin", {
+    this.logger.debug("send to all begin", {
       sessionDoId: this.ctx.id.toString(),
       type: (message as { type?: string })?.type ?? "unknown",
       socketCount: this.ctx.getWebSockets().length,
@@ -355,7 +376,7 @@ export class RealtimeSession extends DurableObject<Env> {
       try {
         socket.send(payload);
       } catch (e) {
-        console.warn("[session.sendToAll] failed", {
+        this.logger.warn("send to all failed", {
           sessionDoId: this.ctx.id.toString(),
           error: e instanceof Error ? e.message : String(e),
         });
@@ -363,24 +384,25 @@ export class RealtimeSession extends DurableObject<Env> {
     }
   }
 
-  private roomStub(workspaceId: string, roomId: string): DurableObjectStub<RealtimeRoom> {
+  private roomStub(workspaceId: string, roomId: string): RoomRpc {
     const id = this.env.REALTIME_ROOM.idFromName(`${workspaceId}:${roomId}`);
-    return this.env.REALTIME_ROOM.get(id) as unknown as DurableObjectStub<RealtimeRoom>;
+    return this.env.REALTIME_ROOM.get(id) as unknown as RoomRpc;
   }
 
-  private async getState(workspaceId?: string): Promise<StoredSessionState> {
+  private getState(workspaceId?: string): StoredSessionState {
     if (this.sessionState) {
       return this.sessionState;
     }
-    const loaded = await this.ctx.storage.get<StoredSessionState>(SESSION_STATE_KEY);
-    this.sessionState = loaded
-      ? loaded
-      : {
-          workspaceId: workspaceId ?? this.env.WORKSPACE_ID,
-          selectedProtocol: null,
-          roomSubscriptions: {},
-          chatMemberships: {}
-        };
+    const loaded = this.ctx
+      .getWebSockets()
+      .map((socket) => socket.deserializeAttachment() as StoredSessionState | null)
+      .find(Boolean);
+    this.sessionState = loaded ?? {
+      workspaceId: workspaceId ?? this.env.WORKSPACE_ID,
+      selectedProtocol: null,
+      roomSubscriptions: {},
+      chatMemberships: {}
+    };
     if (!this.sessionState.roomSubscriptions) {
       this.sessionState.roomSubscriptions = {};
     }
@@ -390,9 +412,11 @@ export class RealtimeSession extends DurableObject<Env> {
     return this.sessionState;
   }
 
-  private async persist(sessionState: StoredSessionState) {
+  private persist(sessionState: StoredSessionState) {
     this.sessionState = sessionState;
-    await this.ctx.storage.put(SESSION_STATE_KEY, sessionState);
+    for (const socket of this.ctx.getWebSockets()) {
+      socket.serializeAttachment(sessionState);
+    }
   }
 
   private async unsubscribeFromAllRooms(sessionState: StoredSessionState) {
@@ -411,6 +435,27 @@ export class RealtimeSession extends DurableObject<Env> {
     );
     sessionState.roomSubscriptions = {};
     sessionState.chatMemberships = {};
+    sessionState.presenceContext = undefined;
+  }
+
+  private async notifyPresenceEnded(sessionState: StoredSessionState) {
+    const context = sessionState.presenceContext;
+    if (!context) return;
+
+    const canonicalUrl = context.page.canonicalUrl ?? context.page.url;
+    await this.roomStub(sessionState.workspaceId, "global").removeWebReader(
+      sessionState.workspaceId,
+      "global",
+      context.sessionId,
+      context.tabId,
+    );
+    await this.roomStub(sessionState.workspaceId, pageRoomId(canonicalUrl)).removeWebReader(
+      sessionState.workspaceId,
+      pageRoomId(canonicalUrl),
+      context.sessionId,
+      context.tabId,
+    );
+    sessionState.presenceContext = undefined;
   }
 }
 

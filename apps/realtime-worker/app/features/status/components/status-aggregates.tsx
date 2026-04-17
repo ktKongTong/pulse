@@ -1,20 +1,7 @@
-import type {
-  DeviceAggregate,
-  PageAggregate,
-  RoomAggregate,
-  StatsSummary,
-} from "@pulse/realtime-protocol";
-
-import { StatusAggregateTabs } from "./status-aggregate-tabs";
-
 interface StatusAggregatesProps {
-  day: string;
-  global: StatsSummary | null;
-  device: DeviceAggregate | null;
-  pages: PageAggregate[];
-  rooms: RoomAggregate[];
-  loading: boolean;
-  error: string | null;
+  activePages: Array<[string, number]>;
+  currentAppLabel: string;
+  onlineCount: number;
 }
 
 export function StatusAggregates(props: StatusAggregatesProps) {
@@ -23,31 +10,55 @@ export function StatusAggregates(props: StatusAggregatesProps) {
       <div className="flex items-end justify-between gap-4">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-[0.34em] text-stone-400">
-            Today
+            Current
           </p>
           <p className="mt-2 text-[14px] leading-7 text-stone-500">
-            Live device, room, and reading rollups for {props.day}.
+            Site co-presence and the pages people are reading right now.
           </p>
         </div>
-        {props.loading ? (
-          <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-stone-400">
-            Waiting for stats
-          </p>
-        ) : null}
       </div>
 
-      {props.error ? (
-        <p className="text-[13px] leading-6 text-stone-500">
-          Stats temporarily unavailable: {props.error}
-        </p>
-      ) : null}
+      <div className="grid gap-6 sm:grid-cols-3">
+        <Metric label="Readers now" value={String(props.onlineCount)} />
+        <Metric label="Active pages" value={String(props.activePages.length)} />
+        <Metric label="Creator app" value={props.currentAppLabel} />
+      </div>
 
-      <StatusAggregateTabs
-        global={props.global}
-        device={props.device}
-        pages={props.pages}
-        rooms={props.rooms}
-      />
+      <div className="space-y-3">
+        <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-stone-400">
+          Page concurrency
+        </p>
+        {props.activePages.length === 0 ? (
+          <p className="text-[14px] leading-7 text-stone-500">
+            No public content has active readers right now.
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {props.activePages.map(([page, count]) => (
+              <div
+                key={page}
+                className="flex items-center justify-between rounded-[1.25rem] border border-stone-200 bg-white/70 px-4 py-3"
+              >
+                <span className="truncate text-[14px] text-stone-700">{page}</span>
+                <span className="text-[14px] font-medium text-stone-950">{count}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </section>
+  );
+}
+
+function Metric(props: { label: string; value: string }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-stone-400">
+        {props.label}
+      </p>
+      <p className="text-[18px] font-medium tracking-tight text-stone-950">
+        {props.value}
+      </p>
+    </div>
   );
 }

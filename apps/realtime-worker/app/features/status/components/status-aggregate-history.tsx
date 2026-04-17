@@ -1,74 +1,44 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
-  DeviceAggregate,
-  DeviceAggregateHistoryPoint,
-  PageAggregate,
-  PageAggregateHistoryPoint,
-  RoomAggregate,
-  RoomAggregateHistoryPoint,
+  OwnerHistoryPoint,
+  OwnerMetrics,
+  SiteHistoryPoint,
+  SiteMetrics,
   StatsPeriod,
-  StatsSummary,
-  StatsSummaryHistoryPoint,
 } from "@pulse/realtime-protocol";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useStatusAggregateHistory } from "@pulse/realtime-react";
+import { useOwnerHistory, useSiteHistory } from "@pulse/realtime-react";
 
 import { DeviceFocusChart } from "./device-focus-chart";
-import { PageReadingChart } from "./page-reading-chart";
-import { RoomActivityChart } from "./room-activity-chart";
 
-interface StatusAggregateHistoryProps {
-  deviceId?: string | null;
-}
+const PERIODS: StatsPeriod[] = ["day", "month", "year"];
 
-const PERIODS: Array<{
-  value: Extract<StatsPeriod, "day" | "month" | "year">;
-  label: string;
-}> = [
-  { value: "day", label: "Day" },
-  { value: "month", label: "Month" },
-  { value: "year", label: "Year" },
-];
-
-export function StatusAggregateHistory(props: StatusAggregateHistoryProps) {
-  const [period, setPeriod] =
-    useState<Extract<StatsPeriod, "day" | "month" | "year">>("day");
-  const history = useStatusAggregateHistory({
-    deviceId: props.deviceId,
-    period,
-  });
+export function StatusAggregateHistory() {
+  const [period, setPeriod] = useState<StatsPeriod>("day");
+  const siteHistory = useSiteHistory({ period });
+  const ownerHistory = useOwnerHistory({ period });
 
   const buckets = useMemo(
-    () =>
-      mergeBuckets(
-        history.global,
-        history.pages,
-        history.rooms,
-        history.device,
-      ),
-    [history.device, history.global, history.pages, history.rooms],
+    () => mergeBuckets(siteHistory.data, ownerHistory.data),
+    [ownerHistory.data, siteHistory.data],
   );
-
-  const [selectedBucketKey, setSelectedBucketKey] = useState<string | null>(
-    null,
-  );
+  const [selectedBucketKey, setSelectedBucketKey] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedBucketKey((current) => {
       if (buckets.length === 0) return null;
-      if (current && buckets.some((bucket) => bucket.key === current))
-        return current;
+      if (current && buckets.some((bucket) => bucket.key === current)) return current;
       return buckets[0]?.key ?? null;
     });
   }, [buckets]);
 
-  const selectedBucket =
-    buckets.find((bucket) => bucket.key === selectedBucketKey) ?? null;
-  const selectedGlobal = findGlobal(history.global, selectedBucketKey);
-  const selectedPages = findItems(history.pages, selectedBucketKey);
-  const selectedRooms = findItems(history.rooms, selectedBucketKey);
-  const selectedDevice = findDevice(history.device, selectedBucketKey);
+  const selectedBucket = buckets.find((bucket) => bucket.key === selectedBucketKey) ?? null;
+  const selectedSite = findSite(siteHistory.data, selectedBucketKey);
+  const selectedOwner = findOwner(ownerHistory.data, selectedBucketKey);
+
+  const loading = siteHistory.loading || ownerHistory.loading;
+  const error = siteHistory.error ?? ownerHistory.error;
 
   return (
     <section className="space-y-6 text-left">
@@ -78,50 +48,28 @@ export function StatusAggregateHistory(props: StatusAggregateHistoryProps) {
             History
           </p>
           <p className="mt-2 max-w-2xl text-[14px] leading-7 text-stone-500">
-            Review retained aggregate buckets across recent days, months, and
-            years without breaking the live status layout.
+            Review recent site attention and owner activity without mixing them into realtime state.
           </p>
         </div>
 
-        <Tabs
-          value={period}
-          onValueChange={(value) => {
-            if (value === "day" || value === "month" || value === "year") {
-              setPeriod(value);
-            }
-          }}
-          className="gap-0"
-        >
-          <TabsList
-            variant="line"
-            className="w-fit justify-start gap-5 border-b border-stone-200/80 p-0 pb-2"
-          >
+        <Tabs value={period} onValueChange={(value) => setPeriod(value as StatsPeriod)} className="gap-0">
+          <TabsList variant="line" className="w-fit justify-start gap-5 border-b border-stone-200/80 p-0 pb-2">
             {PERIODS.map((item) => (
-              <TabsTrigger
-                key={item.value}
-                value={item.value}
-                className="px-0 text-[12px] uppercase tracking-[0.26em]"
-              >
-                {item.label}
+              <TabsTrigger key={item} value={item} className="px-0 text-[12px] uppercase tracking-[0.26em]">
+                {item}
               </TabsTrigger>
             ))}
           </TabsList>
         </Tabs>
       </div>
 
-      {history.error ? (
+      {error ? (
         <p className="text-[13px] leading-6 text-stone-500">
-          Aggregate history temporarily unavailable: {history.error}
+          Aggregate history temporarily unavailable: {error}
         </p>
       ) : null}
 
-      {buckets.length === 0 && !history.loading ? (
-        <p className="text-[14px] leading-7 text-stone-500">
-          No retained aggregate buckets are available for this period yet.
-        </p>
-      ) : null}
-
-      {history.loading ? (
+      {loading ? (
         <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-stone-400">
           Loading retained aggregates
         </p>
@@ -145,7 +93,7 @@ export function StatusAggregateHistory(props: StatusAggregateHistoryProps) {
                   ].join(" ")}
                 >
                   <span className="block text-[10px] font-medium uppercase tracking-[0.24em] opacity-70">
-                    {periodLabel(period)}
+                    {period}
                   </span>
                   <span className="mt-1 block text-[13px] font-medium tracking-tight">
                     {bucket.label}
@@ -155,101 +103,46 @@ export function StatusAggregateHistory(props: StatusAggregateHistoryProps) {
             })}
           </div>
 
-          <div className="grid gap-6 border-t border-stone-200/80 pt-8 sm:grid-cols-3">
+          <div className="grid gap-6 border-t border-stone-200/80 pt-8 sm:grid-cols-4">
+            <Metric label="PV" value={String(selectedSite?.pv ?? 0)} hint="Content opens in this bucket" />
+            <Metric label="UV" value={String(selectedSite?.uv ?? 0)} hint="Distinct visitor sessions in this bucket" />
             <Metric
-              label="Selected range"
-              value={selectedBucket?.label ?? "—"}
-              hint={
-                selectedBucket
-                  ? `${selectedBucket.startDay} → ${selectedBucket.endDay}`
-                  : undefined
-              }
+              label="Read time"
+              value={formatDuration(selectedSite?.readTimeSeconds ?? 0)}
+              hint="Accumulated effective reading time"
             />
             <Metric
-              label="Peak online"
-              value={String(selectedGlobal?.onlineCountPeak ?? 0)}
-              hint="From retained room snapshots"
-            />
-            <Metric
-              label="Avg online"
-              value={formatAverage(selectedGlobal?.avgOnlineCount ?? 0)}
-              hint="Integral-derived occupancy"
+              label="Active apps"
+              value={String(selectedOwner?.appPresenceSecondsByApp.length ?? 0)}
+              hint="Owner apps observed in this bucket"
             />
           </div>
 
-          <div className="space-y-2">
-            <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-stone-400">
-              Bucket overview
-            </p>
-            <p className="text-[14px] leading-7 text-stone-500">
-              {buildOverviewCopy(
-                period,
-                selectedBucket,
-                selectedGlobal,
-                selectedPages,
-                selectedRooms,
-              )}
-            </p>
-          </div>
+          <Tabs defaultValue="owner" className="gap-6">
+            <TabsList variant="line" className="w-full justify-start gap-5 border-b border-stone-200/80 p-0 pb-2">
+              <TabsTrigger value="site" className="px-0 text-[12px] uppercase tracking-[0.26em]">
+                Site
+              </TabsTrigger>
+              <TabsTrigger value="owner" className="px-0 text-[12px] uppercase tracking-[0.26em]">
+                Owner
+              </TabsTrigger>
+            </TabsList>
 
-          <StatusAggregateHistoryTabs
-            global={selectedGlobal}
-            device={selectedDevice}
-            pages={selectedPages}
-            rooms={selectedRooms}
-          />
+            <TabsContent value="site" className="space-y-4">
+              <p className="text-[14px] leading-7 text-stone-500">
+                {selectedBucket
+                  ? `${selectedBucket.label} covers ${selectedBucket.startDay} → ${selectedBucket.endDay}. The site received ${selectedSite?.pv ?? 0} opens, ${selectedSite?.uv ?? 0} visitor sessions, and accumulated ${formatDuration(selectedSite?.readTimeSeconds ?? 0)} of read time.`
+                  : "Select a retained bucket to inspect aggregate detail."}
+              </p>
+            </TabsContent>
+
+            <TabsContent value="owner" className="space-y-7">
+              <DeviceFocusChart aggregate={selectedOwner} />
+            </TabsContent>
+          </Tabs>
         </>
       ) : null}
     </section>
-  );
-}
-
-function StatusAggregateHistoryTabs(props: {
-  global: StatsSummary | null;
-  device: DeviceAggregate | null;
-  pages: PageAggregate[];
-  rooms: RoomAggregate[];
-}) {
-  const defaultTab = props.device ? "device" : "rooms";
-
-  return (
-    <Tabs defaultValue={defaultTab} className="gap-6">
-      <TabsList
-        variant="line"
-        className="w-full justify-start gap-5 border-b border-stone-200/80 p-0 pb-2"
-      >
-        <TabsTrigger
-          value="device"
-          className="px-0 text-[12px] uppercase tracking-[0.26em]"
-        >
-          Device
-        </TabsTrigger>
-        <TabsTrigger
-          value="rooms"
-          className="px-0 text-[12px] uppercase tracking-[0.26em]"
-        >
-          Rooms
-        </TabsTrigger>
-        <TabsTrigger
-          value="pages"
-          className="px-0 text-[12px] uppercase tracking-[0.26em]"
-        >
-          Pages
-        </TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="device" className="space-y-7">
-        <DeviceFocusChart aggregate={props.device} />
-      </TabsContent>
-
-      <TabsContent value="rooms" className="space-y-7">
-        <RoomActivityChart global={props.global} rooms={props.rooms} />
-      </TabsContent>
-
-      <TabsContent value="pages" className="space-y-7">
-        <PageReadingChart pages={props.pages} />
-      </TabsContent>
-    </Tabs>
   );
 }
 
@@ -269,23 +162,9 @@ function Metric(props: { label: string; value: string; hint?: string }) {
   );
 }
 
-function mergeBuckets(
-  global: StatsSummaryHistoryPoint[],
-  pages: PageAggregateHistoryPoint[],
-  rooms: RoomAggregateHistoryPoint[],
-  device: DeviceAggregateHistoryPoint[],
-) {
-  const merged = new Map<
-    string,
-    {
-      key: string;
-      label: string;
-      startDay: string;
-      endDay: string;
-    }
-  >();
-
-  for (const point of [...global, ...pages, ...rooms, ...device]) {
+function mergeBuckets(site: SiteHistoryPoint[], owner: OwnerHistoryPoint[]) {
+  const merged = new Map<string, { key: string; label: string; startDay: string; endDay: string }>();
+  for (const point of [...site, ...owner]) {
     merged.set(point.bucket.key, {
       key: point.bucket.key,
       label: point.bucket.label,
@@ -293,69 +172,25 @@ function mergeBuckets(
       endDay: point.bucket.endDay,
     });
   }
-
-  return Array.from(merged.values()).sort((left, right) =>
-    left.key < right.key ? 1 : -1,
-  );
+  return [...merged.values()].sort((left, right) => (left.key < right.key ? 1 : -1));
 }
 
-function findGlobal(
-  points: StatsSummaryHistoryPoint[],
-  bucketKey: string | null,
-): StatsSummary | null {
+function findSite(points: SiteHistoryPoint[], bucketKey: string | null): SiteMetrics | null {
   if (!bucketKey) return null;
   return points.find((point) => point.bucket.key === bucketKey)?.value ?? null;
 }
 
-function findItems<T extends { bucket: { key: string }; items: unknown[] }>(
-  points: T[],
-  bucketKey: string | null,
-) {
-  if (!bucketKey) return [] as T["items"];
-  return (points.find((point) => point.bucket.key === bucketKey)?.items ??
-    []) as T["items"];
-}
-
-function findDevice(
-  points: DeviceAggregateHistoryPoint[],
-  bucketKey: string | null,
-): DeviceAggregate | null {
+function findOwner(points: OwnerHistoryPoint[], bucketKey: string | null): OwnerMetrics | null {
   if (!bucketKey) return null;
   return points.find((point) => point.bucket.key === bucketKey)?.value ?? null;
 }
 
-function periodLabel(period: Extract<StatsPeriod, "day" | "month" | "year">) {
-  if (period === "day") return "Daily";
-  if (period === "month") return "Monthly";
-  return "Yearly";
-}
-
-function buildOverviewCopy(
-  period: Extract<StatsPeriod, "day" | "month" | "year">,
-  bucket: { label: string; startDay: string; endDay: string } | null,
-  global: StatsSummary | null,
-  pages: PageAggregate[],
-  rooms: RoomAggregate[],
-) {
-  if (!bucket) {
-    return "Select a retained bucket to inspect aggregate detail.";
-  }
-
-  const pageCount = pages.length;
-  const roomCount = rooms.filter((room) => room.roomId !== "global").length;
-  const providerCount = global?.mediaActiveSecondsByProvider.length ?? 0;
-
-  return [
-    `${periodLabel(period)} bucket ${bucket.label} covers ${bucket.startDay} → ${bucket.endDay}.`,
-    `Peak online reached ${global?.onlineCountPeak ?? 0}.`,
-    `${pageCount} page aggregates and ${roomCount} room aggregates are available.`,
-    providerCount > 0
-      ? `${providerCount} media providers recorded activity.`
-      : "No media provider activity was recorded in this bucket.",
-  ].join(" ");
-}
-
-function formatAverage(value: number) {
-  if (!Number.isFinite(value)) return "0.00";
-  return value.toFixed(2);
+function formatDuration(totalSeconds: number) {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  if (minutes > 0) return `${minutes}m ${String(remainingSeconds).padStart(2, "0")}s`;
+  return `${remainingSeconds}s`;
 }

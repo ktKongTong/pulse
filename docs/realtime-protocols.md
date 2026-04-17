@@ -25,11 +25,14 @@
 - Worker 路由
   - [index.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/index.ts)
 - Worker 房间聚合
-  - [room-state.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/lib/room-state.ts)
+  - [device-do.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/device-do.ts)
+  - [room-do.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/room-do.ts)
+  - [room-strategies.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/room-strategies.ts)
+  - [session-do.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/session-do.ts)
 - macOS KMP bridge
   - [PulseBarBridge.macos.kt](/Users/kt/Documents/Playground/pulse/common/src/macosMain/kotlin/io/github/kt/pulsebar/export/PulseBarBridge.macos.kt)
 - web client hooks
-  - [hooks.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-demo/src/lib/hooks.ts)
+  - [hooks.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/hooks.ts)
 
 ## 1. Overall topology
 
@@ -252,7 +255,7 @@ Worker 行为：
 
 浏览器侧内部状态在：
 
-- [hooks.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-demo/src/lib/hooks.ts)
+- [hooks.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/hooks.ts)
 
 当前客户端维护的本地状态：
 
@@ -434,13 +437,17 @@ Worker 行为分两段：
 
 ## 5. Downstream protocol: `realtime.v1-stream`
 
-严格说这不是上游写协议，但它是统一下游读协议，决定了 demo 和 blog widget 如何消费状态。
+严格说这不是上游写协议，但它是统一下游读协议，决定了 Web 客户端如何消费状态。
 
 Worker 对外提供：
 
-- `GET /v1/realtime/snapshot`
-- `GET /v1/realtime/sse`
 - `GET /v1/realtime/ws`
+- `GET /v1/site/history`
+- `GET /v1/site/lifetime`
+- `GET /v1/content/history`
+- `GET /v1/content/lifetime`
+- `GET /v1/owner/history`
+- `GET /v1/owner/lifetime`
 
 读出来的主体是：
 

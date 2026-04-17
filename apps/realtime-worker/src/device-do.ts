@@ -1,33 +1,34 @@
 import { DurableObject } from "cloudflare:workers";
 import { drizzle } from 'drizzle-orm/durable-sqlite';
 import { migrate } from 'drizzle-orm/durable-sqlite/migrator';
+import { eq } from 'drizzle-orm';
 import * as schema from './db/schema';
+import { loadDrizzleMigrations } from "./db/migrations";
 
 import {
   PresenceIngestAckSchema,
   type PresenceIngestRequest,
 } from "@pulse/realtime-protocol";
 
+import type { RoomRpc } from "./durable-stubs";
 import type { Env } from "./env";
+import { createWorkerLogger } from "./logger";
+import type { DevicePresenceState } from "./runtime-models";
+import { coerceNonNegativeInt, dayKeyFromIso } from "./stats-utils";
 
-const drizzleMigrations = import.meta.glob('./db/migrations/**/*.sql', { query: '?raw', import: 'default', eager: true });
-const migrations: Record<string, string> = {};
-for (const [path, query] of Object.entries(drizzleMigrations)) {
-  // Key needs to be like "20260414112459_name/migration.sql" — Drizzle parses first 14 chars as date
-  const parts = path.split('/');
-  const key = parts.slice(-2).join('/');
-  migrations[key] = query as string;
-}
+const migrations = loadDrizzleMigrations();
 export class DeviceDO extends DurableObject<Env> {
   private db: ReturnType<typeof drizzle>;
   private workspaceId: string = "unknown";
   private deviceId: string = "unknown";
   
-  private currentState: any = null;
+  private currentState: DevicePresenceState | null = null;
+  private readonly logger;
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     this.db = drizzle(this.ctx.storage, { schema });
+    this.logger = createWorkerLogger(env, "device.do");
     this.ctx.blockConcurrencyWhile(async () => {
       await migrate(this.db, { migrations });
 
@@ -36,9 +37,11 @@ export class DeviceDO extends DurableObject<Env> {
         this.workspaceId = stored.w;
         this.deviceId = stored.d;
       }
-      const state = await this.ctx.storage.get<any>("currentState");
-      if (state) {
+      const state = await this.ctx.storage.get<DevicePresenceState>("currentState");
+      if (state && (state.expiresAtMs == null || state.expiresAtMs > Date.now())) {
         this.currentState = state;
+      } else if (state) {
+        await this.ctx.storage.delete("currentState");
       }
     });
   }
@@ -58,6 +61,7 @@ export class DeviceDO extends DurableObject<Env> {
     
     const latestEvent = request.events[request.events.length - 1];
     if (latestEvent) {
+      const previousState = this.currentState;
       if (latestEvent.kind === "session_end" || !latestEvent.state) {
         this.currentState = null;
       } else {
@@ -65,13 +69,70 @@ export class DeviceDO extends DurableObject<Env> {
           ...latestEvent.state,
           sessionId: request.sessionId,
           deviceId: request.deviceId,
-          updatedAt: latestEvent.observedAt
+          updatedAt: latestEvent.observedAt,
+          expiresAtMs: Date.now() + ttlMs,
+          lastCountedAtMs: Date.parse(latestEvent.observedAt) || Date.now(),
         };
       }
       
-      // Persist latest state so we don't lose it on worker restart
-      await this.ctx.storage.put("currentState", this.currentState);
-      console.log("[device.presence] stored", {
+      if (this.currentState) {
+        await this.ctx.storage.put("currentState", this.currentState);
+      } else {
+        await this.ctx.storage.delete("currentState");
+      }
+      if (latestEvent.state) {
+        const day = dayKeyFromIso(latestEvent.observedAt);
+        const rowId = `${day}|${request.deviceId}`;
+        const previousAppId = previousState?.focus?.app?.id ?? previousState?.focus?.app?.name ?? null;
+        const nextAppId = latestEvent.state.focus?.app?.id ?? latestEvent.state.focus?.app?.name ?? null;
+        const previousMediaId =
+          previousState?.mediaSessions?.[0]?.item?.id ??
+          previousState?.mediaSessions?.[0]?.item?.title ??
+          null;
+        const nextMediaId =
+          latestEvent.state.mediaSessions?.[0]?.item?.id ??
+          latestEvent.state.mediaSessions?.[0]?.item?.title ??
+          null;
+        const focusSwitchDelta =
+          previousAppId && nextAppId && previousAppId !== nextAppId ? 1 : 0;
+        const mediaSwitchDelta =
+          previousMediaId && nextMediaId && previousMediaId !== nextMediaId ? 1 : 0;
+        const sessionDelta = previousState == null ? 1 : 0;
+        const existingStatsRow =
+          this.db
+            .select()
+            .from(schema.deviceDailyStats)
+            .where(eq(schema.deviceDailyStats.id, rowId))
+            .all()[0] ?? null;
+        const existingStats = existingStatsRow
+          ? {
+              focusSwitchCount: coerceNonNegativeInt(existingStatsRow.focusSwitchCount),
+              mediaSwitchCount: coerceNonNegativeInt(existingStatsRow.mediaSwitchCount),
+              sessionCount: coerceNonNegativeInt(existingStatsRow.sessionCount),
+            }
+          : null;
+
+        this.db
+          .insert(schema.deviceDailyStats)
+          .values({
+            id: rowId,
+            day,
+            deviceId: request.deviceId,
+            focusSwitchCount: (existingStats?.focusSwitchCount ?? 0) + focusSwitchDelta,
+            mediaSwitchCount: (existingStats?.mediaSwitchCount ?? 0) + mediaSwitchDelta,
+            sessionCount: (existingStats?.sessionCount ?? 0) + sessionDelta,
+          })
+          .onConflictDoUpdate({
+            target: schema.deviceDailyStats.id,
+            set: {
+              focusSwitchCount: (existingStats?.focusSwitchCount ?? 0) + focusSwitchDelta,
+              mediaSwitchCount: (existingStats?.mediaSwitchCount ?? 0) + mediaSwitchDelta,
+              sessionCount: (existingStats?.sessionCount ?? 0) + sessionDelta,
+            },
+          })
+          .run();
+      }
+      this.logger.debug("presence stored", {
         workspaceId: request.workspaceId,
         deviceId: request.deviceId,
         ttlMs,
@@ -129,7 +190,7 @@ export class DeviceDO extends DurableObject<Env> {
 
   private async notifyRoomDO() {
     try {
-      console.log("[device.notifyRoom] start", {
+      this.logger.debug("notify room start", {
         workspaceId: this.workspaceId,
         deviceId: this.deviceId,
         hasState: this.currentState != null,
@@ -137,15 +198,15 @@ export class DeviceDO extends DurableObject<Env> {
       });
       const roomStub = this.env.REALTIME_ROOM.get(
         this.env.REALTIME_ROOM.idFromName(`${this.workspaceId}:global`)
-      ) as any;
+      ) as unknown as RoomRpc;
       
       await roomStub.pushDeviceUpdate(this.workspaceId, "global", this.deviceId, this.currentState);
-      console.log("[device.notifyRoom] success", {
+      this.logger.debug("notify room success", {
         workspaceId: this.workspaceId,
         deviceId: this.deviceId,
       });
     } catch (err) {
-      console.warn(`Failed to push to RoomDO (global) from DeviceDO ${this.deviceId}`, err);
+      this.logger.warn(`failed to push to RoomDO(global) from ${this.deviceId}`, err as Error);
     }
   }
 }

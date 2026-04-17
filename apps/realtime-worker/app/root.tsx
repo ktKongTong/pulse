@@ -8,11 +8,17 @@ import {
 } from "react-router";
 import { PulseRealtimeProvider } from "@pulse/realtime-react";
 
-import type { Route } from "./+types/root";
 import "./app.css";
-import { REALTIME_BASE_URL, SITE_ID, WORKSPACE_ID } from "./lib/config";
+import {
+  REALTIME_BASE_URL,
+  READING_HEARTBEAT_MS,
+  READING_PROGRESS_DELTA_PERCENT,
+  READING_PROGRESS_THROTTLE_MS,
+  SITE_ID,
+  WORKSPACE_ID,
+} from "./lib/config";
 
-export const links: Route.LinksFunction = () => [
+export const links = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
@@ -40,6 +46,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         baseUrl: REALTIME_BASE_URL,
         workspaceId: WORKSPACE_ID,
         siteId: SITE_ID,
+        readingHeartbeatMs: READING_HEARTBEAT_MS,
+        readingProgressThrottleMs: READING_PROGRESS_THROTTLE_MS,
+        readingProgressDeltaPercent: READING_PROGRESS_DELTA_PERCENT,
         interactionActor: { kind: "owner", userId: "kt" },
       }}
     >
@@ -56,7 +65,7 @@ export default function App() {
   return <Outlet />;
 }
 
-export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+export function ErrorBoundary({ error }: { error: unknown }) {
   let message = "Oops!";
   let details = "An unexpected error occurred.";
   let stack: string | undefined;

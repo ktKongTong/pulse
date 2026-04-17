@@ -13,7 +13,7 @@ import {
   useRealtimeDebugState,
 } from "@pulse/realtime-react";
 
-export function meta({}: Route.MetaArgs) {
+export function meta() {
   return [
     { title: "New React Router App" },
     { name: "description", content: "Welcome to React Router!" },
@@ -73,36 +73,13 @@ export default function RootLayout() {
     ? "Apple Music recommendations are resolved from local metadata and played in the background."
     : "No active Apple Music-backed PulseBar device is currently available. Spotify remains disabled because its system API steals focus.";
 
-  const activePages = Object.values(
-    webReaders.reduce<
-      Record<
-        string,
-        {
-          canonicalUrl: string;
-          title: string;
-          count: number;
-          averageProgress: number;
-        }
-      >
-    >((acc, reader) => {
-      const canonicalUrl = reader.page?.canonicalUrl;
-      if (!canonicalUrl) return acc;
-      const current = acc[canonicalUrl] ?? {
-        canonicalUrl,
-        title: reader.page?.title ?? canonicalUrl,
-        count: 0,
-        averageProgress: 0,
-      };
-      current.count += 1;
-      current.averageProgress += reader.reading?.progressPercent ?? 0;
-      acc[canonicalUrl] = current;
-      return acc;
-    }, {}),
-  )
-    .map((page) => ({
-      ...page,
-      averageProgress:
-        page.count > 0 ? Math.round(page.averageProgress / page.count) : 0,
+  const activePages = Object.entries(snapshot?.pageConcurrencyMap ?? {})
+    .map(([canonicalUrl, count]) => ({
+      canonicalUrl,
+      title:
+        readers.find((reader) => reader.page?.canonicalUrl === canonicalUrl)?.page
+          ?.title ?? canonicalUrl,
+      count,
     }))
     .sort((left, right) => right.count - left.count);
 
@@ -193,7 +170,7 @@ export default function RootLayout() {
                     <strong className="block text-base font-semibold text-slate-950">
                       {page.count} readers
                     </strong>
-                    <span>{page.averageProgress}% avg progress</span>
+                    <span>{page.count} active sessions</span>
                   </div>
                 </article>
               ))

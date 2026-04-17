@@ -21,10 +21,3 @@ export function fetchRealtimeMeta(
 ) {
   return createRealtimeApiClient(createHttp(config), config).fetchMeta(...args);
 }
-
-export function fetchRoomSnapshot(
-  config: PulseRealtimeConfig,
-  ...args: Parameters<ReturnType<typeof createRealtimeApiClient>["fetchRoomSnapshot"]>
-) {
-  return createRealtimeApiClient(createHttp(config), config).fetchRoomSnapshot(...args);
-}

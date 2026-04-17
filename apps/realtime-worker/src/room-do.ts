@@ -1,24 +1,79 @@
 import { DurableObject } from "cloudflare:workers";
 import { drizzle } from 'drizzle-orm/durable-sqlite';
 import { migrate } from 'drizzle-orm/durable-sqlite/migrator';
+import type {
+  ContentHistoryPoint,
+  ContentLifetime,
+  OwnerHistoryPoint,
+  OwnerLifetime,
+  RoomSnapshot,
+  SiteHistoryPoint,
+  SiteLifetime,
+} from "@pulse/realtime-protocol";
 import * as schema from './db/schema';
+import { loadDrizzleMigrations } from "./db/migrations";
 import { eq } from 'drizzle-orm';
 
 import {
   WebIngestAckSchema,
+  type WebEvent,
   type WebIngestRequest,
 } from "@pulse/realtime-protocol";
 
 import type { Env } from "./env";
+import type { SessionRpc } from "./durable-stubs";
+import { aggregateFlushMs } from "./env";
+import { createWorkerLogger } from "./logger";
 import { createStrategy, type RoomContext, type RoomStrategy } from './room-strategies';
+import {
+  type ActiveReaderState,
+  type ChatMessageState,
+  type ChatParticipantState,
+  type DevicePresenceState,
+  isDeviceActiveNow,
+  isReaderActiveNow,
+  resolveDeviceAppKey,
+} from './runtime-models';
+import {
+  buildContentHistory,
+  buildContentLifetime,
+  buildOwnerHistory,
+  buildOwnerLifetime,
+  buildSiteHistory,
+  buildSiteLifetime,
+} from './stats-query';
+import { coerceNonNegativeInt, dayKeyFromIso, splitDurationAcrossDays } from './stats-utils';
 
-const drizzleMigrations = import.meta.glob('./db/migrations/**/*.sql', { query: '?raw', import: 'default', eager: true });
-const migrations: Record<string, string> = {};
-for (const [path, query] of Object.entries(drizzleMigrations)) {
-  // Key needs to be like "20260414112459_name/migration.sql" — Drizzle parses first 14 chars as date
-  const parts = path.split('/');
-  const key = parts.slice(-2).join('/');
-  migrations[key] = query as string;
+const migrations = loadDrizzleMigrations();
+
+interface PendingSiteMetrics {
+  day: string;
+  startedAtMs: number;
+  lastUpdatedAtMs: number;
+  pageViewCount: number;
+  uniqueVisitorCount: number;
+  readTimeMs: number;
+}
+
+interface PendingContentMetrics {
+  id: string;
+  day: string;
+  canonicalUrl: string;
+  title: string;
+  startedAtMs: number;
+  lastUpdatedAtMs: number;
+  pageViewCount: number;
+  uniqueVisitorCount: number;
+  readTimeMs: number;
+}
+
+interface PendingOwnerPresence {
+  id: string;
+  day: string;
+  appKey: string;
+  label: string;
+  totalMs: number;
+  sampleCount: number;
 }
 
 // ==========================================
@@ -35,36 +90,27 @@ export class RealtimeRoom extends DurableObject<Env> {
   private sessionSubscribers: Set<string> = new Set();
 
   // Shared in-memory state (owned by RoomDO, accessed by strategies via RoomContext)
-  private readersMemory: Map<string, typeof schema.activeReaders.$inferInsert> = new Map();
-  private deviceStates: Map<string, unknown> = new Map();
-  private chatParticipants: Map<string, {
-    readerId: string;
-    displayName: string;
-    presenceState: "active";
-    updatedAt: string;
-    userId?: string;
-  }> = new Map();
-  private chatMessages: Array<{
-    msgId: string;
-    senderId: string;
-    senderDisplayName: string;
-    content: string;
-    createdAt: string;
-  }> = [];
+  private readersMemory: Map<string, ActiveReaderState> = new Map();
+  private deviceStates: Map<string, DevicePresenceState> = new Map();
+  private chatParticipants: Map<string, ChatParticipantState> = new Map();
+  private chatMessages: ChatMessageState[] = [];
   private typingUsers: Set<string> = new Set();
+  private pendingSiteMetrics = new Map<string, PendingSiteMetrics>();
+  private pendingContentMetrics = new Map<string, PendingContentMetrics>();
+  private pendingOwnerPresence = new Map<string, PendingOwnerPresence>();
 
-  // Debounced flush tracking
-  private dirtyReaderKeys: Set<string> = new Set();
-  private deletedReaderKeys: Set<string> = new Set();
-  private lastFlushMs = 0;
-  private FLUSH_INTERVAL_MS = 2000;
+  private readonly logger;
+  private readonly flushIntervalMs;
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     this.db = drizzle(this.ctx.storage, { schema });
+    this.logger = createWorkerLogger(env, "room.do");
+    this.flushIntervalMs = aggregateFlushMs(env);
     
     this.ctx.blockConcurrencyWhile(async () => {
       await migrate(this.db, { migrations });
+      const nowMs = Date.now();
 
       const stored = await this.ctx.storage.get<{ w: string; r: string }>("meta");
       if (stored) {
@@ -76,10 +122,22 @@ export class RealtimeRoom extends DurableObject<Env> {
       const subs = await this.ctx.storage.get<string[]>("sessionSubs");
       if (subs) this.sessionSubscribers = new Set(subs);
 
-      // Rehydrate web readers from SQLite
-      const rows = this.db.select().from(schema.activeReaders).all();
-      for (const row of rows) {
-        this.readersMemory.set(row.readerId, row);
+      const storedReaders = await this.ctx.storage.get<ActiveReaderState[]>("volatileReaders");
+      if (storedReaders) {
+        this.readersMemory = new Map(
+          storedReaders
+            .filter((reader) => reader.expiresAtMs > nowMs)
+            .map((reader) => [reader.readerId, reader]),
+        );
+      }
+
+      const storedDeviceStates = await this.ctx.storage.get<
+        Array<[string, DevicePresenceState]>
+      >("volatileDeviceStates");
+      if (storedDeviceStates) {
+        this.deviceStates = new Map(
+          storedDeviceStates.filter(([, state]) => (state.expiresAtMs ?? 0) > nowMs),
+        );
       }
 
       const storedParticipants = await this.ctx.storage.get<Array<{
@@ -108,6 +166,9 @@ export class RealtimeRoom extends DurableObject<Env> {
         content: row.content,
         createdAt: new Date(row.createdAt).toISOString(),
       }));
+
+      await this.persistVolatileState();
+      await this.scheduleNextAlarm();
     });
   }
 
@@ -123,45 +184,58 @@ export class RealtimeRoom extends DurableObject<Env> {
     await this.ctx.storage.put("meta", { w: workspaceId, r: roomId });
   }
 
-  /**
-   * Schedule alarm at the exact expiry time of the earliest reader.
-   * No readers = no alarm = DO fully hibernates at zero cost.
-   */
-  private async scheduleAlarmForEarliestExpiry() {
-    if (this.readersMemory.size === 0) return; // nothing to clean, let DO sleep
-
+  private async scheduleNextAlarm() {
+    const nowMs = Date.now();
     let earliest = Infinity;
     for (const reader of this.readersMemory.values()) {
       if (reader.expiresAtMs < earliest) earliest = reader.expiresAtMs;
     }
+    for (const state of this.deviceStates.values()) {
+      if (state.expiresAtMs != null && state.expiresAtMs < earliest) {
+        earliest = state.expiresAtMs;
+      }
+    }
 
-    if (earliest === Infinity) return;
+    let next = earliest;
+    if (this.roomId === "global" && this.shouldKeepFlushTickActive()) {
+      next = Math.min(next, nowMs + this.flushIntervalMs);
+    }
+
+    if (next === Infinity) return;
 
     const current = await this.ctx.storage.getAlarm();
     // Only reschedule if no alarm or existing alarm is later than needed
-    if (!current || current > earliest) {
-      await this.ctx.storage.setAlarm(earliest);
+    if (!current || current > next) {
+      await this.ctx.storage.setAlarm(next);
     }
   }
 
   async alarm() {
     const nowMs = Date.now();
+    if (this.roomId === "global") {
+      await this.flushAggregates(nowMs);
+    }
     let changed = false;
 
     for (const [key, reader] of this.readersMemory.entries()) {
       if (reader.expiresAtMs <= nowMs) {
+        this.captureReaderDuration(reader, nowMs);
         this.readersMemory.delete(key);
-        this.deletedReaderKeys.add(key);
-        this.dirtyReaderKeys.delete(key);
+        changed = true;
+      }
+    }
+    for (const [key, state] of this.deviceStates.entries()) {
+      if (state.expiresAtMs != null && state.expiresAtMs <= nowMs) {
+        this.captureDeviceDuration(state, nowMs);
+        this.deviceStates.delete(key);
         changed = true;
       }
     }
 
-    await this.flushToDB();
+    await this.persistVolatileState();
     if (changed) await this.broadcastSnapshot();
 
-    // Re-arm only if there are still live readers to expire later
-    await this.scheduleAlarmForEarliestExpiry();
+    await this.scheduleNextAlarm();
   }
 
   // ==========================================
@@ -172,7 +246,7 @@ export class RealtimeRoom extends DurableObject<Env> {
     await this.initMetadata(workspaceId, roomId);
     this.sessionSubscribers.add(sessionDoId);
     await this.ctx.storage.put("sessionSubs", Array.from(this.sessionSubscribers));
-    console.log("[room.subscribeSession] added", {
+    this.logger.debug("subscribe session", {
       workspaceId,
       roomId,
       sessionDoId,
@@ -183,7 +257,7 @@ export class RealtimeRoom extends DurableObject<Env> {
   async unsubscribeSession(sessionDoId: string) {
     this.sessionSubscribers.delete(sessionDoId);
     await this.ctx.storage.put("sessionSubs", Array.from(this.sessionSubscribers));
-    console.log("[room.unsubscribeSession] removed", {
+    this.logger.debug("unsubscribe session", {
       workspaceId: this.workspaceId,
       roomId: this.roomId,
       sessionDoId,
@@ -257,11 +331,23 @@ export class RealtimeRoom extends DurableObject<Env> {
   // RPC: Device state push (only Global strategy will act on this)
   // ==========================================
 
-  async pushDeviceUpdate(workspaceId: string, roomId: string, deviceId: string, state: unknown | null) {
+  async pushDeviceUpdate(workspaceId: string, roomId: string, deviceId: string, state: DevicePresenceState | null) {
     await this.initMetadata(workspaceId, roomId);
-    const ctx = this.buildContext();
-    const changed = this.strategy.handleDeviceUpdate(ctx, deviceId, state);
-    console.log("[room.pushDeviceUpdate] handled", {
+    const eventMs = Date.parse(state?.updatedAt ?? "") || Date.now();
+    const previousState = this.deviceStates.get(deviceId) ?? null;
+    if (previousState) {
+      this.captureDeviceDuration(previousState, eventMs);
+    }
+
+    const nextState = state
+      ? {
+          ...state,
+          lastCountedAtMs: eventMs,
+        }
+      : null;
+    const ctx = this.buildContext(eventMs);
+    const changed = this.strategy.handleDeviceUpdate(ctx, deviceId, nextState);
+    this.logger.debug("push device update", {
       workspaceId,
       roomId,
       deviceId,
@@ -270,10 +356,11 @@ export class RealtimeRoom extends DurableObject<Env> {
       subscriberCount: this.sessionSubscribers.size,
     });
     if (changed) {
-      // Sync back deviceStates (strategy may have mutated the map)
       this.deviceStates = ctx.deviceStates;
-      await this.broadcastSnapshot();
     }
+    await this.persistVolatileState();
+    await this.scheduleNextAlarm();
+    if (changed) await this.broadcastSnapshot();
   }
 
   // ==========================================
@@ -286,28 +373,40 @@ export class RealtimeRoom extends DurableObject<Env> {
     let changed = false;
 
     for (const event of request.events) {
-      const readerId = `web:${request.sessionId}`;
+      const eventMs = Date.parse(event.observedAt) || Date.now();
+      ctx.nowMs = eventMs;
+      const readerId = `web:${request.sessionId}:${request.tabId}`;
+      const previousReader = this.readersMemory.get(readerId) ?? null;
+      if (previousReader) {
+        this.captureReaderDuration(previousReader, eventMs);
+      }
+      await this.recordWebEventMetrics(request.sessionId, event, eventMs);
+      const ingestEvent = {
+        ...event,
+        sessionId: request.sessionId,
+        tabId: request.tabId,
+        userId: request.userId,
+      };
 
       if (event.kind === "session_end") {
         if (this.strategy.handleSessionEnd(ctx, readerId)) changed = true;
-        this.deletedReaderKeys.add(readerId);
-        this.dirtyReaderKeys.delete(readerId);
         continue;
       }
 
-      if (this.strategy.handleWebEvent(ctx, event as any, readerId, ttlMs)) {
+      if (this.strategy.handleWebEvent(ctx, ingestEvent, readerId, ttlMs)) {
         changed = true;
-        this.dirtyReaderKeys.add(readerId);
-        this.deletedReaderKeys.delete(readerId);
+      }
+      const nextReader = ctx.readers.get(readerId);
+      if (nextReader) {
+        nextReader.lastCountedAtMs = eventMs;
       }
     }
 
-    // Sync back readers (strategy mutated the map in-place via ctx)
     this.readersMemory = ctx.readers;
-    this.requestFlush();
+    await this.persistVolatileState();
+    await this.scheduleNextAlarm();
 
     if (changed) {
-      await this.scheduleAlarmForEarliestExpiry();
       await this.broadcastSnapshot();
     }
 
@@ -322,11 +421,29 @@ export class RealtimeRoom extends DurableObject<Env> {
     });
   }
 
+  async removeWebReader(
+    workspaceId: string,
+    roomId: string,
+    sessionId: string,
+    tabId: string,
+  ) {
+    await this.initMetadata(workspaceId, roomId);
+    const readerId = `web:${sessionId}:${tabId}`;
+    const existing = this.readersMemory.get(readerId);
+    if (!existing) return;
+
+    this.captureReaderDuration(existing, Date.now());
+    this.readersMemory.delete(readerId);
+    await this.persistVolatileState();
+    await this.scheduleNextAlarm();
+    await this.broadcastSnapshot();
+  }
+
   // ==========================================
   // Snapshot — delegates to strategy
   // ==========================================
 
-  async getSnapshot(workspaceId?: string, roomId?: string) {
+  async getSnapshot(workspaceId?: string, roomId?: string): Promise<RoomSnapshot> {
     if (workspaceId && roomId) await this.initMetadata(workspaceId, roomId);
     return this.strategy.buildSnapshot(this.buildContext());
   }
@@ -335,20 +452,407 @@ export class RealtimeRoom extends DurableObject<Env> {
   // Stats stubs (to be implemented with Drizzle queries)
   // ==========================================
 
-  async getGlobalStats(day: string) { return {} as any; }
-  async getPageStats(day: string, limit: number) { return []; }
-  async getRoomStats(day: string, limit: number) { return []; }
-  async getDeviceStats(day: string, deviceId: string) { return {} as any; }
+  async getSiteHistory(
+    period: import("@pulse/realtime-protocol").StatsPeriod,
+    limit: number,
+    anchorDay: string,
+  ): Promise<SiteHistoryPoint[]> {
+    await this.flushAggregates();
+    const rows = this.db.select().from(schema.globalDailyStats).all();
+    return buildSiteHistory(rows, period, limit, anchorDay);
+  }
+
+  async getSiteLifetime(): Promise<SiteLifetime> {
+    await this.flushAggregates();
+    const rows = this.db.select().from(schema.globalDailyStats).all();
+    return buildSiteLifetime(rows);
+  }
+
+  async getContentHistory(
+    canonicalUrl: string,
+    period: import("@pulse/realtime-protocol").StatsPeriod,
+    limit: number,
+    anchorDay: string,
+  ): Promise<ContentHistoryPoint[]> {
+    await this.flushAggregates();
+    const rows = this.db.select().from(schema.pageDailyStats).all();
+    return buildContentHistory(canonicalUrl, rows, period, limit, anchorDay);
+  }
+
+  async getContentLifetime(canonicalUrl: string): Promise<ContentLifetime | null> {
+    await this.flushAggregates();
+    const rows = this.db.select().from(schema.pageDailyStats).all();
+    return buildContentLifetime(canonicalUrl, rows);
+  }
+
+  async getOwnerHistory(
+    period: import("@pulse/realtime-protocol").StatsPeriod,
+    limit: number,
+    anchorDay: string,
+  ): Promise<OwnerHistoryPoint[]> {
+    await this.flushAggregates();
+    const rows = this.db.select().from(schema.globalAppDailyStats).all();
+    return buildOwnerHistory(rows, period, limit, anchorDay);
+  }
+
+  async getOwnerLifetime(): Promise<OwnerLifetime> {
+    await this.flushAggregates();
+    const rows = this.db.select().from(schema.globalAppDailyStats).all();
+    return buildOwnerLifetime(rows);
+  }
 
   // ==========================================
   // Private: context, flush, broadcast
   // ==========================================
 
-  private buildContext(): RoomContext {
+  private async recordWebEventMetrics(
+    sessionId: string,
+    event: WebEvent,
+    nowMs: number,
+  ) {
+    if (this.roomId !== "global" || event.kind !== "page_view") return;
+    const day = dayKeyFromIso(event.observedAt);
+    const canonicalUrl = event.page.canonicalUrl ?? event.page.url;
+    const contentUniqueVisitorDelta = await this.markSeen(
+      `content-uv:${day}:${canonicalUrl}`,
+      sessionId,
+    );
+    const siteUniqueVisitorDelta = await this.markSeen(`site-uv:${day}`, sessionId);
+
+    this.bumpContentMetrics(day, canonicalUrl, event.page.title ?? canonicalUrl, nowMs, {
+      pageViewCount: 1,
+      uniqueVisitorCount: contentUniqueVisitorDelta,
+      readTimeMs: 0,
+    });
+    this.bumpSiteMetrics(day, nowMs, {
+      pageViewCount: 1,
+      uniqueVisitorCount: siteUniqueVisitorDelta,
+      readTimeMs: 0,
+    });
+  }
+
+  private captureReaderDuration(reader: ActiveReaderState, nowMs: number) {
+    if (this.roomId !== "global") return;
+    const effectiveEndMs = Math.min(nowMs, reader.expiresAtMs);
+    const startMs = Math.max(
+      0,
+      reader.lastCountedAtMs || Date.parse(reader.updatedAt) || effectiveEndMs,
+    );
+    if (effectiveEndMs <= startMs) return;
+    if (!isReaderActiveNow(reader, effectiveEndMs - 1)) {
+      reader.lastCountedAtMs = effectiveEndMs;
+      return;
+    }
+
+    const canonicalUrl = reader.pageCanonicalUrl ?? reader.pageUrl;
+    const title = reader.pageTitle ?? canonicalUrl;
+    if (!canonicalUrl || !title) {
+      reader.lastCountedAtMs = effectiveEndMs;
+      return;
+    }
+
+    splitDurationAcrossDays(startMs, effectiveEndMs, (day, durationMs) => {
+      this.bumpContentMetrics(day, canonicalUrl, title, effectiveEndMs, {
+        pageViewCount: 0,
+        uniqueVisitorCount: 0,
+        readTimeMs: durationMs,
+      });
+      this.bumpSiteMetrics(day, effectiveEndMs, {
+        pageViewCount: 0,
+        uniqueVisitorCount: 0,
+        readTimeMs: durationMs,
+      });
+    });
+    reader.lastCountedAtMs = effectiveEndMs;
+  }
+
+  private captureDeviceDuration(state: DevicePresenceState, nowMs: number) {
+    if (this.roomId !== "global") return;
+    const effectiveEndMs = Math.min(nowMs, state.expiresAtMs ?? nowMs);
+    const startMs = Math.max(
+      0,
+      state.lastCountedAtMs || Date.parse(state.updatedAt ?? "") || effectiveEndMs,
+    );
+    if (effectiveEndMs <= startMs) return;
+    if (!isDeviceActiveNow(state, effectiveEndMs - 1)) {
+      state.lastCountedAtMs = effectiveEndMs;
+      return;
+    }
+    const app = resolveDeviceAppKey(state);
+    if (!app) {
+      state.lastCountedAtMs = effectiveEndMs;
+      return;
+    }
+
+    splitDurationAcrossDays(startMs, effectiveEndMs, (day, durationMs) => {
+      this.bumpOwnerPresence(day, app.key, app.label, durationMs);
+    });
+    state.lastCountedAtMs = effectiveEndMs;
+  }
+
+  private async markSeen(storageKey: string, sessionId: string) {
+    if (!sessionId) return 0;
+    const seen = (await this.ctx.storage.get<string[]>(storageKey)) ?? [];
+    if (seen.includes(sessionId)) return 0;
+    seen.push(sessionId);
+    await this.ctx.storage.put(storageKey, seen);
+    return 1;
+  }
+
+  private shouldKeepFlushTickActive() {
+    const nowMs = Date.now();
+    if (
+      Array.from(this.readersMemory.values()).some((reader) =>
+        isReaderActiveNow(reader, nowMs),
+      )
+    ) {
+      return true;
+    }
+    if (
+      Array.from(this.deviceStates.values()).some((state) =>
+        isDeviceActiveNow(state, nowMs),
+      )
+    ) {
+      return true;
+    }
+    return (
+      this.pendingSiteMetrics.size > 0 ||
+      this.pendingContentMetrics.size > 0 ||
+      this.pendingOwnerPresence.size > 0
+    );
+  }
+
+  private bumpSiteMetrics(
+    day: string,
+    nowMs: number,
+    delta: { pageViewCount: number; uniqueVisitorCount: number; readTimeMs: number },
+  ) {
+    const existing = this.pendingSiteMetrics.get(day) ?? {
+      day,
+      startedAtMs: nowMs,
+      lastUpdatedAtMs: nowMs,
+      pageViewCount: 0,
+      uniqueVisitorCount: 0,
+      readTimeMs: 0,
+    };
+    existing.lastUpdatedAtMs = Math.max(existing.lastUpdatedAtMs, nowMs);
+    existing.pageViewCount += delta.pageViewCount;
+    existing.uniqueVisitorCount += delta.uniqueVisitorCount;
+    existing.readTimeMs += delta.readTimeMs;
+    this.pendingSiteMetrics.set(day, existing);
+  }
+
+  private bumpContentMetrics(
+    day: string,
+    canonicalUrl: string,
+    title: string,
+    nowMs: number,
+    delta: { pageViewCount: number; uniqueVisitorCount: number; readTimeMs: number },
+  ) {
+    const id = `${day}|${canonicalUrl}`;
+    const existing = this.pendingContentMetrics.get(id) ?? {
+      id,
+      day,
+      canonicalUrl,
+      title,
+      startedAtMs: nowMs,
+      lastUpdatedAtMs: nowMs,
+      pageViewCount: 0,
+      uniqueVisitorCount: 0,
+      readTimeMs: 0,
+    };
+    existing.title = title;
+    existing.lastUpdatedAtMs = Math.max(existing.lastUpdatedAtMs, nowMs);
+    existing.pageViewCount += delta.pageViewCount;
+    existing.uniqueVisitorCount += delta.uniqueVisitorCount;
+    existing.readTimeMs += delta.readTimeMs;
+    this.pendingContentMetrics.set(id, existing);
+  }
+
+  private bumpOwnerPresence(
+    day: string,
+    appKey: string,
+    label: string,
+    durationMs: number,
+  ) {
+    const id = `${day}|${appKey}`;
+    const existing = this.pendingOwnerPresence.get(id) ?? {
+      id,
+      day,
+      appKey,
+      label,
+      totalMs: 0,
+      sampleCount: 0,
+    };
+    existing.label = label;
+    existing.totalMs += durationMs;
+    existing.sampleCount += 1;
+    this.pendingOwnerPresence.set(id, existing);
+  }
+
+  private async persistVolatileState() {
+    if (this.readersMemory.size > 0) {
+      await this.ctx.storage.put("volatileReaders", Array.from(this.readersMemory.values()));
+    } else {
+      await this.ctx.storage.delete("volatileReaders");
+    }
+
+    if (this.deviceStates.size > 0) {
+      await this.ctx.storage.put(
+        "volatileDeviceStates",
+        Array.from(this.deviceStates.entries()),
+      );
+    } else {
+      await this.ctx.storage.delete("volatileDeviceStates");
+    }
+  }
+
+  private async flushAggregates(nowMs = Date.now()) {
+    if (this.roomId !== "global") return;
+
+    for (const reader of this.readersMemory.values()) {
+      this.captureReaderDuration(reader, nowMs);
+    }
+    for (const state of this.deviceStates.values()) {
+      this.captureDeviceDuration(state, nowMs);
+    }
+
+    if (
+      this.pendingSiteMetrics.size === 0 &&
+      this.pendingContentMetrics.size === 0 &&
+      this.pendingOwnerPresence.size === 0
+    ) {
+      await this.persistVolatileState();
+      return;
+    }
+
+    for (const delta of this.pendingSiteMetrics.values()) {
+      const existing =
+        this.db
+          .select()
+          .from(schema.globalDailyStats)
+          .where(eq(schema.globalDailyStats.day, delta.day))
+          .all()[0] ?? null;
+      this.db
+        .insert(schema.globalDailyStats)
+        .values({
+          day: delta.day,
+          startedAtMs: existing?.startedAtMs ?? delta.startedAtMs,
+          lastUpdatedAtMs: Math.max(existing?.lastUpdatedAtMs ?? 0, delta.lastUpdatedAtMs),
+          pageViewCount: coerceNonNegativeInt(existing?.pageViewCount) + delta.pageViewCount,
+          uniqueVisitorCount:
+            coerceNonNegativeInt(existing?.uniqueVisitorCount) + delta.uniqueVisitorCount,
+          onlineIntegralMs: coerceNonNegativeInt(existing?.onlineIntegralMs) + delta.readTimeMs,
+          onlineCountPeak: coerceNonNegativeInt(existing?.onlineCountPeak),
+          activeDeviceCountPeak: coerceNonNegativeInt(existing?.activeDeviceCountPeak),
+          activeWebReaderCountPeak: coerceNonNegativeInt(existing?.activeWebReaderCountPeak),
+          dedupedEventCount: coerceNonNegativeInt(existing?.dedupedEventCount),
+          rejectedEventCount: coerceNonNegativeInt(existing?.rejectedEventCount),
+          broadcastCount: coerceNonNegativeInt(existing?.broadcastCount),
+        })
+        .onConflictDoUpdate({
+          target: schema.globalDailyStats.day,
+          set: {
+            lastUpdatedAtMs: Math.max(
+              existing?.lastUpdatedAtMs ?? 0,
+              delta.lastUpdatedAtMs,
+            ),
+            pageViewCount:
+              coerceNonNegativeInt(existing?.pageViewCount) + delta.pageViewCount,
+            uniqueVisitorCount:
+              coerceNonNegativeInt(existing?.uniqueVisitorCount) + delta.uniqueVisitorCount,
+            onlineIntegralMs:
+              coerceNonNegativeInt(existing?.onlineIntegralMs) + delta.readTimeMs,
+          },
+        })
+        .run();
+    }
+
+    for (const delta of this.pendingContentMetrics.values()) {
+      const existing =
+        this.db
+          .select()
+          .from(schema.pageDailyStats)
+          .where(eq(schema.pageDailyStats.id, delta.id))
+          .all()[0] ?? null;
+      this.db
+        .insert(schema.pageDailyStats)
+        .values({
+          id: delta.id,
+          day: delta.day,
+          canonicalUrl: delta.canonicalUrl,
+          title: delta.title,
+          startedAtMs: existing?.startedAtMs ?? delta.startedAtMs,
+          lastUpdatedAtMs: Math.max(existing?.lastUpdatedAtMs ?? 0, delta.lastUpdatedAtMs),
+          pageViewCount: coerceNonNegativeInt(existing?.pageViewCount) + delta.pageViewCount,
+          uniqueVisitorCount:
+            coerceNonNegativeInt(existing?.uniqueVisitorCount) + delta.uniqueVisitorCount,
+          readTimeMs: coerceNonNegativeInt(existing?.readTimeMs) + delta.readTimeMs,
+          readerSessionCount: coerceNonNegativeInt(existing?.readerSessionCount),
+          progressSum: existing?.progressSum ?? 0,
+          progressSamples: coerceNonNegativeInt(existing?.progressSamples),
+          maxProgressPercent: existing?.maxProgressPercent ?? 0,
+          bounceCount: coerceNonNegativeInt(existing?.bounceCount),
+          engagedReaderCount: coerceNonNegativeInt(existing?.engagedReaderCount),
+        })
+        .onConflictDoUpdate({
+          target: schema.pageDailyStats.id,
+          set: {
+            title: delta.title,
+            lastUpdatedAtMs: Math.max(
+              existing?.lastUpdatedAtMs ?? 0,
+              delta.lastUpdatedAtMs,
+            ),
+            pageViewCount:
+              coerceNonNegativeInt(existing?.pageViewCount) + delta.pageViewCount,
+            uniqueVisitorCount:
+              coerceNonNegativeInt(existing?.uniqueVisitorCount) + delta.uniqueVisitorCount,
+            readTimeMs: coerceNonNegativeInt(existing?.readTimeMs) + delta.readTimeMs,
+          },
+        })
+        .run();
+    }
+
+    for (const delta of this.pendingOwnerPresence.values()) {
+      const existing =
+        this.db
+          .select()
+          .from(schema.globalAppDailyStats)
+          .where(eq(schema.globalAppDailyStats.id, delta.id))
+          .all()[0] ?? null;
+      this.db
+        .insert(schema.globalAppDailyStats)
+        .values({
+          id: delta.id,
+          day: delta.day,
+          appKey: delta.appKey,
+          label: delta.label,
+          totalMs: coerceNonNegativeInt(existing?.totalMs) + delta.totalMs,
+          sampleCount: coerceNonNegativeInt(existing?.sampleCount) + delta.sampleCount,
+        })
+        .onConflictDoUpdate({
+          target: schema.globalAppDailyStats.id,
+          set: {
+            label: delta.label,
+            totalMs: coerceNonNegativeInt(existing?.totalMs) + delta.totalMs,
+            sampleCount:
+              coerceNonNegativeInt(existing?.sampleCount) + delta.sampleCount,
+          },
+        })
+        .run();
+    }
+
+    this.pendingSiteMetrics.clear();
+    this.pendingContentMetrics.clear();
+    this.pendingOwnerPresence.clear();
+    await this.persistVolatileState();
+  }
+
+  private buildContext(nowMs = Date.now()): RoomContext {
     return {
       workspaceId: this.workspaceId,
       roomId: this.roomId,
-      nowMs: Date.now(),
+      nowMs,
       readers: this.readersMemory,
       deviceStates: this.deviceStates,
       chatParticipants: this.chatParticipants,
@@ -357,56 +861,15 @@ export class RealtimeRoom extends DurableObject<Env> {
     };
   }
 
-  private requestFlush() {
-    const now = Date.now();
-    if (now - this.lastFlushMs > this.FLUSH_INTERVAL_MS) {
-      this.ctx.waitUntil(this.flushToDB());
-    } else {
-      this.ctx.waitUntil((async () => {
-        const wait = this.FLUSH_INTERVAL_MS - (now - this.lastFlushMs);
-        await new Promise((r) => setTimeout(r, wait));
-        await this.flushToDB();
-      })());
-    }
-  }
-
-  private async flushToDB() {
-    if (this.dirtyReaderKeys.size === 0 && this.deletedReaderKeys.size === 0) return;
-    this.lastFlushMs = Date.now();
-
-    const toDelete = Array.from(this.deletedReaderKeys);
-    const toUpsert = Array.from(this.dirtyReaderKeys)
-      .map((k) => this.readersMemory.get(k))
-      .filter(Boolean);
-
-    this.dirtyReaderKeys.clear();
-    this.deletedReaderKeys.clear();
-
-    this.ctx.storage.transactionSync(() => {
-      for (const id of toDelete) {
-        this.db.delete(schema.activeReaders).where(eq(schema.activeReaders.readerId, id)).run();
-      }
-      for (const item of toUpsert as Array<typeof schema.activeReaders.$inferInsert>) {
-        this.db
-          .insert(schema.activeReaders)
-          .values(item)
-          .onConflictDoUpdate({ target: schema.activeReaders.readerId, set: item })
-          .run();
-      }
-    });
-  }
-
   private async broadcastSnapshot() {
     const snapshot = await this.getSnapshot();
-    console.log("[room.broadcastSnapshot] begin", {
+    this.logger.debug("broadcast snapshot begin", {
       workspaceId: this.workspaceId,
       roomId: this.roomId,
       subscriberCount: this.sessionSubscribers.size,
-      onlineCount: (snapshot as any).onlineCount ?? null,
-      readerCount: Array.isArray((snapshot as any).activeReaders)
-        ? (snapshot as any).activeReaders.length
-        : null,
-      revision: (snapshot as any).revision ?? null,
+      onlineCount: snapshot.roomKind === "chat" ? snapshot.participantCount : snapshot.onlineCount,
+      readerCount: snapshot.roomKind === "chat" ? snapshot.participants.length : snapshot.activeReaders.length,
+      revision: snapshot.revision,
     });
 
     const dead: string[] = [];
@@ -414,21 +877,21 @@ export class RealtimeRoom extends DurableObject<Env> {
       try {
         const stub = this.env.REALTIME_SESSION.get(
           this.env.REALTIME_SESSION.idFromString(sessionId)
-        ) as any;
-        console.log("[room.broadcastSnapshot] push", {
+        ) as unknown as SessionRpc;
+        this.logger.debug("broadcast snapshot push", {
           workspaceId: this.workspaceId,
           roomId: this.roomId,
           sessionId,
         });
         await stub.pushRoomSnapshot(this.roomId, snapshot);
-        console.log("[room.broadcastSnapshot] pushed", {
+        this.logger.debug("broadcast snapshot pushed", {
           workspaceId: this.workspaceId,
           roomId: this.roomId,
           sessionId,
         });
       } catch {
         dead.push(sessionId);
-        console.warn("[room.broadcastSnapshot] failed", {
+        this.logger.warn("broadcast snapshot failed", {
           workspaceId: this.workspaceId,
           roomId: this.roomId,
           sessionId,
@@ -442,7 +905,7 @@ export class RealtimeRoom extends DurableObject<Env> {
           for (const id of dead) this.sessionSubscribers.delete(id);
           await this.ctx.storage.put("sessionSubs", Array.from(this.sessionSubscribers));
         }
-        console.log("[room.broadcastSnapshot] done", {
+        this.logger.debug("broadcast snapshot done", {
           workspaceId: this.workspaceId,
           roomId: this.roomId,
           attempted: promises.length,

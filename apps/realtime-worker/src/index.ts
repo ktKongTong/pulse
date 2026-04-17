@@ -11,8 +11,10 @@ import {
 } from "@pulse/realtime-protocol";
 
 import { deviceSessionTtlMs, isAllowedOriginForRequest, webSessionTtlMs } from "./env";
+import type { DeviceRpc, RoomRpc } from "./durable-stubs";
 import { InteractionHub } from "./interaction-hub-do";
 import { InteractionInbox } from "./interaction-inbox-do";
+import { createWorkerLogger } from "./logger";
 import { RealtimeRoom } from "./room-do";
 import { RealtimeSession } from "./session-do";
 import { DeviceDO } from "./device-do";
@@ -54,43 +56,63 @@ app.get("/", (c) =>
   })
 );
 
-app.get("/v1/stats/global", async (c) => {
+app.get("/v1/site/history", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  const day = c.req.query("day") ?? new Date().toISOString().slice(0, 10);
+  const period = StatsPeriodSchema.parse(c.req.query("period") ?? "day");
+  const limit = Number(c.req.query("limit") ?? (period === "day" ? "30" : period === "month" ? "12" : "5"));
+  const anchorDay = c.req.query("anchorDay") ?? new Date().toISOString().slice(0, 10);
   if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
 
   const room = roomStub(c.env, workspaceId, "global");
-  return c.json(await room.getGlobalStats(day));
+  return c.json(await room.getSiteHistory(period, limit, anchorDay));
 });
 
-app.get("/v1/stats/pages", async (c) => {
+app.get("/v1/site/lifetime", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  const day = c.req.query("day") ?? new Date().toISOString().slice(0, 10);
-  const limit = c.req.query("limit") ?? "20";
   if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
 
   const room = roomStub(c.env, workspaceId, "global");
-  return c.json(await room.getPageStats(day, parseInt(limit)));
+  return c.json(await room.getSiteLifetime());
 });
 
-app.get("/v1/stats/rooms", async (c) => {
+app.get("/v1/content/history", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  const day = c.req.query("day") ?? new Date().toISOString().slice(0, 10);
-  const limit = c.req.query("limit") ?? "20";
-  if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
+  const canonicalUrl = c.req.query("canonicalUrl");
+  const period = StatsPeriodSchema.parse(c.req.query("period") ?? "day");
+  const limit = Number(c.req.query("limit") ?? (period === "day" ? "30" : period === "month" ? "12" : "5"));
+  const anchorDay = c.req.query("anchorDay") ?? new Date().toISOString().slice(0, 10);
+  if (!canonicalUrl || workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "invalid_params" }, 400);
 
   const room = roomStub(c.env, workspaceId, "global");
-  return c.json(await room.getRoomStats(day, parseInt(limit)));
+  return c.json(await room.getContentHistory(canonicalUrl, period, limit, anchorDay));
 });
 
-app.get("/v1/stats/device/:deviceId", async (c) => {
+app.get("/v1/content/lifetime", async (c) => {
   const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
-  const day = c.req.query("day") ?? new Date().toISOString().slice(0, 10);
-  const deviceId = c.req.param("deviceId");
+  const canonicalUrl = c.req.query("canonicalUrl");
+  if (!canonicalUrl || workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "invalid_params" }, 400);
+
+  const room = roomStub(c.env, workspaceId, "global");
+  return c.json(await room.getContentLifetime(canonicalUrl));
+});
+
+app.get("/v1/owner/history", async (c) => {
+  const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
+  const period = StatsPeriodSchema.parse(c.req.query("period") ?? "day");
+  const limit = Number(c.req.query("limit") ?? (period === "day" ? "30" : period === "month" ? "12" : "5"));
+  const anchorDay = c.req.query("anchorDay") ?? new Date().toISOString().slice(0, 10);
   if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
 
   const room = roomStub(c.env, workspaceId, "global");
-  return c.json(await room.getDeviceStats(day, deviceId));
+  return c.json(await room.getOwnerHistory(period, limit, anchorDay));
+});
+
+app.get("/v1/owner/lifetime", async (c) => {
+  const workspaceId = c.req.query("workspaceId") ?? c.env.WORKSPACE_ID;
+  if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
+
+  const room = roomStub(c.env, workspaceId, "global");
+  return c.json(await room.getOwnerLifetime());
 });
 
 app.get("/v1/meta", (c) =>
@@ -107,8 +129,7 @@ app.get("/v1/meta", (c) =>
         multiRoom: true,
         chat: true,
         richMedia: true,
-        interaction: true,
-        statsPush: true
+        interaction: true
       },
       interactionProtocols: ["interaction.v1", "interaction.ws.v1"],
       supportedInteractionCommands: ["media.recommend.track"]
@@ -117,6 +138,7 @@ app.get("/v1/meta", (c) =>
 );
 
 app.post("/v2/presence/ingest", async (c) => {
+  const logger = createWorkerLogger(c.env, "worker.index");
   const payload = PresenceIngestRequestSchema.parse(await c.req.json());
   if (payload.workspaceId !== c.env.WORKSPACE_ID) {
     return c.json({ error: "workspace_mismatch" }, 403);
@@ -124,7 +146,12 @@ app.post("/v2/presence/ingest", async (c) => {
 
   const device = deviceStub(c.env, payload.workspaceId, payload.deviceId);
   const ack = await device.handlePresenceIngest(payload, deviceSessionTtlMs(c.env));
-  console.log("presence", payload)
+  logger.debug("presence ingest accepted", {
+    workspaceId: payload.workspaceId,
+    deviceId: payload.deviceId,
+    eventCount: payload.events.length,
+    acceptedSeqMax: ack.acceptedSeqMax,
+  });
   return c.json(ack);
 });
 
@@ -173,19 +200,8 @@ app.post("/v1/web/ingest", async (c) => {
 
 // WEBSOCKETS via Hibernation
 
-app.get("/v1/realtime/snapshot", async (c) => {
-  const workspaceId = c.req.query("workspaceId");
-  const roomId = c.req.query("roomId");
-
-  if (!workspaceId || !roomId || workspaceId !== c.env.WORKSPACE_ID) {
-    return c.json({ error: "invalid_params" }, 400);
-  }
-
-  const room = roomStub(c.env, workspaceId, roomId);
-  return c.json(await room.getSnapshot(workspaceId, roomId));
-});
-
 app.get("/v1/realtime/ws", async (c) => {
+  const logger = createWorkerLogger(c.env, "worker.index");
   const workspaceId = c.req.query("workspaceId");
   const roomId = c.req.query("roomId");
   if (!workspaceId || workspaceId !== c.env.WORKSPACE_ID) {
@@ -198,7 +214,7 @@ app.get("/v1/realtime/ws", async (c) => {
 
   const id = c.env.REALTIME_SESSION.newUniqueId();
   const stub = c.env.REALTIME_SESSION.get(id);
-  console.log("[realtime.ws.route] upgrade", {
+  logger.debug("ws upgrade", {
     workspaceId,
     sessionDoId: id.toString(),
     url: c.req.url,
@@ -210,7 +226,7 @@ app.get("/v1/realtime/ws", async (c) => {
 });
 
 app.onError((err, c) => {
-  console.error("Hono Error:", err);
+  createWorkerLogger(c.env, "worker.index").error("hono error", err);
   return c.json({
     error: "internal_server_error",
     message: err.message,
@@ -226,14 +242,14 @@ app.notFound((c) => c.env.ASSETS.fetch(c.req.raw));
 export default app;
 export { RealtimeRoom, RealtimeSession, InteractionHub, InteractionInbox, DeviceDO };
 
-function roomStub(env: Env, workspaceId: string, roomId: string): DurableObjectStub<RealtimeRoom> {
+function roomStub(env: Env, workspaceId: string, roomId: string): RoomRpc {
   const id = env.REALTIME_ROOM.idFromName(`${workspaceId}:${roomId}`);
-  return env.REALTIME_ROOM.get(id) as unknown as DurableObjectStub<RealtimeRoom>;
+  return env.REALTIME_ROOM.get(id) as unknown as RoomRpc;
 }
 
-function deviceStub(env: Env, workspaceId: string, deviceId: string): DurableObjectStub<DeviceDO> {
+function deviceStub(env: Env, workspaceId: string, deviceId: string): DeviceRpc {
   const id = env.DEVICE_DO.idFromName(`${workspaceId}:${deviceId}`);
-  return env.DEVICE_DO.get(id) as unknown as DurableObjectStub<DeviceDO>;
+  return env.DEVICE_DO.get(id) as unknown as DeviceRpc;
 }
 
 // Stubs for non-refactored objects

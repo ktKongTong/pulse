@@ -1,14 +1,18 @@
 import { usePagePresence } from "@pulse/realtime-react";
 
 export {
+  useContentHistory,
+  useContentLifetime,
   useGlobalPresenceSnapshot,
   useInteractionStates,
+  useOwnerHistory,
+  useOwnerLifetime,
   usePagePresence,
   usePagePresenceSnapshot,
   usePresenceState,
   useRealtimeDebugState,
-  useRoomSnapshot,
-  useStatusAggregates,
+  useSiteHistory,
+  useSiteLifetime,
   usePulseRealtimeClient,
 } from "@pulse/realtime-react";
 

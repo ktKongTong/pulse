@@ -12,13 +12,24 @@ export interface StatusMediaModel {
 }
 
 export function buildStatusViewModel(snapshot: GlobalRoomSnapshot | null, nowMs: number) {
-  const deviceReaders = (snapshot?.activeReaders ?? []).filter(
-    (reader) => reader.source === "device"
-  );
-  const primaryReader =
-    [...deviceReaders].sort(
-      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
-    )[0] ?? null;
+  const primaryReader = snapshot?.ownerCurrent
+    ? {
+        readerId: snapshot.ownerCurrent.deviceId ?? "owner-current",
+        displayName: snapshot.ownerCurrent.displayName ?? "PulseBar",
+        updatedAt: snapshot.ownerCurrent.lastActiveAt,
+        app: snapshot.ownerCurrent.currentApp,
+        media: snapshot.ownerCurrent.currentMedia,
+        device: snapshot.ownerCurrent.deviceId
+          ? {
+              deviceId: snapshot.ownerCurrent.deviceId,
+              sessionId: snapshot.ownerCurrent.deviceId,
+              name: snapshot.ownerCurrent.displayName,
+            }
+          : undefined,
+      }
+    : [...(snapshot?.activeReaders ?? []).filter((reader) => reader.source === "device")].sort(
+        (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+      )[0] ?? null;
 
   const media = primaryReader?.media;
   const displayedProgress = resolveDisplayedProgress(
@@ -35,6 +46,10 @@ export function buildStatusViewModel(snapshot: GlobalRoomSnapshot | null, nowMs:
     appId: primaryReader?.app?.id ?? primaryReader?.readerId ?? "idle",
     appLabel:
       primaryReader?.app?.name ?? primaryReader?.displayName ?? "No active app",
+    siteOnlineCount: snapshot?.onlineCount ?? 0,
+    activePages: Object.entries(snapshot?.pageConcurrencyMap ?? {}).sort(
+      (left, right) => right[1] - left[1]
+    ),
     media: media
       ? {
           providerId: media.providerId ?? undefined,

@@ -1,70 +1,34 @@
-import type { DeviceAggregate } from "@pulse/realtime-protocol";
+import type { OwnerMetrics } from "@pulse/realtime-protocol";
 
 import { AggregateBarRow } from "./aggregate-bar-row";
 
-export function DeviceFocusChart(props: { aggregate: DeviceAggregate | null }) {
+export function DeviceFocusChart(props: { aggregate: OwnerMetrics | null }) {
   const aggregate = props.aggregate;
   if (!aggregate) {
-    return <EmptyCopy text="No device aggregate has been materialized for the active device yet." />;
+    return <EmptyCopy text="No owner aggregate has been materialized yet." />;
   }
 
-  const totalFocusSeconds = aggregate.appFocus.reduce((sum, item) => sum + item.totalSeconds, 0);
-  const totalMediaSeconds = aggregate.mediaPlayback.reduce((sum, item) => sum + item.totalSeconds, 0);
+  const totalFocusSeconds = aggregate.appPresenceSecondsByApp.reduce(
+    (sum, item) => sum + item.totalSeconds,
+    0,
+  );
 
   return (
     <div className="space-y-8">
-      <div className="grid gap-6 sm:grid-cols-3">
-        <Metric label="Focus switches" value={String(aggregate.focusSwitchCount)} />
-        <Metric label="Media switches" value={String(aggregate.mediaSwitchCount)} />
-        <Metric label="Sessions" value={String(aggregate.sessionCount)} />
-      </div>
-
       <div className="space-y-3">
-        <SectionLabel title="Top app focus share" />
+        <SectionLabel title="App presence history" />
         <div className="space-y-1">
-          {aggregate.appFocus.slice(0, 5).map((item) => (
+          {aggregate.appPresenceSecondsByApp.slice(0, 5).map((item) => (
             <AggregateBarRow
               key={item.key}
               label={item.label}
-              caption={`${share(item.totalSeconds, totalFocusSeconds)} of device focus`}
+              caption={`${share(item.totalSeconds, totalFocusSeconds)} of owner presence`}
               value={formatDuration(item.totalSeconds)}
               percent={sharePercent(item.totalSeconds, totalFocusSeconds)}
             />
           ))}
         </div>
       </div>
-
-      <div className="space-y-3">
-        <SectionLabel title="Media playback share" />
-        {aggregate.mediaPlayback.length === 0 ? (
-          <EmptyCopy text="No media playback aggregate has been collected yet." />
-        ) : (
-          <div className="space-y-1">
-            {aggregate.mediaPlayback.slice(0, 4).map((item) => (
-              <AggregateBarRow
-                key={`${item.providerId}:${item.trackId ?? item.title ?? "media"}`}
-                label={item.title ?? item.trackId ?? item.providerId}
-                caption={`${item.providerId} · ${share(item.totalSeconds, totalMediaSeconds)} of playback`}
-                value={formatDuration(item.totalSeconds)}
-                percent={sharePercent(item.totalSeconds, totalMediaSeconds)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Metric(props: { label: string; value: string }) {
-  return (
-    <div className="space-y-1">
-      <p className="text-[11px] font-medium uppercase tracking-[0.28em] text-stone-400">
-        {props.label}
-      </p>
-      <p className="text-[18px] font-medium tracking-tight text-stone-950">
-        {props.value}
-      </p>
     </div>
   );
 }

@@ -1,10 +1,4 @@
 import { z } from "zod";
-import {
-  DeviceAggregateSchema,
-  PageAggregateSchema,
-  RoomAggregateSchema,
-  StatsSummarySchema,
-} from "./stats-v1";
 
 export const REALTIME_STREAM_PROTOCOL_V1 = "realtime.v1-stream";
 export const REALTIME_WS_PROTOCOL_V1 = "realtime.ws.v1";
@@ -129,6 +123,17 @@ export const GlobalRoomSnapshotSchema = z.object({
   roomKind: z.literal("global"),
   onlineCount: z.number().int().nonnegative(),
   activeReaders: z.array(RoomReaderSchema),
+  pageConcurrencyMap: z.record(z.string(), z.number().int().nonnegative()).default({}),
+  ownerCurrent: z
+    .object({
+      deviceId: z.string().optional(),
+      displayName: z.string().optional(),
+      currentApp: RoomReaderAppSchema,
+      currentMedia: RoomReaderMediaSchema,
+      lastActiveAt: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const PageRoomSnapshotSchema = z.object({
@@ -173,7 +178,6 @@ export const RealtimeCapabilitiesSchema = z.object({
   chat: z.boolean(),
   richMedia: z.boolean(),
   interaction: z.boolean(),
-  statsPush: z.boolean(),
 });
 
 export const RealtimeMetaResponseSchema = z.object({
@@ -191,21 +195,6 @@ export const RealtimeMetaResponseSchema = z.object({
 export const RealtimeSubscriptionSchema = z.object({
   subscriptionId: z.string(),
   roomId: z.string(),
-});
-
-export const RealtimeStatsTargetSchema = z.enum([
-  "global",
-  "device",
-  "pages",
-  "rooms",
-]);
-
-export const RealtimeStatsSubscriptionSchema = z.object({
-  subscriptionId: z.string(),
-  target: RealtimeStatsTargetSchema,
-  day: z.string(),
-  deviceId: z.string().optional(),
-  limit: z.number().int().positive().max(100).optional(),
 });
 
 export const RealtimeHelloSchema = z.object({
@@ -233,18 +222,6 @@ export const RealtimeUnsubscribeSchema = z.object({
   subscriptionIds: z.array(z.string()).min(1),
 });
 
-export const RealtimeSubscribeStatsSchema = z.object({
-  protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
-  type: z.literal("subscribe_stats"),
-  subscriptions: z.array(RealtimeStatsSubscriptionSchema).min(1),
-});
-
-export const RealtimeUnsubscribeStatsSchema = z.object({
-  protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
-  type: z.literal("unsubscribe_stats"),
-  subscriptionIds: z.array(z.string()).min(1),
-});
-
 export const RealtimeChatJoinSchema = z.object({
   protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
   type: z.literal("chat_join"),
@@ -264,6 +241,19 @@ export const RealtimeChatSendSchema = z.object({
   type: z.literal("chat_send"),
   roomId: z.string(),
   content: z.string().min(1).max(4000),
+});
+
+export const RealtimePresenceContextSchema = z.object({
+  protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
+  type: z.literal("presence_context"),
+  sessionId: z.string().min(1),
+  tabId: z.string().min(1),
+  userId: z.string().min(1).optional(),
+  page: z.object({
+    title: z.string().min(1),
+    url: z.string().url(),
+    canonicalUrl: z.string().url().optional(),
+  }),
 });
 
 export const RealtimeSnapshotEnvelopeSchema = z.object({
@@ -307,66 +297,14 @@ export const RealtimeErrorEnvelopeSchema = z.object({
   subscriptionId: z.string().optional(),
 });
 
-const RealtimeGlobalStatsEnvelopeSchema = z.object({
-  protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
-  type: z.literal("stats"),
-  subscriptionId: z.string(),
-  target: z.literal("global"),
-  day: z.string(),
-  payload: StatsSummarySchema,
-});
-
-const RealtimeDeviceStatsEnvelopeSchema = z.object({
-  protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
-  type: z.literal("stats"),
-  subscriptionId: z.string(),
-  target: z.literal("device"),
-  day: z.string(),
-  payload: DeviceAggregateSchema.nullable(),
-});
-
-const RealtimePagesStatsEnvelopeSchema = z.object({
-  protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
-  type: z.literal("stats"),
-  subscriptionId: z.string(),
-  target: z.literal("pages"),
-  day: z.string(),
-  payload: z.array(PageAggregateSchema),
-});
-
-const RealtimeRoomsStatsEnvelopeSchema = z.object({
-  protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
-  type: z.literal("stats"),
-  subscriptionId: z.string(),
-  target: z.literal("rooms"),
-  day: z.string(),
-  payload: z.array(RoomAggregateSchema),
-});
-
-export const RealtimeStatsEnvelopeSchema = z.discriminatedUnion("target", [
-  RealtimeGlobalStatsEnvelopeSchema,
-  RealtimeDeviceStatsEnvelopeSchema,
-  RealtimePagesStatsEnvelopeSchema,
-  RealtimeRoomsStatsEnvelopeSchema,
-]);
-
-export const RealtimeStatsErrorEnvelopeSchema = z.object({
-  protocol: z.literal(REALTIME_WS_PROTOCOL_V1).default(REALTIME_WS_PROTOCOL_V1),
-  type: z.literal("stats_error"),
-  code: z.string(),
-  message: z.string(),
-  subscriptionId: z.string().optional(),
-});
-
 export const RealtimeClientMessageSchema = z.discriminatedUnion("type", [
   RealtimeHelloSchema,
   RealtimeSubscribeSchema,
   RealtimeUnsubscribeSchema,
-  RealtimeSubscribeStatsSchema,
-  RealtimeUnsubscribeStatsSchema,
   RealtimeChatJoinSchema,
   RealtimeChatLeaveSchema,
   RealtimeChatSendSchema,
+  RealtimePresenceContextSchema,
 ]);
 
 export const RealtimeServerMessageSchema = z.discriminatedUnion("type", [
@@ -374,8 +312,6 @@ export const RealtimeServerMessageSchema = z.discriminatedUnion("type", [
   RealtimeSnapshotEnvelopeSchema,
   ChatEventEnvelopeSchema,
   RealtimeErrorEnvelopeSchema,
-  RealtimeStatsEnvelopeSchema,
-  RealtimeStatsErrorEnvelopeSchema,
 ]);
 
 export type RoomSnapshot = z.infer<typeof RoomSnapshotSchema>;
@@ -390,32 +326,19 @@ export type RoomStreamEnvelope = z.infer<typeof RoomStreamEnvelopeSchema>;
 export type RealtimeMetaResponse = z.infer<typeof RealtimeMetaResponseSchema>;
 export type RealtimeCapabilities = z.infer<typeof RealtimeCapabilitiesSchema>;
 export type RealtimeSubscription = z.infer<typeof RealtimeSubscriptionSchema>;
-export type RealtimeStatsTarget = z.infer<typeof RealtimeStatsTargetSchema>;
-export type RealtimeStatsSubscription = z.infer<
-  typeof RealtimeStatsSubscriptionSchema
->;
 export type RealtimeHello = z.infer<typeof RealtimeHelloSchema>;
 export type RealtimeHelloAck = z.infer<typeof RealtimeHelloAckSchema>;
 export type RealtimeSubscribe = z.infer<typeof RealtimeSubscribeSchema>;
 export type RealtimeUnsubscribe = z.infer<typeof RealtimeUnsubscribeSchema>;
-export type RealtimeSubscribeStats = z.infer<
-  typeof RealtimeSubscribeStatsSchema
->;
-export type RealtimeUnsubscribeStats = z.infer<
-  typeof RealtimeUnsubscribeStatsSchema
->;
 export type RealtimeChatJoin = z.infer<typeof RealtimeChatJoinSchema>;
 export type RealtimeChatLeave = z.infer<typeof RealtimeChatLeaveSchema>;
 export type RealtimeChatSend = z.infer<typeof RealtimeChatSendSchema>;
+export type RealtimePresenceContext = z.infer<typeof RealtimePresenceContextSchema>;
 export type RealtimeSnapshotEnvelope = z.infer<
   typeof RealtimeSnapshotEnvelopeSchema
 >;
 export type ChatEventEnvelope = z.infer<typeof ChatEventEnvelopeSchema>;
 export type RealtimeErrorEnvelope = z.infer<typeof RealtimeErrorEnvelopeSchema>;
-export type RealtimeStatsEnvelope = z.infer<typeof RealtimeStatsEnvelopeSchema>;
-export type RealtimeStatsErrorEnvelope = z.infer<
-  typeof RealtimeStatsErrorEnvelopeSchema
->;
 export type RealtimeClientMessage = z.infer<typeof RealtimeClientMessageSchema>;
 export type RealtimeServerMessage = z.infer<typeof RealtimeServerMessageSchema>;
 

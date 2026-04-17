@@ -7,6 +7,8 @@
     "dev:worker": "pnpm --filter @pulse/realtime-worker dev",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "check": "pnpm -r typecheck && pnpm -r test"
+    "check": "pnpm -r typecheck && pnpm -r test",
+    "check:native": "./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:compileKotlinJvm :common:compileKotlinMacosArm64",
+    "check:all": "pnpm check && pnpm check:native"
   }
 }

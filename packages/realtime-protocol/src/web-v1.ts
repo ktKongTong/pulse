@@ -45,6 +45,7 @@ export const WebIngestRequestSchema = z.object({
   workspaceId: z.string().min(1),
   siteId: z.string().min(1),
   sessionId: z.string().min(1),
+  tabId: z.string().min(1),
   userId: z.string().min(1).optional(),
   events: z.array(WebEventSchema).min(1)
 });

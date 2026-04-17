@@ -30,6 +30,23 @@ export class PulseRealtimeClient {
     return this.realtime.ingestWebEvents(events, options);
   }
 
+  ingestWebEventsBeacon(events: WebEvent[], options?: { userId?: string }) {
+    return this.realtime.ingestWebEventsBeacon(events, options);
+  }
+
+  setPresenceContext(context: {
+    sessionId: string;
+    tabId: string;
+    userId?: string;
+    page: {
+      title: string;
+      url: string;
+      canonicalUrl?: string;
+    };
+  }) {
+    this.subscriptions.setPresenceContext(context);
+  }
+
   createTrackRecommendation(args: {
     provider: "spotify" | "apple-music";
     uri: string;

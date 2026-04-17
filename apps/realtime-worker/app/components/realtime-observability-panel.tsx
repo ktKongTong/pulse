@@ -20,7 +20,7 @@ export function RealtimeObservabilityPanel(props: { debug: RoomSubscriptionDebug
         <Metric label="Transport" value={debug.transport.status} />
         <Metric label="Protocol" value={debug.transport.selectedProtocol ?? "pending"} />
         <Metric label="Subscriptions" value={`${debug.subscriptions.length}`} />
-        <Metric label="Stats" value={`${debug.statsSubscriptions.length}`} />
+        <Metric label="Last push" value={debug.lastSnapshotMeta ? "snapshot" : "idle"} />
       </div>
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
@@ -46,7 +46,7 @@ export function RealtimeObservabilityPanel(props: { debug: RoomSubscriptionDebug
 
         <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
           <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-300">Active subscriptions</h3>
-          {debug.subscriptions.length === 0 && debug.statsSubscriptions.length === 0 ? (
+          {debug.subscriptions.length === 0 ? (
             <p className="mt-4 text-sm text-slate-400">No active subscriptions.</p>
           ) : (
             <div className="mt-4 space-y-3">
@@ -65,41 +65,13 @@ export function RealtimeObservabilityPanel(props: { debug: RoomSubscriptionDebug
                   </div>
                 </article>
               ))}
-              {debug.statsSubscriptions.map((subscription) => (
-                <article
-                  key={subscription.subscriptionId}
-                  className="flex items-start justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3"
-                >
-                  <div>
-                    <strong className="text-sm font-semibold text-white">{subscription.key}</strong>
-                    <p className="mt-1 text-xs text-slate-400">{subscription.target}</p>
-                  </div>
-                  <div className="text-right text-xs text-slate-400">
-                    <div className="font-medium uppercase tracking-wide text-slate-200">stats</div>
-                    <small>{subscription.subscriptionId}</small>
-                  </div>
-                </article>
-              ))}
             </div>
           )}
         </div>
 
         <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
           <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-300">Latest push</h3>
-          {debug.lastStatsMeta ? (
-            <div className="mt-4">
-              <article className="flex items-start justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
-                <div>
-                  <strong className="text-sm font-semibold text-white">{debug.lastStatsMeta.target}</strong>
-                  <p className="mt-1 text-xs text-slate-400">{debug.lastStatsMeta.day}</p>
-                </div>
-                <div className="text-right text-xs text-slate-400">
-                  <div className="font-medium text-slate-200">stats</div>
-                  <small>{debug.lastStatsMeta.subscriptionId}</small>
-                </div>
-              </article>
-            </div>
-          ) : debug.lastSnapshotMeta ? (
+          {debug.lastSnapshotMeta ? (
             <div className="mt-4">
               <article className="flex items-start justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
                 <div>

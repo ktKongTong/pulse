@@ -60,36 +60,13 @@ export function DashboardPage() {
   const readers = snapshot?.activeReaders ?? [];
   const webReaders = readers.filter((reader) => reader.source === "web");
   const deviceReaders = readers.filter((reader) => reader.source === "device");
-  const activePages = Object.values(
-    webReaders.reduce<
-      Record<
-        string,
-        {
-          canonicalUrl: string;
-          title: string;
-          count: number;
-          averageProgress: number;
-        }
-      >
-    >((acc, reader) => {
-      const canonicalUrl = reader.page?.canonicalUrl;
-      if (!canonicalUrl) return acc;
-      const current = acc[canonicalUrl] ?? {
-        canonicalUrl,
-        title: reader.page?.title ?? canonicalUrl,
-        count: 0,
-        averageProgress: 0,
-      };
-      current.count += 1;
-      current.averageProgress += reader.reading?.progressPercent ?? 0;
-      acc[canonicalUrl] = current;
-      return acc;
-    }, {}),
-  )
-    .map((page) => ({
-      ...page,
-      averageProgress:
-        page.count > 0 ? Math.round(page.averageProgress / page.count) : 0,
+  const activePages = Object.entries(snapshot?.pageConcurrencyMap ?? {})
+    .map(([canonicalUrl, count]) => ({
+      canonicalUrl,
+      title:
+        readers.find((reader) => reader.page?.canonicalUrl === canonicalUrl)?.page
+          ?.title ?? canonicalUrl,
+      count,
     }))
     .sort((left, right) => right.count - left.count);
 
@@ -206,7 +183,7 @@ export function DashboardPage() {
                                     {page.count}
                                   </div>
                                   <div className="text-xs text-muted-foreground">
-                                    {page.averageProgress}%
+                                    active sessions
                                   </div>
                                 </div>
                               </CardContent>

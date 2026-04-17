@@ -1,7 +1,16 @@
-import type { DrizzleSqliteDODatabase } from 'drizzle-orm/durable-sqlite';
-import type { WebIngestRequest } from '@pulse/realtime-protocol';
-import * as schema from './db/schema';
-import { eq } from 'drizzle-orm';
+import type {
+  ChatRoomSnapshot,
+  GlobalRoomSnapshot,
+  PageRoomSnapshot,
+  RoomReader,
+} from '@pulse/realtime-protocol';
+import type {
+  ActiveReaderState,
+  ChatMessageState,
+  ChatParticipantState,
+  DevicePresenceState,
+} from './runtime-models';
+import { isDeviceActiveNow, isReaderActiveNow } from './runtime-models';
 
 // ==========================================
 // Strategy Interface
@@ -15,7 +24,7 @@ export interface RoomStrategy {
    * Build a snapshot payload for this room type.
    * Called by RoomDO.getSnapshot() and broadcast.
    */
-  buildSnapshot(ctx: RoomContext): Record<string, unknown>;
+  buildSnapshot(ctx: RoomContext): GlobalRoomSnapshot | PageRoomSnapshot | ChatRoomSnapshot;
 
   /**
    * Handle web visitor presence events.
@@ -38,7 +47,7 @@ export interface RoomStrategy {
    * Handle device state push (only meaningful for GlobalRoomStrategy).
    * Returns true if state changed and a broadcast is needed.
    */
-  handleDeviceUpdate(ctx: RoomContext, deviceId: string, state: unknown | null): boolean;
+  handleDeviceUpdate(ctx: RoomContext, deviceId: string, state: DevicePresenceState | null): boolean;
 }
 
 // ==========================================
@@ -49,6 +58,9 @@ export interface RoomStrategy {
 export interface WebIngestEvent {
   kind: string;
   observedAt: string;
+  sessionId: string;
+  tabId: string;
+  userId?: string;
   presence: { state: string };
   page: { title: string; url: string; canonicalUrl?: string };
   reading?: { progressPercent?: number; scrollY?: number };
@@ -59,22 +71,10 @@ export interface RoomContext {
   workspaceId: string;
   roomId: string;
   nowMs: number;
-  readers: Map<string, typeof schema.activeReaders.$inferInsert>;
-  deviceStates: Map<string, unknown>;
-  chatParticipants: Map<string, {
-    readerId: string;
-    displayName: string;
-    presenceState: "active";
-    updatedAt: string;
-    userId?: string;
-  }>;
-  chatMessages: Array<{
-    msgId: string;
-    senderId: string;
-    senderDisplayName: string;
-    content: string;
-    createdAt: string;
-  }>;
+  readers: Map<string, ActiveReaderState>;
+  deviceStates: Map<string, DevicePresenceState>;
+  chatParticipants: Map<string, ChatParticipantState>;
+  chatMessages: ChatMessageState[];
   typingUsers: Set<string>;
 }
 
@@ -85,10 +85,10 @@ export interface RoomContext {
 export class GlobalRoomStrategy implements RoomStrategy {
   readonly type = 'global' as const;
 
-  handleDeviceUpdate(ctx: RoomContext, deviceId: string, state: unknown | null): boolean {
+  handleDeviceUpdate(ctx: RoomContext, deviceId: string, state: DevicePresenceState | null): boolean {
     if (state) {
-      const existing = ctx.deviceStates.get(deviceId) as any;
-      const incoming = state as any;
+      const existing = ctx.deviceStates.get(deviceId);
+      const incoming = state;
 
       // Multi-device arbitration: only accept if newer or first time
       if (existing && existing.updatedAt && incoming.updatedAt) {
@@ -108,12 +108,13 @@ export class GlobalRoomStrategy implements RoomStrategy {
   handleWebEvent(ctx: RoomContext, event: WebIngestEvent, readerId: string, ttlMs: number): boolean {
     ctx.readers.set(readerId, {
       readerId,
-      sessionId: readerId.replace('web:', ''),
+      sessionId: event.sessionId,
+      tabId: event.tabId,
       workspaceId: ctx.workspaceId,
       roomId: ctx.roomId,
-      userId: null,
+      userId: event.userId ?? null,
       source: 'web',
-      displayName: `Anonymous ${readerId.slice(-4)}`,
+      displayName: event.userId ?? `Anonymous ${event.sessionId.slice(-4)}`,
       presenceState: event.presence.state,
       pageTitle: event.page.title,
       pageUrl: event.page.url,
@@ -122,6 +123,7 @@ export class GlobalRoomStrategy implements RoomStrategy {
       readingScrollY: event.reading?.scrollY ?? null,
       updatedAt: event.observedAt,
       expiresAtMs: ctx.nowMs + ttlMs,
+      lastCountedAtMs: ctx.nowMs,
     });
     return true;
   }
@@ -130,50 +132,79 @@ export class GlobalRoomStrategy implements RoomStrategy {
     return ctx.readers.delete(readerId);
   }
 
-  buildSnapshot(ctx: RoomContext): Record<string, unknown> {
-    const webReaders = Array.from(ctx.readers.values()).map(mapReaderToSnapshot);
+  buildSnapshot(ctx: RoomContext): GlobalRoomSnapshot {
+    const rawWebReaders = Array.from(ctx.readers.values()).filter((reader) =>
+      isReaderActiveNow(reader, ctx.nowMs),
+    );
+    const webReaders = dedupeReadersBySession(rawWebReaders).map(mapReaderToSnapshot);
 
-    const deviceReaders = Array.from(ctx.deviceStates.entries()).map(([deviceId, raw]) => {
-      const state = raw as any;
-      const sessionId = state.sessionId ?? deviceId;
-      const mediaSession = state.mediaSessions?.[0];
-      const mediaExtensions = mediaSession?.extensions?.values?.provider;
-      return {
-        readerId: `device:${deviceId}`,
-        sessionId: deviceId,
-        source: 'device',
-        displayName: state.device?.name || deviceId,
-        presenceState: state.availability?.state || 'active',
-        app: state.focus?.app ? { name: state.focus.app.name } : undefined,
-        media: mediaSession ? {
-          providerId: mediaSession.provider?.id,
-          source: mediaSession.provider?.kind,
-          itemType: mediaSession.item?.type,
-          trackId: mediaSession.item?.id,
-          title: mediaSession.item?.title,
-          artist: mediaSession.item?.artist,
-          album: mediaSession.item?.album,
-          albumArtist: mediaExtensions?.albumArtist,
-          artworkUrl: mediaSession.item?.artworkUrl,
-          linkUrl: mediaSession.item?.linkUrl ?? mediaSession.item?.uri,
-          progressSeconds: mediaSession.playback?.progressSeconds,
-          durationSeconds: mediaSession.playback?.durationSeconds,
-          playbackState: mediaSession.playback?.state,
-          trackNumber: mediaExtensions?.trackNumber,
-          discNumber: mediaExtensions?.discNumber,
-          collectionId: mediaExtensions?.collectionId,
-          collectionTitle: mediaExtensions?.collectionTitle,
-          collectionLinkUrl: mediaExtensions?.collectionLinkUrl,
-        } : undefined,
-        device: {
-          deviceId,
-          sessionId,
-          name: state.device?.name,
-          platform: state.device?.platform,
-        },
-        updatedAt: state.updatedAt || new Date().toISOString(),
-      };
-    });
+    const deviceReaders: RoomReader[] = Array.from(ctx.deviceStates.entries())
+      .filter(([, raw]) => isDeviceActiveNow(raw, ctx.nowMs))
+      .map(([deviceId, raw]) => {
+        const state = raw;
+        const sessionId = state.sessionId ?? deviceId;
+        const mediaSession = state.mediaSessions?.[0];
+        const mediaExtensions = mediaSession?.extensions?.values?.provider as
+          | {
+              albumArtist?: string;
+              trackNumber?: number;
+              discNumber?: number;
+              collectionId?: string;
+              collectionTitle?: string;
+              collectionLinkUrl?: string;
+            }
+          | undefined;
+        return {
+          readerId: `device:${deviceId}`,
+          sessionId: deviceId,
+          source: 'device' as const,
+          displayName: state.device?.name || deviceId,
+          presenceState: (state.availability?.state ?? 'active') as RoomReader["presenceState"],
+          app: state.focus?.app?.name ? { name: state.focus.app.name } : undefined,
+          media: mediaSession ? {
+            providerId: mediaSession.provider?.id,
+            source: mediaSession.provider?.kind,
+            itemType: mediaSession.item?.type,
+            trackId: mediaSession.item?.id,
+            title: mediaSession.item?.title,
+            artist: mediaSession.item?.artist,
+            album: mediaSession.item?.album,
+            albumArtist: mediaExtensions?.albumArtist,
+            artworkUrl: mediaSession.item?.artworkUrl,
+            linkUrl: mediaSession.item?.linkUrl ?? mediaSession.item?.uri,
+            progressSeconds: mediaSession.playback?.progressSeconds,
+            durationSeconds: mediaSession.playback?.durationSeconds,
+            playbackState: mediaSession.playback?.state,
+            trackNumber: mediaExtensions?.trackNumber,
+            discNumber: mediaExtensions?.discNumber,
+            collectionId: mediaExtensions?.collectionId,
+            collectionTitle: mediaExtensions?.collectionTitle,
+            collectionLinkUrl: mediaExtensions?.collectionLinkUrl,
+          } : undefined,
+          device: {
+            deviceId,
+            sessionId,
+            name: state.device?.name,
+            platform: state.device?.platform,
+          },
+          updatedAt: state.updatedAt || new Date().toISOString(),
+        };
+      });
+
+    const pageReaders = new Map<string, Set<string>>();
+    for (const reader of rawWebReaders) {
+      const key = reader.pageCanonicalUrl ?? reader.pageUrl;
+      if (!key) continue;
+      const sessions = pageReaders.get(key) ?? new Set<string>();
+      sessions.add(reader.sessionId);
+      pageReaders.set(key, sessions);
+    }
+    const pageConcurrencyMap = Object.fromEntries(
+      [...pageReaders.entries()].map(([key, sessions]) => [key, sessions.size]),
+    );
+
+    const ownerCurrent = [...deviceReaders]
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0];
 
     return {
       roomKind: 'global',
@@ -182,6 +213,16 @@ export class GlobalRoomStrategy implements RoomStrategy {
       revision: Date.now(),
       onlineCount: webReaders.length + deviceReaders.length,
       activeReaders: [...webReaders, ...deviceReaders],
+      pageConcurrencyMap,
+      ownerCurrent: ownerCurrent
+        ? {
+            deviceId: ownerCurrent.device?.deviceId,
+            displayName: ownerCurrent.displayName,
+            currentApp: ownerCurrent.app,
+            currentMedia: ownerCurrent.media,
+            lastActiveAt: ownerCurrent.updatedAt,
+          }
+        : null,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -194,7 +235,7 @@ export class GlobalRoomStrategy implements RoomStrategy {
 export class PageRoomStrategy implements RoomStrategy {
   readonly type = 'page' as const;
 
-  handleDeviceUpdate(_ctx: RoomContext, _deviceId: string, _state: unknown | null): boolean {
+  handleDeviceUpdate(_ctx: RoomContext, _deviceId: string, _state: DevicePresenceState | null): boolean {
     // Page rooms don't care about device states
     return false;
   }
@@ -202,12 +243,13 @@ export class PageRoomStrategy implements RoomStrategy {
   handleWebEvent(ctx: RoomContext, event: WebIngestEvent, readerId: string, ttlMs: number): boolean {
     ctx.readers.set(readerId, {
       readerId,
-      sessionId: readerId.replace('web:', ''),
+      sessionId: event.sessionId,
+      tabId: event.tabId,
       workspaceId: ctx.workspaceId,
       roomId: ctx.roomId,
-      userId: null,
+      userId: event.userId ?? null,
       source: 'web',
-      displayName: `Anonymous ${readerId.slice(-4)}`,
+      displayName: event.userId ?? `Anonymous ${event.sessionId.slice(-4)}`,
       presenceState: event.presence.state,
       pageTitle: event.page.title,
       pageUrl: event.page.url,
@@ -216,6 +258,7 @@ export class PageRoomStrategy implements RoomStrategy {
       readingScrollY: event.reading?.scrollY ?? null,
       updatedAt: event.observedAt,
       expiresAtMs: ctx.nowMs + ttlMs,
+      lastCountedAtMs: ctx.nowMs,
     });
     return true;
   }
@@ -224,14 +267,18 @@ export class PageRoomStrategy implements RoomStrategy {
     return ctx.readers.delete(readerId);
   }
 
-  buildSnapshot(ctx: RoomContext): Record<string, unknown> {
-    const readers = Array.from(ctx.readers.values()).map(mapReaderToSnapshot);
+  buildSnapshot(ctx: RoomContext): PageRoomSnapshot {
+    const currentReaders = Array.from(ctx.readers.values()).filter((reader) =>
+      isReaderActiveNow(reader, ctx.nowMs),
+    );
+    const dedupedReaders = dedupeReadersBySession(currentReaders);
+    const readers = dedupedReaders.map(mapReaderToSnapshot);
 
     // Compute page-level aggregates
     let progressSum = 0;
     let progressCount = 0;
     let maxProgress = 0;
-    for (const r of ctx.readers.values()) {
+    for (const r of dedupedReaders) {
       if (r.readingProgressPercent != null) {
         progressSum += r.readingProgressPercent;
         progressCount++;
@@ -263,7 +310,7 @@ export class PageRoomStrategy implements RoomStrategy {
 export class ChatRoomStrategy implements RoomStrategy {
   readonly type = 'chat' as const;
 
-  handleDeviceUpdate(_ctx: RoomContext, _deviceId: string, _state: unknown | null): boolean {
+  handleDeviceUpdate(_ctx: RoomContext, _deviceId: string, _state: DevicePresenceState | null): boolean {
     return false;
   }
 
@@ -271,12 +318,13 @@ export class ChatRoomStrategy implements RoomStrategy {
     // For chat rooms, we only track who's present (no page/reading data)
     ctx.readers.set(readerId, {
       readerId,
-      sessionId: readerId.replace('web:', ''),
+      sessionId: event.sessionId,
+      tabId: event.tabId,
       workspaceId: ctx.workspaceId,
       roomId: ctx.roomId,
-      userId: null,
+      userId: event.userId ?? null,
       source: 'web',
-      displayName: `Anonymous ${readerId.slice(-4)}`,
+      displayName: event.userId ?? `Anonymous ${event.sessionId.slice(-4)}`,
       presenceState: event.presence.state,
       pageTitle: null,
       pageUrl: null,
@@ -285,6 +333,7 @@ export class ChatRoomStrategy implements RoomStrategy {
       readingScrollY: null,
       updatedAt: event.observedAt,
       expiresAtMs: ctx.nowMs + ttlMs,
+      lastCountedAtMs: ctx.nowMs,
     });
     return true;
   }
@@ -293,7 +342,7 @@ export class ChatRoomStrategy implements RoomStrategy {
     return ctx.readers.delete(readerId);
   }
 
-  buildSnapshot(ctx: RoomContext): Record<string, unknown> {
+  buildSnapshot(ctx: RoomContext): ChatRoomSnapshot {
     const participants = Array.from(ctx.chatParticipants.values()).map((participant) => ({
       readerId: participant.readerId,
       displayName: participant.displayName,
@@ -338,14 +387,14 @@ export function createStrategy(roomId: string): RoomStrategy {
 // Shared Helpers
 // ==========================================
 
-function mapReaderToSnapshot(r: typeof schema.activeReaders.$inferInsert) {
+function mapReaderToSnapshot(r: ActiveReaderState): RoomReader {
   return {
     readerId: r.readerId,
     sessionId: r.sessionId,
     userId: r.userId || undefined,
-    source: r.source,
+    source: r.source as RoomReader["source"],
     displayName: r.displayName,
-    presenceState: r.presenceState,
+    presenceState: r.presenceState as RoomReader["presenceState"],
     updatedAt: r.updatedAt,
     page: r.pageUrl
       ? {
@@ -362,4 +411,22 @@ function mapReaderToSnapshot(r: typeof schema.activeReaders.$inferInsert) {
           }
         : undefined,
   };
+}
+
+function dedupeReadersBySession(readers: ActiveReaderState[]) {
+  const deduped = new Map<string, ActiveReaderState>();
+  for (const reader of readers) {
+    const existing = deduped.get(reader.sessionId);
+    if (!existing) {
+      deduped.set(reader.sessionId, reader);
+      continue;
+    }
+
+    const existingTs = Date.parse(existing.updatedAt) || 0;
+    const nextTs = Date.parse(reader.updatedAt) || 0;
+    if (nextTs > existingTs) {
+      deduped.set(reader.sessionId, reader);
+    }
+  }
+  return [...deduped.values()];
 }

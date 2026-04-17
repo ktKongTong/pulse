@@ -5,7 +5,6 @@ import { Separator } from "@/components/ui/separator";
 import {
   useGlobalPresenceSnapshot,
   usePagePresence,
-  useStatusAggregates,
 } from "@pulse/realtime-react";
 
 import { FocusSwitcher } from "./components/focus-switcher";
@@ -50,7 +49,6 @@ export function StatusPage() {
 
   const { snapshot } = useGlobalPresenceSnapshot();
   const viewModel = buildStatusViewModel(snapshot, now);
-  const aggregates = useStatusAggregates(viewModel.deviceId);
 
   return (
     <main className="min-h-screen bg-[#f8f5ef] px-6 py-12 text-stone-900 md:px-10">
@@ -76,13 +74,9 @@ export function StatusPage() {
           <Separator className="bg-stone-200/80" />
           <div className="pt-10">
             <StatusAggregates
-              day={aggregates.day}
-              global={aggregates.global}
-              device={aggregates.device}
-              pages={aggregates.pages}
-              rooms={aggregates.rooms}
-              loading={aggregates.loading}
-              error={aggregates.error}
+              activePages={viewModel.activePages}
+              currentAppLabel={viewModel.appLabel}
+              onlineCount={viewModel.siteOnlineCount}
             />
           </div>
         </div>
@@ -90,7 +84,7 @@ export function StatusPage() {
         <div className="mt-16 w-full max-w-3xl">
           <Separator className="bg-stone-200/80" />
           <div className="pt-10">
-            <StatusAggregateHistory deviceId={viewModel.deviceId} />
+            <StatusAggregateHistory />
           </div>
         </div>
 

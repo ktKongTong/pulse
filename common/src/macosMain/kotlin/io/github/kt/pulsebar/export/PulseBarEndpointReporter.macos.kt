@@ -214,7 +214,7 @@ internal class PulseBarEndpointReporter {
         lastPublishedAtMillis = nowMillis
         lastMediaState = snapshot.media?.let { media ->
             MediaReporterState(
-                key = media.trackId ?: media.title ?: "unknown-media",
+                key = media.trackId ?: media.title,
                 progressSeconds = media.progressSeconds,
                 isPlaying = media.isPlaying,
                 capturedAtMillis = nowMillis
@@ -225,7 +225,7 @@ internal class PulseBarEndpointReporter {
     private fun hasSignificantMediaJump(snapshot: PulseBarSnapshot, nowMillis: Long): Boolean {
         val media = snapshot.media ?: return false
         val previous = lastMediaState ?: return false
-        val currentKey = media.trackId ?: media.title ?: "unknown-media"
+        val currentKey = media.trackId ?: media.title
         if (currentKey != previous.key) return false
 
         val expectedProgress = if (previous.isPlaying) {

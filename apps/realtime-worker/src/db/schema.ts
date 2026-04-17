@@ -39,6 +39,8 @@ export const globalDailyStats = sqliteTable('global_daily_stats', {
   day: text('day').primaryKey(),
   startedAtMs: integer('started_at_ms').notNull(),
   lastUpdatedAtMs: integer('last_updated_at_ms').notNull(),
+  pageViewCount: integer('page_view_count').default(0).notNull(),
+  uniqueVisitorCount: integer('unique_visitor_count').default(0).notNull(),
   onlineIntegralMs: integer('online_integral_ms').default(0).notNull(),
   onlineCountPeak: integer('online_count_peak').default(0).notNull(),
   activeDeviceCountPeak: integer('active_device_count_peak').default(0).notNull(),
@@ -46,6 +48,15 @@ export const globalDailyStats = sqliteTable('global_daily_stats', {
   dedupedEventCount: integer('deduped_event_count').default(0).notNull(),
   rejectedEventCount: integer('rejected_event_count').default(0).notNull(),
   broadcastCount: integer('broadcast_count').default(0).notNull(),
+});
+
+export const globalAppDailyStats = sqliteTable('global_app_daily_stats', {
+  id: text('id').primaryKey(), // "day|appKey"
+  day: text('day').notNull(),
+  appKey: text('app_key').notNull(),
+  label: text('label').notNull(),
+  totalMs: integer('total_ms').default(0).notNull(),
+  sampleCount: integer('sample_count').default(0).notNull(),
 });
 
 export const pageDailyStats = sqliteTable('page_daily_stats', {
@@ -56,6 +67,8 @@ export const pageDailyStats = sqliteTable('page_daily_stats', {
   startedAtMs: integer('started_at_ms').notNull(),
   lastUpdatedAtMs: integer('last_updated_at_ms').notNull(),
   pageViewCount: integer('page_view_count').default(0).notNull(),
+  uniqueVisitorCount: integer('unique_visitor_count').default(0).notNull(),
+  readTimeMs: integer('read_time_ms').default(0).notNull(),
   readerSessionCount: integer('reader_session_count').default(0).notNull(),
   progressSum: real('progress_sum').default(0).notNull(),
   progressSamples: integer('progress_samples').default(0).notNull(),
