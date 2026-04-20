@@ -1,53 +1,50 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  REALTIME_WS_PROTOCOL_V1,
+  REALTIME_WS_PROTOCOL_V2,
   RealtimeClientMessageSchema,
+  RealtimeErrorEnvelopeSchema,
   RealtimeHelloAckSchema,
   RealtimeSnapshotEnvelopeSchema,
-  type RoomSnapshot
+  type RealtimeCapabilities,
+  type RealtimeClientMessage,
+  type RoomSnapshot,
 } from "@pulse/realtime-protocol";
-
 import type { Env } from "./env";
 import { createWorkerLogger } from "./logger";
-import type { RoomRpc } from "./durable-stubs";
-import { pageRoomId } from "./lib/url";
 
-interface SessionPresenceContext {
-  sessionId: string;
-  tabId: string;
-  userId?: string;
-  page: {
-    title: string;
-    url: string;
-    canonicalUrl?: string;
-  };
-}
-
-interface StoredSessionState {
+export interface RoomSessionConnectionState {
   workspaceId: string;
+  roomId: string;
+  connectionId: string;
   selectedProtocol: string | null;
-  roomSubscriptions: Record<string, string>;
-  chatMemberships: Record<string, { displayName: string; userId?: string }>;
-  presenceContext?: SessionPresenceContext;
 }
 
-export class RealtimeSession extends DurableObject<Env> {
-  private sessionState?: StoredSessionState;
-  private readonly logger;
+export interface RoomSessionConnectionRecord<
+  TState extends RoomSessionConnectionState,
+> {
+  socket: WebSocket;
+  state: TState;
+}
+
+type RoomSessionRuntimeMessage = Exclude<
+  RealtimeClientMessage,
+  { type: "hello" }
+>;
+
+export abstract class SessionDO<
+  TState extends RoomSessionConnectionState,
+> extends DurableObject<Env> {
+  private readonly connections = new Map<
+    string,
+    RoomSessionConnectionRecord<TState>
+  >();
+  protected readonly sessionLogger;
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
-    this.logger = createWorkerLogger(env, "session.do");
-    const restored = this.ctx
-      .getWebSockets()
-      .map((socket) => socket.deserializeAttachment() as StoredSessionState | null)
-      .find(Boolean);
-    if (restored) {
-      this.sessionState = restored;
-    }
+    this.sessionLogger = createWorkerLogger(env, "room.session");
+    this.restoreConnections();
   }
-
-  // --- External Fetch (WS Handshake) ---
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") {
@@ -56,419 +53,284 @@ export class RealtimeSession extends DurableObject<Env> {
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    const sessionState = this.getState(this.env.WORKSPACE_ID);
+    const connectionState = await this.createConnectionState(
+      request,
+      crypto.randomUUID(),
+    );
 
-    this.logger.debug("accept websocket", {
-      sessionDoId: this.ctx.id.toString(),
-      workspaceId: sessionState.workspaceId,
+    this.ctx.acceptWebSocket(server);
+    this.storeConnection(server, connectionState);
+    this.sessionLogger.debug("accept room websocket", {
+      roomId: connectionState.roomId,
+      workspaceId: connectionState.workspaceId,
+      connectionId: connectionState.connectionId,
+      connectionCount: this.connections.size,
       url: request.url,
     });
-    this.ctx.acceptWebSocket(server);
-    server.serializeAttachment(sessionState);
-    this.sessionState = sessionState;
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // --- WebSocket Hibernation Events ---
+  async webSocketMessage(
+    socket: WebSocket,
+    message: string | ArrayBuffer,
+  ): Promise<void> {
+    const record = this.findConnectionRecord(socket);
+    const raw =
+      typeof message === "string" ? message : new TextDecoder().decode(message);
 
-  async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
-    this.logger.debug("ws message inbound", {
-      sessionDoId: this.ctx.id.toString(),
-      raw,
-    });
-    const parsed = RealtimeClientMessageSchema.safeParse(JSON.parse(raw));
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(raw);
+    } catch {
+      this.sendError(
+        socket,
+        record?.state.roomId ?? "unknown",
+        "invalid_message",
+        "Message failed schema validation.",
+      );
+      return;
+    }
+
+    const parsed = RealtimeClientMessageSchema.safeParse(parsedJson);
     if (!parsed.success) {
-      this.send(socket, {
-        protocol: REALTIME_WS_PROTOCOL_V1,
-        type: "error",
-        code: "invalid_message",
-        message: "Message failed schema validation."
+      this.sendError(
+        socket,
+        record?.state.roomId ?? "unknown",
+        "invalid_message",
+        "Message failed schema validation.",
+      );
+      return;
+    }
+
+    if (!record) {
+      this.sessionLogger.warn("missing room connection for websocket message", {
+        raw,
       });
       return;
     }
 
-    const sessionState = this.getState();
-    switch (parsed.data.type) {
-      case "hello": {
-        const selectedProtocol = parsed.data.supportedProtocols.includes(REALTIME_WS_PROTOCOL_V1)
-          ? REALTIME_WS_PROTOCOL_V1
-          : parsed.data.supportedProtocols[0];
-        sessionState.selectedProtocol = selectedProtocol;
-        this.persist(sessionState);
-        this.logger.debug("hello ack", {
-          sessionDoId: this.ctx.id.toString(),
-          selectedProtocol,
-        });
-        this.send(
-          socket,
-          RealtimeHelloAckSchema.parse({
-            type: "hello_ack",
-            selectedProtocol,
-            capabilities: {
-              presence: true,
-              multiRoom: true,
-              chat: true,
-              richMedia: true,
-              interaction: true
-            }
-          })
-        );
-        return;
-      }
-      case "subscribe": {
-        if (!sessionState.selectedProtocol) return this.sendHelloRequiredError(socket);
-
-        for (const item of parsed.data.subscriptions) {
-          const roomId = item.roomId;
-          try {
-            const previousSubscriptionId = sessionState.roomSubscriptions[roomId];
-            if (previousSubscriptionId && previousSubscriptionId !== item.subscriptionId) {
-              this.logger.debug("replace existing subscription", {
-                sessionDoId: this.ctx.id.toString(),
-                roomId,
-                previousSubscriptionId,
-                nextSubscriptionId: item.subscriptionId,
-              });
-              await this.roomStub(sessionState.workspaceId, roomId).unsubscribeSession(this.ctx.id.toString());
-            }
-            sessionState.roomSubscriptions[roomId] = item.subscriptionId;
-            this.persist(sessionState);
-            this.logger.debug("subscription stored", {
-              sessionDoId: this.ctx.id.toString(),
-              workspaceId: sessionState.workspaceId,
-              roomId,
-              subscriptionId: item.subscriptionId,
-              roomSubscriptions: sessionState.roomSubscriptions,
-            });
-
-            const roomStub = this.roomStub(sessionState.workspaceId, roomId);
-            this.logger.debug("subscribe room start", {
-              sessionDoId: this.ctx.id.toString(),
-              roomId,
-              subscriptionId: item.subscriptionId,
-            });
-            await roomStub.subscribeSession(sessionState.workspaceId, roomId, this.ctx.id.toString());
-            this.logger.debug("subscribe room success", {
-              sessionDoId: this.ctx.id.toString(),
-              roomId,
-              subscriptionId: item.subscriptionId,
-            });
-            
-            const snapshot = await roomStub.getSnapshot(sessionState.workspaceId, roomId) as RoomSnapshot;
-            this.logger.debug("initial snapshot", {
-              sessionDoId: this.ctx.id.toString(),
-              roomId,
-              subscriptionId: item.subscriptionId,
-              population: roomSnapshotPopulation(snapshot),
-              revision: snapshot.revision,
-            });
-            this.sendSnapshot(socket, item.subscriptionId, roomId, snapshot);
-          } catch (error) {
-            this.logger.error("subscribe failed", {
-              sessionDoId: this.ctx.id.toString(),
-              workspaceId: sessionState.workspaceId,
-              roomId,
-              subscriptionId: item.subscriptionId,
-              error: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined,
-            });
-            this.send(socket, {
-              protocol: REALTIME_WS_PROTOCOL_V1,
-              type: "error",
-              code: "subscribe_failed",
-              message: error instanceof Error ? error.message : "subscribe_failed",
-              subscriptionId: item.subscriptionId,
-            });
-          }
-        }
-        return;
-      }
-      case "unsubscribe": {
-        for (const subscriptionId of parsed.data.subscriptionIds) {
-          const roomId = findRoomIdBySubscriptionId(sessionState.roomSubscriptions, subscriptionId);
-          if (!roomId) continue;
-
-          if (roomId.startsWith("chat:") && sessionState.chatMemberships[roomId]) {
-            delete sessionState.chatMemberships[roomId];
-            await this.roomStub(sessionState.workspaceId, roomId).leaveChat(
-              sessionState.workspaceId,
-              roomId,
-              this.ctx.id.toString(),
-            );
-          }
-          delete sessionState.roomSubscriptions[roomId];
-          this.persist(sessionState);
-          this.logger.debug("unsubscribe removed", {
-            sessionDoId: this.ctx.id.toString(),
-            roomId,
-            subscriptionId,
-            roomSubscriptions: sessionState.roomSubscriptions,
-          });
-          await this.roomStub(sessionState.workspaceId, roomId).unsubscribeSession(this.ctx.id.toString());
-        }
-        return;
-      }
-      case "chat_join": {
-        if (!sessionState.selectedProtocol) return this.sendHelloRequiredError(socket);
-        sessionState.chatMemberships[parsed.data.roomId] = {
-          displayName: parsed.data.displayName,
-          userId: parsed.data.userId,
-        };
-        this.persist(sessionState);
-        await this.roomStub(sessionState.workspaceId, parsed.data.roomId).joinChat(
-          sessionState.workspaceId,
-          parsed.data.roomId,
-          this.ctx.id.toString(),
-          parsed.data.userId ?? `anon:${this.ctx.id.toString().slice(0, 8)}`,
-          parsed.data.displayName,
-        );
-        return;
-      }
-      case "chat_leave": {
-        if (sessionState.chatMemberships[parsed.data.roomId]) {
-          delete sessionState.chatMemberships[parsed.data.roomId];
-          this.persist(sessionState);
-          await this.roomStub(sessionState.workspaceId, parsed.data.roomId).leaveChat(
-            sessionState.workspaceId,
-            parsed.data.roomId,
-            this.ctx.id.toString(),
-          );
-        }
-        return;
-      }
-      case "chat_send": {
-        if (!sessionState.selectedProtocol) return this.sendHelloRequiredError(socket);
-        const membership = sessionState.chatMemberships[parsed.data.roomId];
-        if (!membership) {
-          this.send(socket, {
-            protocol: REALTIME_WS_PROTOCOL_V1,
-            type: "error",
-            code: "chat_join_required",
-            message: "Join chat room before sending messages.",
-          });
-          return;
-        }
-        await this.roomStub(sessionState.workspaceId, parsed.data.roomId).postChatMessage(
-          sessionState.workspaceId,
-          parsed.data.roomId,
-          this.ctx.id.toString(),
-          membership.userId ?? `anon:${this.ctx.id.toString().slice(0, 8)}`,
-          membership.displayName,
-          parsed.data.content,
-        );
-        return;
-      }
-      case "presence_context": {
-        sessionState.presenceContext = {
-          sessionId: parsed.data.sessionId,
-          tabId: parsed.data.tabId,
-          userId: parsed.data.userId,
-          page: parsed.data.page,
-        };
-        this.persist(sessionState);
-        return;
-      }
+    if (parsed.data.type === "hello") {
+      await this.handleHello(record, parsed.data.supportedProtocols);
+      return;
     }
+
+    if (!record.state.selectedProtocol) {
+      this.sendError(
+        socket,
+        record.state.roomId,
+        "hello_required",
+        "Send hello before room commands.",
+      );
+      return;
+    }
+
+    await this.handleRoomMessage(record, parsed.data);
   }
 
-  async webSocketClose(_socket: WebSocket): Promise<void> {
-    const sessionState = this.getState();
-    this.logger.debug("websocket close", {
-      sessionDoId: this.ctx.id.toString(),
-      roomSubscriptions: sessionState.roomSubscriptions,
-    });
-    await this.notifyPresenceEnded(sessionState);
-    await this.unsubscribeFromAllRooms(sessionState);
-    this.sessionState = undefined;
+  async webSocketClose(socket: WebSocket): Promise<void> {
+    const record = this.findConnectionRecord(socket);
+    if (!record) return;
+
+    this.removeConnection(record.state.connectionId);
+    await this.cleanupConnection(record);
   }
 
-  async webSocketError(_socket: WebSocket, error: unknown): Promise<void> {
-    const sessionState = this.getState();
-    this.logger.warn("websocket error", {
-      sessionDoId: this.ctx.id.toString(),
+  async webSocketError(socket: WebSocket, error: unknown): Promise<void> {
+    const record = this.findConnectionRecord(socket);
+    if (!record) return;
+
+    this.sessionLogger.warn("room websocket error", {
+      roomId: record.state.roomId,
+      connectionId: record.state.connectionId,
       error: error instanceof Error ? error.message : String(error),
     });
-    await this.notifyPresenceEnded(sessionState);
-    await this.unsubscribeFromAllRooms(sessionState);
-    this.sessionState = undefined;
+    this.removeConnection(record.state.connectionId);
+    await this.cleanupConnection(record);
   }
 
-  // --- RPC Inbound API ---
-  
-  async pushRoomSnapshot(roomId: string, snapshot: RoomSnapshot): Promise<void> {
-    const sessionState = this.getState();
-    const subscriptionId = sessionState.roomSubscriptions[roomId];
-    this.logger.debug("push room snapshot inbound", {
-      sessionDoId: this.ctx.id.toString(),
-      roomId,
-      subscriptionId: subscriptionId ?? null,
-      knownSubscriptions: sessionState.roomSubscriptions,
-      population: roomSnapshotPopulation(snapshot),
-      revision: snapshot.revision,
-      socketCount: this.ctx.getWebSockets().length,
-    });
-    if (!subscriptionId) {
-      this.logger.warn("push room snapshot missing subscription", {
-        sessionDoId: this.ctx.id.toString(),
-        roomId,
-        knownSubscriptions: sessionState.roomSubscriptions,
-      });
-      return;
-    }
+  protected updateConnection(
+    record: RoomSessionConnectionRecord<TState>,
+    nextState: TState,
+  ) {
+    const serialized = this.serializeConnectionState(nextState);
+    record.state = serialized;
+    record.socket.serializeAttachment(serialized);
+    this.connections.set(serialized.connectionId, record);
+    return serialized;
+  }
 
+  protected getConnectionCount() {
+    return this.connections.size;
+  }
+
+  protected getConnections() {
+    return Array.from(this.connections.values());
+  }
+
+  protected findConnectionRecord(socket: WebSocket) {
+    return this.ensureConnection(socket);
+  }
+
+  protected removeConnection(connectionId: string) {
+    this.deleteConnection(connectionId);
+  }
+
+  protected broadcastSnapshot(snapshot: RoomSnapshot) {
     const payload = RealtimeSnapshotEnvelopeSchema.parse({
       type: "snapshot",
-      subscriptionId,
-      roomId,
-      payload: snapshot
+      roomId: snapshot.roomId,
+      payload: snapshot,
     });
-    this.sendToAll(payload);
-  }
-
-  // --- Helpers ---
-
-  private sendHelloRequiredError(socket: WebSocket) {
-    this.send(socket, {
-      protocol: REALTIME_WS_PROTOCOL_V1,
-      type: "error",
-      code: "hello_required",
-      message: "Send hello before subscribe."
-    });
-  }
-
-  private sendSnapshot(socket: WebSocket, subscriptionId: string, roomId: string, snapshot: RoomSnapshot) {
-    this.send(
-      socket,
-      RealtimeSnapshotEnvelopeSchema.parse({
-        type: "snapshot",
-        subscriptionId,
-        roomId,
-        payload: snapshot
-      })
-    );
-  }
-
-  private send(socket: WebSocket, message: unknown) {
-    try {
-      this.logger.debug("send single", {
-        sessionDoId: this.ctx.id.toString(),
-        type: (message as { type?: string })?.type ?? "unknown",
-      });
-      socket.send(JSON.stringify(message));
-    } catch (e) {
-      // socket closed
-      this.logger.warn("send single failed", {
-        sessionDoId: this.ctx.id.toString(),
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-
-  private sendToAll(message: unknown) {
-    const payload = JSON.stringify(message);
-    this.logger.debug("send to all begin", {
-      sessionDoId: this.ctx.id.toString(),
-      type: (message as { type?: string })?.type ?? "unknown",
-      socketCount: this.ctx.getWebSockets().length,
-    });
-    for (const socket of this.ctx.getWebSockets()) {
+    const encoded = JSON.stringify(payload);
+    for (const record of this.connections.values()) {
       try {
-        socket.send(payload);
-      } catch (e) {
-        this.logger.warn("send to all failed", {
-          sessionDoId: this.ctx.id.toString(),
-          error: e instanceof Error ? e.message : String(e),
+        record.socket.send(encoded);
+      } catch (error) {
+        this.sessionLogger.warn("room snapshot send failed", {
+          roomId: record.state.roomId,
+          connectionId: record.state.connectionId,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     }
   }
 
-  private roomStub(workspaceId: string, roomId: string): RoomRpc {
-    const id = this.env.REALTIME_ROOM.idFromName(`${workspaceId}:${roomId}`);
-    return this.env.REALTIME_ROOM.get(id) as unknown as RoomRpc;
+  protected sendError(
+    socket: WebSocket,
+    roomId: string,
+    code: string,
+    message: string,
+  ) {
+    this.send(
+      socket,
+      RealtimeErrorEnvelopeSchema.parse({
+        type: "error",
+        roomId,
+        code,
+        message,
+      }),
+    );
   }
 
-  private getState(workspaceId?: string): StoredSessionState {
-    if (this.sessionState) {
-      return this.sessionState;
+  protected send(socket: WebSocket, message: unknown) {
+    try {
+      socket.send(JSON.stringify(message));
+    } catch (error) {
+      this.sessionLogger.warn("room websocket send failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-    const loaded = this.ctx
-      .getWebSockets()
-      .map((socket) => socket.deserializeAttachment() as StoredSessionState | null)
-      .find(Boolean);
-    this.sessionState = loaded ?? {
-      workspaceId: workspaceId ?? this.env.WORKSPACE_ID,
-      selectedProtocol: null,
-      roomSubscriptions: {},
-      chatMemberships: {}
+  }
+
+  protected abstract createConnectionState(
+    request: Request,
+    connectionId: string,
+  ): Promise<TState>;
+
+  protected abstract serializeConnectionState(state: TState): TState;
+
+  protected abstract buildInitialSnapshot(
+    record: RoomSessionConnectionRecord<TState>,
+  ): Promise<RoomSnapshot>;
+
+  protected abstract handleRoomMessage(
+    record: RoomSessionConnectionRecord<TState>,
+    message: RoomSessionRuntimeMessage,
+  ): Promise<void>;
+
+  protected abstract cleanupConnection(
+    record: RoomSessionConnectionRecord<TState>,
+  ): Promise<void>;
+
+  protected connectionCapabilities(
+    _record: RoomSessionConnectionRecord<TState>,
+  ): RealtimeCapabilities {
+    return {
+      presence: true,
+      multiRoom: true,
+      chat: true,
+      richMedia: true,
+      interaction: true,
     };
-    if (!this.sessionState.roomSubscriptions) {
-      this.sessionState.roomSubscriptions = {};
-    }
-    if (!this.sessionState.chatMemberships) {
-      this.sessionState.chatMemberships = {};
-    }
-    return this.sessionState;
   }
 
-  private persist(sessionState: StoredSessionState) {
-    this.sessionState = sessionState;
+  private async handleHello(
+    record: RoomSessionConnectionRecord<TState>,
+    supportedProtocols: string[],
+  ) {
+    if (!supportedProtocols.includes(REALTIME_WS_PROTOCOL_V2)) {
+      this.sendError(
+        record.socket,
+        record.state.roomId,
+        "unsupported_protocol",
+        "Client does not support realtime.ws.v2.",
+      );
+      return;
+    }
+
+    const nextState = this.updateConnection(record, {
+      ...record.state,
+      selectedProtocol: REALTIME_WS_PROTOCOL_V2,
+    });
+    this.send(
+      record.socket,
+      RealtimeHelloAckSchema.parse({
+        type: "hello_ack",
+        selectedProtocol: REALTIME_WS_PROTOCOL_V2,
+        capabilities: this.connectionCapabilities(record),
+      }),
+    );
+
+    const snapshot = await this.buildInitialSnapshot({
+      socket: record.socket,
+      state: nextState,
+    });
+    this.send(
+      record.socket,
+      RealtimeSnapshotEnvelopeSchema.parse({
+        type: "snapshot",
+        roomId: snapshot.roomId,
+        payload: snapshot,
+      }),
+    );
+  }
+
+  private ensureConnection(socket: WebSocket) {
+    const attached = socket.deserializeAttachment() as TState | null;
+    if (!attached?.connectionId || !attached.roomId || !attached.workspaceId) {
+      return null;
+    }
+
+    const existing = this.connections.get(attached.connectionId);
+    if (existing) {
+      if (existing.socket !== socket) {
+        existing.socket = socket;
+      }
+      return existing;
+    }
+
+    const record = { socket, state: attached };
+    this.connections.set(attached.connectionId, record);
+    return record;
+  }
+
+  private storeConnection(socket: WebSocket, state: TState) {
+    const serialized = this.serializeConnectionState(state);
+    socket.serializeAttachment(serialized);
+    this.connections.set(serialized.connectionId, { socket, state: serialized });
+  }
+
+  private restoreConnections() {
     for (const socket of this.ctx.getWebSockets()) {
-      socket.serializeAttachment(sessionState);
+      const attached = socket.deserializeAttachment() as TState | null;
+      if (!attached?.connectionId || !attached.roomId || !attached.workspaceId) {
+        continue;
+      }
+      this.connections.set(attached.connectionId, { socket, state: attached });
     }
   }
 
-  private async unsubscribeFromAllRooms(sessionState: StoredSessionState) {
-    const roomIds = Object.keys(sessionState.roomSubscriptions);
-    await Promise.all(
-      roomIds.map(async (roomId) => {
-        if (roomId.startsWith("chat:") && sessionState.chatMemberships[roomId]) {
-          await this.roomStub(sessionState.workspaceId, roomId).leaveChat(
-            sessionState.workspaceId,
-            roomId,
-            this.ctx.id.toString(),
-          );
-        }
-        await this.roomStub(sessionState.workspaceId, roomId).unsubscribeSession(this.ctx.id.toString());
-      })
-    );
-    sessionState.roomSubscriptions = {};
-    sessionState.chatMemberships = {};
-    sessionState.presenceContext = undefined;
-  }
-
-  private async notifyPresenceEnded(sessionState: StoredSessionState) {
-    const context = sessionState.presenceContext;
-    if (!context) return;
-
-    const canonicalUrl = context.page.canonicalUrl ?? context.page.url;
-    await this.roomStub(sessionState.workspaceId, "global").removeWebReader(
-      sessionState.workspaceId,
-      "global",
-      context.sessionId,
-      context.tabId,
-    );
-    await this.roomStub(sessionState.workspaceId, pageRoomId(canonicalUrl)).removeWebReader(
-      sessionState.workspaceId,
-      pageRoomId(canonicalUrl),
-      context.sessionId,
-      context.tabId,
-    );
-    sessionState.presenceContext = undefined;
-  }
-}
-
-function findRoomIdBySubscriptionId(roomSubscriptions: Record<string, string>, subscriptionId: string) {
-  return Object.entries(roomSubscriptions).find(([, value]) => value === subscriptionId)?.[0];
-}
-
-function roomSnapshotPopulation(snapshot: RoomSnapshot) {
-  switch (snapshot.roomKind) {
-    case "chat":
-      return snapshot.participantCount;
-    case "page":
-    case "global":
-      return snapshot.onlineCount;
+  private deleteConnection(connectionId: string) {
+    this.connections.delete(connectionId);
   }
 }

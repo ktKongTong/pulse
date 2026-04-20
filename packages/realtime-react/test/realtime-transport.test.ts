@@ -87,25 +87,27 @@ describe("RealtimeTransport", () => {
   });
 
   it("sends hello and becomes ready after hello_ack", () => {
-    const transport = new RealtimeTransport(config);
+    const transport = new RealtimeTransport(config, "global");
     const ready = vi.fn();
     transport.onReady(ready);
 
     transport.connect();
     const socket = MockWebSocket.instances[0]!;
-    expect(socket.url).toBe("wss://pulse.example.com/api/v1/realtime/ws?workspaceId=pulse-demo");
+    expect(socket.url).toBe(
+      "wss://pulse.example.com/api/v1/realtime/ws?workspaceId=pulse-demo&roomId=global",
+    );
 
     socket.emit("open");
     expect(JSON.parse(socket.sent[0]!)).toMatchObject({
       type: "hello",
-      supportedProtocols: ["realtime.ws.v1"],
+      supportedProtocols: ["realtime.ws.v2"],
     });
 
     socket.emit("message", {
       data: JSON.stringify({
-        protocol: "realtime.ws.v1",
+        protocol: "realtime.ws.v2",
         type: "hello_ack",
-        selectedProtocol: "realtime.ws.v1",
+        selectedProtocol: "realtime.ws.v2",
         capabilities: {
           presence: true,
           multiRoom: true,
@@ -122,7 +124,7 @@ describe("RealtimeTransport", () => {
   });
 
   it("reconnects after an unexpected close", () => {
-    const transport = new RealtimeTransport(config);
+    const transport = new RealtimeTransport(config, "page:https://example.com/a");
 
     transport.connect();
     const socket = MockWebSocket.instances[0]!;
@@ -133,6 +135,8 @@ describe("RealtimeTransport", () => {
     vi.advanceTimersByTime(1000);
 
     expect(MockWebSocket.instances).toHaveLength(2);
-    expect(MockWebSocket.instances[1]?.url).toContain("/api/v1/realtime/ws");
+    expect(MockWebSocket.instances[1]?.url).toContain(
+      "roomId=page%3Ahttps%3A%2F%2Fexample.com%2Fa",
+    );
   });
 });

@@ -5,21 +5,25 @@ import {
   InteractionStateSchema,
   type InteractionState,
   PresenceIngestRequestSchema,
+  REALTIME_WS_PROTOCOL_V2,
   RealtimeMetaResponseSchema,
   StatsPeriodSchema,
   WebIngestRequestSchema
 } from "@pulse/realtime-protocol";
 
-import { deviceSessionTtlMs, isAllowedOriginForRequest, webSessionTtlMs } from "./env";
+import {
+  deviceSessionTtlMs,
+  isAllowedOriginForRequest,
+  webSessionTtlMs,
+  type Env,
+} from "./env";
 import type { DeviceRpc, RoomRpc } from "./durable-stubs";
 import { InteractionHub } from "./interaction-hub-do";
 import { InteractionInbox } from "./interaction-inbox-do";
 import { createWorkerLogger } from "./logger";
-import { RealtimeRoom } from "./room-do";
-import { RealtimeSession } from "./session-do";
+import { ChatRoom, GlobalStatusRoom, PageStatusRoom } from "./room-do";
+import { realtimeRoomId, roomNamespace, roomStub } from "./room-stub";
 import { DeviceDO } from "./device-do";
-
-type Env = Cloudflare.Env;
 
 const app = new Hono<{ Bindings: Env }>()
 
@@ -52,7 +56,7 @@ app.options("*", (c) => {
 app.get("/", (c) =>
   c.json({
     name: "pulse-realtime-worker",
-    protocol: ["presence.v2", "web.v1", "realtime.v1-stream"],
+    protocol: ["presence.v2", "web.v1", "realtime.v1-stream", REALTIME_WS_PROTOCOL_V2],
   })
 );
 
@@ -123,7 +127,7 @@ app.get("/v1/meta", (c) =>
         presence: ["presence.v2"],
         web: ["web.v1"]
       },
-      streamProtocols: ["realtime.ws.v1"],
+      streamProtocols: [REALTIME_WS_PROTOCOL_V2],
       capabilities: {
         presence: true,
         multiRoom: true,
@@ -208,15 +212,17 @@ app.get("/v1/realtime/ws", async (c) => {
     return c.json({ error: "workspace_mismatch" }, 403);
   }
 
-  if (roomId) {
-    return c.json({ error: "roomId_not_supported_on_ws_route_directly" }, 400);
+  if (!roomId) {
+    return c.json({ error: "roomId_required" }, 400);
   }
 
-  const id = c.env.REALTIME_SESSION.newUniqueId();
-  const stub = c.env.REALTIME_SESSION.get(id);
+  const namespace = roomNamespace(c.env, roomId);
+  const stub = namespace.get(
+    realtimeRoomId(namespace, workspaceId, roomId),
+  );
   logger.debug("ws upgrade", {
     workspaceId,
-    sessionDoId: id.toString(),
+    roomId,
     url: c.req.url,
     userAgent: c.req.header("User-Agent") ?? null,
   });
@@ -240,12 +246,7 @@ app.all("/v1/device-interactions/*", (c) => c.json({ error: "endpoint_disabled" 
 app.notFound((c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default app;
-export { RealtimeRoom, RealtimeSession, InteractionHub, InteractionInbox, DeviceDO };
-
-function roomStub(env: Env, workspaceId: string, roomId: string): RoomRpc {
-  const id = env.REALTIME_ROOM.idFromName(`${workspaceId}:${roomId}`);
-  return env.REALTIME_ROOM.get(id) as unknown as RoomRpc;
-}
+export { GlobalStatusRoom, PageStatusRoom, ChatRoom, InteractionHub, InteractionInbox, DeviceDO };
 
 function deviceStub(env: Env, workspaceId: string, deviceId: string): DeviceRpc {
   const id = env.DEVICE_DO.idFromName(`${workspaceId}:${deviceId}`);

@@ -1,5 +1,5 @@
 import {
-  REALTIME_WS_PROTOCOL_V1,
+  REALTIME_WS_PROTOCOL_V2,
   RealtimeHelloAckSchema,
   RealtimeServerMessageSchema,
   type RealtimeCapabilities,
@@ -41,7 +41,10 @@ export class RealtimeTransport {
     lastMessageType: null,
   };
 
-  constructor(private readonly config: PulseRealtimeConfig) {
+  constructor(
+    private readonly config: PulseRealtimeConfig,
+    readonly roomId: string,
+  ) {
     this.logger = createRealtimeLogger(config.debug ?? false);
   }
 
@@ -61,9 +64,11 @@ export class RealtimeTransport {
     });
     const endpoint = new URL(`${this.config.baseUrl}/api/v1/realtime/ws`, typeof window === "undefined" ? "http://localhost" : window.location.origin);
     endpoint.searchParams.set("workspaceId", this.config.workspaceId);
+    endpoint.searchParams.set("roomId", this.roomId);
     this.debug("connect.start", {
       endpoint: endpoint.toString().replace(/^http/, "ws"),
       workspaceId: this.config.workspaceId,
+      roomId: this.roomId,
     });
 
     const socket = new WebSocket(endpoint.toString().replace(/^http/, "ws"));
@@ -74,7 +79,7 @@ export class RealtimeTransport {
       socket.send(
         JSON.stringify({
           type: "hello",
-          supportedProtocols: [REALTIME_WS_PROTOCOL_V1],
+          supportedProtocols: [REALTIME_WS_PROTOCOL_V2],
           sdkVersion: "0.1.0",
         })
       );

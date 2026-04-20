@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createRequestHandler } from "react-router";
 
 import app from '../src/index'
-export { RealtimeRoom, InteractionHub, InteractionInbox, RealtimeSession, DeviceDO } from '../src/index'
+export { GlobalStatusRoom, PageStatusRoom, ChatRoom, InteractionHub, InteractionInbox, DeviceDO } from '../src/index'
 const requestHandler = createRequestHandler(
   // @ts-ignore
   () => import("virtual:react-router/server-build"),

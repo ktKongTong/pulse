@@ -2,10 +2,13 @@ import type {
   ChatEventEnvelope,
   ChatRoomSnapshot,
   RealtimeMetaResponse,
-  RealtimeSnapshotEnvelope,
+  RealtimeServerMessage,
   RoomSnapshot,
 } from "@pulse/realtime-protocol";
-import { RealtimeMetaResponseSchema } from "@pulse/realtime-protocol";
+import {
+  REALTIME_WS_PROTOCOL_V2,
+  RealtimeMetaResponseSchema,
+} from "@pulse/realtime-protocol";
 
 import { createRealtimeLogger } from "./logger";
 import type { PulseRealtimeConfig } from "./types";
@@ -52,6 +55,13 @@ interface ActiveRoomSubscription {
   errorListeners: Set<ErrorListener>;
 }
 
+interface RoomTransportEntry {
+  roomId: string;
+  refCount: number;
+  transport: RealtimeTransport;
+  lastSnapshot: RoomSnapshot | null;
+}
+
 export interface RoomSubscriptionDebugState {
   transport: RealtimeTransportState;
   activeMode: "ws" | "unknown";
@@ -69,64 +79,48 @@ export interface RoomSubscriptionDebugState {
     updatedAt: string;
   } | null;
   meta: RealtimeMetaResponse | null;
+  transports: Array<{
+    roomId: string;
+    refCount: number;
+    status: RealtimeTransportState["status"];
+    selectedProtocol: string | null;
+    capabilities: RealtimeTransportState["capabilities"];
+    lastError: string | null;
+    lastMessageType: RealtimeTransportState["lastMessageType"];
+  }>;
 }
 
 export class RoomSubscriptionManager {
-  private transport: RealtimeTransport;
-  private subscriptions = new Map<string, ActiveRoomSubscription>();
-  private chatMemberships = new Map<string, ActiveChatMembership>();
+  private readonly transports = new Map<string, RoomTransportEntry>();
+  private readonly subscriptions = new Map<string, ActiveRoomSubscription>();
+  private readonly chatMemberships = new Map<string, ActiveChatMembership>();
   private subscriptionIdCounter = 0;
   private metaPromise: Promise<RealtimeMetaResponse> | null = null;
   private resolvedMeta: RealtimeMetaResponse | null = null;
   private lastSnapshotMeta: RoomSubscriptionDebugState["lastSnapshotMeta"] = null;
-  private debugListeners = new Set<DebugListener>();
+  private readonly debugListeners = new Set<DebugListener>();
   private presenceContext: PresenceContext | null = null;
   private readonly logger;
 
   constructor(private readonly config: PulseRealtimeConfig) {
     this.logger = createRealtimeLogger(config.debug ?? false);
-    this.transport = new RealtimeTransport(config);
-    this.transport.onMessage((message) => {
-      if (message.type === "snapshot") return this.handleSnapshot(message);
-      if (message.type === "chat_event") return this.handleChatEvent(message);
-      if (message.type === "error") this.handleError(message.subscriptionId, message.message);
-    });
-    this.transport.onReady(() => {
-      for (const subscription of this.subscriptions.values()) {
-        this.transport.send({
-          protocol: "realtime.ws.v1",
-          type: "subscribe",
-          subscriptions: [{ subscriptionId: subscription.subscriptionId, roomId: subscription.roomId }],
-        });
-      }
-      for (const membership of this.chatMemberships.values()) {
-        this.transport.send({
-          protocol: "realtime.ws.v1",
-          type: "chat_join",
-          roomId: membership.roomId,
-          displayName: membership.displayName,
-          userId: membership.userId,
-        });
-      }
-      if (this.presenceContext) {
-        this.transport.send({
-          protocol: "realtime.ws.v1",
-          type: "presence_context",
-          ...this.presenceContext,
-        });
-      }
-      this.emitDebugState();
-    });
-    this.transport.onState(() => this.emitDebugState());
   }
 
-  async subscribePresence(intent: PresenceSubscriptionIntent, onSnapshot: SnapshotListener, onError?: ErrorListener) {
+  async subscribePresence(
+    intent: PresenceSubscriptionIntent,
+    onSnapshot: SnapshotListener,
+    onError?: ErrorListener,
+  ) {
     const key = presenceSubscriptionKey(intent);
     const roomId = resolveRoomId(intent);
     return this.subscribeRawRoomInternal(key, roomId, onSnapshot, onError);
   }
 
-  async subscribeRawRoom(roomId: string, onSnapshot: SnapshotListener, onError?: ErrorListener) {
+  async subscribeRawRoom(
+    roomId: string,
+    onSnapshot: SnapshotListener,
+    onError?: ErrorListener,
+  ) {
     return this.subscribeRawRoomInternal(`raw:${roomId}`, roomId, onSnapshot, onError);
   }
 
@@ -145,6 +139,10 @@ export class RoomSubscriptionManager {
       existing.snapshotListeners.add(onSnapshot);
       if (onEvent) existing.eventListeners.add(onEvent);
       if (onError) existing.errorListeners.add(onError);
+      const lastSnapshot = this.transports.get(roomId)?.lastSnapshot;
+      if (lastSnapshot?.roomKind === "chat") {
+        onSnapshot(lastSnapshot);
+      }
       this.emitDebugState();
       return () => this.unsubscribeChatRoom(key, onSnapshot, onEvent, onError);
     }
@@ -177,14 +175,9 @@ export class RoomSubscriptionManager {
     };
     this.chatMemberships.set(key, membership);
 
-    if (this.transport.isReady) {
-      this.transport.send({
-        protocol: "realtime.ws.v1",
-        type: "chat_join",
-        roomId,
-        displayName: participant.displayName,
-        userId: participant.userId,
-      });
+    const roomTransport = this.transports.get(roomId);
+    if (roomTransport?.transport.isReady) {
+      this.sendChatJoin(roomTransport, membership);
     }
 
     this.emitDebugState();
@@ -192,8 +185,8 @@ export class RoomSubscriptionManager {
   }
 
   sendChatMessage(roomId: string, content: string) {
-    this.transport.send({
-      protocol: "realtime.ws.v1",
+    this.transports.get(roomId)?.transport.send({
+      protocol: REALTIME_WS_PROTOCOL_V2,
       type: "chat_send",
       roomId,
       content,
@@ -202,13 +195,13 @@ export class RoomSubscriptionManager {
 
   setPresenceContext(context: PresenceContext) {
     this.presenceContext = context;
-    if (this.transport.isReady) {
-      this.transport.send({
-        protocol: "realtime.ws.v1",
-        type: "presence_context",
-        ...context,
-      });
-    }
+    this.sendPresenceContextToRoom("global");
+    this.sendPresenceContextToRoom(resolveRoomId({
+      capability: "presence",
+      scope: "page",
+      canonicalUrl: context.page.canonicalUrl ?? context.page.url,
+    }));
+    this.emitDebugState();
   }
 
   onDebugState(handler: DebugListener): () => void {
@@ -218,20 +211,32 @@ export class RoomSubscriptionManager {
   }
 
   dispose() {
-    this.transport.disconnect();
+    for (const membership of this.chatMemberships.values()) {
+      this.sendChatLeave(membership.roomId);
+    }
+    for (const entry of this.transports.values()) {
+      entry.transport.disconnect();
+    }
+    this.chatMemberships.clear();
+    this.subscriptions.clear();
+    this.transports.clear();
   }
 
   private async subscribeRawRoomInternal(
     key: string,
     roomId: string,
     onSnapshot: SnapshotListener,
-    onError?: ErrorListener
+    onError?: ErrorListener,
   ): Promise<() => void> {
     const existing = this.subscriptions.get(key);
     if (existing) {
       existing.refCount += 1;
       existing.listeners.add(onSnapshot);
       if (onError) existing.errorListeners.add(onError);
+      const lastSnapshot = this.transports.get(roomId)?.lastSnapshot;
+      if (lastSnapshot) {
+        onSnapshot(lastSnapshot);
+      }
       this.emitDebugState();
       return () => this.unsubscribe(key, onSnapshot, onError);
     }
@@ -249,27 +254,26 @@ export class RoomSubscriptionManager {
 
     try {
       const meta = await this.meta();
-      const useWs = meta.streamProtocols.includes("realtime.ws.v1") && meta.capabilities.presence && meta.capabilities.multiRoom;
+      const useWs =
+        meta.streamProtocols.includes(REALTIME_WS_PROTOCOL_V2) &&
+        meta.capabilities.multiRoom &&
+        (roomId.startsWith("chat:")
+          ? meta.capabilities.chat
+          : meta.capabilities.presence);
       if (!useWs) {
         throw new Error("room_ws_not_supported");
       }
-      this.transport.connect();
-      if (this.transport.isReady) {
-        this.transport.send({
-          protocol: "realtime.ws.v1",
-          type: "subscribe",
-          subscriptions: [{ subscriptionId: subscription.subscriptionId, roomId }],
-        });
+
+      const transportEntry = this.acquireTransport(roomId);
+      if (transportEntry.lastSnapshot) {
+        onSnapshot(transportEntry.lastSnapshot);
       }
     } catch (error) {
       this.subscriptions.delete(key);
       subscription.errorListeners.forEach((listener) =>
-        listener(error instanceof Error ? error.message : "meta_error")
+        listener(error instanceof Error ? error.message : "meta_error"),
       );
       this.emitDebugState();
-      if (this.subscriptions.size === 0) {
-        this.transport.disconnect();
-      }
       return () => {};
     }
 
@@ -277,7 +281,11 @@ export class RoomSubscriptionManager {
     return () => this.unsubscribe(key, onSnapshot, onError);
   }
 
-  private unsubscribe(key: string, onSnapshot: SnapshotListener, onError?: ErrorListener) {
+  private unsubscribe(
+    key: string,
+    onSnapshot: SnapshotListener,
+    onError?: ErrorListener,
+  ) {
     const subscription = this.subscriptions.get(key);
     if (!subscription) return;
     subscription.refCount -= 1;
@@ -287,41 +295,146 @@ export class RoomSubscriptionManager {
       this.emitDebugState();
       return;
     }
-    this.transport.send({
-      protocol: "realtime.ws.v1",
-      type: "unsubscribe",
-      subscriptionIds: [subscription.subscriptionId],
-    });
     this.subscriptions.delete(key);
-    if (this.subscriptions.size === 0) {
-      this.transport.disconnect();
+    this.releaseTransport(subscription.roomId);
+    this.emitDebugState();
+  }
+
+  private acquireTransport(roomId: string) {
+    const existing = this.transports.get(roomId);
+    if (existing) {
+      existing.refCount += 1;
+      return existing;
     }
-    this.emitDebugState();
-  }
 
-  private handleSnapshot(message: RealtimeSnapshotEnvelope) {
-    const subscription = [...this.subscriptions.values()].find((item) => item.subscriptionId === message.subscriptionId);
-    if (!subscription) return;
-    this.lastSnapshotMeta = {
-      roomId: message.roomId,
-      subscriptionId: message.subscriptionId,
-      revision: message.payload.revision,
-      updatedAt: message.payload.updatedAt,
+    const transport = new RealtimeTransport(this.config, roomId);
+    const entry: RoomTransportEntry = {
+      roomId,
+      refCount: 1,
+      transport,
+      lastSnapshot: null,
     };
+    transport.onMessage((message) => this.handleTransportMessage(entry, message));
+    transport.onReady(() => this.handleTransportReady(entry));
+    transport.onState(() => this.emitDebugState());
+    transport.connect();
+    this.transports.set(roomId, entry);
+    return entry;
+  }
+
+  private releaseTransport(roomId: string) {
+    const entry = this.transports.get(roomId);
+    if (!entry) return;
+    entry.refCount -= 1;
+    if (entry.refCount > 0) {
+      return;
+    }
+    entry.transport.disconnect();
+    this.transports.delete(roomId);
+  }
+
+  private handleTransportMessage(
+    entry: RoomTransportEntry,
+    message: RealtimeServerMessage,
+  ) {
+    if (message.type === "snapshot") {
+      entry.lastSnapshot = message.payload;
+      this.lastSnapshotMeta = {
+        roomId: message.roomId,
+        subscriptionId: this.resolvePrimarySubscriptionId(entry.roomId),
+        revision: message.payload.revision,
+        updatedAt: message.payload.updatedAt,
+      };
+      this.subscriptionsForRoom(entry.roomId).forEach((subscription) => {
+        subscription.listeners.forEach((listener) => listener(message.payload));
+      });
+      this.emitDebugState();
+      return;
+    }
+
+    if (message.type === "chat_event") {
+      const membership = this.chatMemberships.get(`chat:${entry.roomId}`);
+      membership?.eventListeners.forEach((listener) => listener(message));
+      return;
+    }
+
+    if (message.type === "error") {
+      this.handleRoomError(message.roomId, message.message);
+    }
+  }
+
+  private handleTransportReady(entry: RoomTransportEntry) {
+    const membership = this.chatMemberships.get(`chat:${entry.roomId}`);
+    if (membership) {
+      this.sendChatJoin(entry, membership);
+    }
+    this.sendPresenceContextToRoom(entry.roomId);
     this.emitDebugState();
-    subscription.listeners.forEach((listener) => listener(message.payload));
   }
 
-  private handleChatEvent(message: ChatEventEnvelope) {
-    const membership = this.chatMemberships.get(`chat:${message.roomId}`);
-    if (!membership) return;
-    membership.eventListeners.forEach((listener) => listener(message));
+  private sendChatJoin(
+    entry: RoomTransportEntry,
+    membership: Pick<ActiveChatMembership, "roomId" | "displayName" | "userId">,
+  ) {
+    entry.transport.send({
+      protocol: REALTIME_WS_PROTOCOL_V2,
+      type: "chat_join",
+      roomId: membership.roomId,
+      displayName: membership.displayName,
+      userId: membership.userId,
+    });
   }
 
-  private handleError(subscriptionId: string | undefined, error: string) {
-    if (!subscriptionId) return;
-    const subscription = [...this.subscriptions.values()].find((item) => item.subscriptionId === subscriptionId);
-    subscription?.errorListeners.forEach((listener) => listener(error));
+  private sendChatLeave(roomId: string) {
+    this.transports.get(roomId)?.transport.send({
+      protocol: REALTIME_WS_PROTOCOL_V2,
+      type: "chat_leave",
+      roomId,
+    });
+  }
+
+  private sendPresenceContextToRoom(roomId: string) {
+    const context = this.presenceContext;
+    const entry = this.transports.get(roomId);
+    if (!context || !entry?.transport.isReady) return;
+    if (roomId === "global") {
+      entry.transport.send({
+        protocol: REALTIME_WS_PROTOCOL_V2,
+        type: "presence_context",
+        ...context,
+      });
+      return;
+    }
+    const currentPageRoomId = resolveRoomId({
+      capability: "presence",
+      scope: "page",
+      canonicalUrl: context.page.canonicalUrl ?? context.page.url,
+    });
+    if (roomId !== currentPageRoomId) return;
+    entry.transport.send({
+      protocol: REALTIME_WS_PROTOCOL_V2,
+      type: "presence_context",
+      ...context,
+    });
+  }
+
+  private subscriptionsForRoom(roomId: string) {
+    return [...this.subscriptions.values()].filter(
+      (subscription) => subscription.roomId === roomId,
+    );
+  }
+
+  private resolvePrimarySubscriptionId(roomId: string) {
+    return this.subscriptionsForRoom(roomId)[0]?.subscriptionId ?? roomId;
+  }
+
+  private handleRoomError(roomId: string, error: string) {
+    this.subscriptionsForRoom(roomId).forEach((subscription) => {
+      subscription.errorListeners.forEach((listener) => listener(error));
+    });
+    this.chatMemberships.get(`chat:${roomId}`)?.errorListeners.forEach((listener) => {
+      listener(error);
+    });
     this.emitDebugState();
   }
 
@@ -349,18 +462,25 @@ export class RoomSubscriptionManager {
       refCount: subscription.refCount,
       mode: subscription.mode,
     }));
+    const transports = [...this.transports.values()].map((entry) => ({
+      roomId: entry.roomId,
+      refCount: entry.refCount,
+      status: entry.transport.snapshot.status,
+      selectedProtocol: entry.transport.snapshot.selectedProtocol,
+      capabilities: entry.transport.snapshot.capabilities,
+      lastError: entry.transport.snapshot.lastError,
+      lastMessageType: entry.transport.snapshot.lastMessageType,
+    }));
+    const transport = aggregateTransportState(transports);
 
     return {
-      transport: this.transport.snapshot,
-      activeMode: subscriptions[0]?.mode ?? "unknown",
+      transport,
+      activeMode: transports.length > 0 ? "ws" : "unknown",
       subscriptions,
       lastSnapshotMeta: this.lastSnapshotMeta,
       meta: this.resolvedMeta,
+      transports,
     };
-  }
-
-  private debug(event: string, payload?: unknown) {
-    this.logger.debug("[room.subscriptions]", event, payload ?? "");
   }
 
   private unsubscribeChatRoom(
@@ -379,13 +499,49 @@ export class RoomSubscriptionManager {
       this.emitDebugState();
       return;
     }
-    this.transport.send({
-      protocol: "realtime.ws.v1",
-      type: "chat_leave",
-      roomId: membership.roomId,
-    });
+    this.sendChatLeave(membership.roomId);
     membership.unsubscribeRoom();
     this.chatMemberships.delete(key);
     this.emitDebugState();
   }
+}
+
+function aggregateTransportState(
+  transports: RoomSubscriptionDebugState["transports"],
+): RealtimeTransportState {
+  if (transports.length === 0) {
+    return {
+      status: "idle",
+      selectedProtocol: null,
+      capabilities: null,
+      lastError: null,
+      lastMessageType: null,
+    };
+  }
+
+  const priority: RealtimeTransportState["status"][] = [
+    "error",
+    "reconnecting",
+    "connecting",
+    "ready",
+    "closed",
+    "idle",
+  ];
+  const status =
+    priority.find((candidate) =>
+      transports.some((transport) => transport.status === candidate),
+    ) ?? "idle";
+
+  return {
+    status,
+    selectedProtocol:
+      transports.find((transport) => transport.selectedProtocol)?.selectedProtocol ??
+      null,
+    capabilities:
+      transports.find((transport) => transport.capabilities)?.capabilities ?? null,
+    lastError: transports.find((transport) => transport.lastError)?.lastError ?? null,
+    lastMessageType:
+      transports.find((transport) => transport.lastMessageType)?.lastMessageType ??
+      null,
+  };
 }

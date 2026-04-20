@@ -15,8 +15,10 @@ describe("room snapshot union", () => {
       workspaceId: "pulse-demo",
       roomId: "global",
       revision: 1,
-      onlineCount: 2,
-      activeReaders: [],
+      sessionCount: 2,
+      sessions: [],
+      activePageCount: 0,
+      activePages: [],
       updatedAt: "2026-04-16T00:00:00.000Z",
     });
 
@@ -30,20 +32,15 @@ describe("room snapshot union", () => {
       workspaceId: "pulse-demo",
       roomId: "page:https://example.com/article",
       revision: 2,
-      onlineCount: 3,
-      activeReaders: [],
-      readingStats: {
-        avgProgress: 42,
-        maxProgress: 78,
-        sampleCount: 3,
-      },
+      sessionCount: 3,
+      sessions: [],
       updatedAt: "2026-04-16T00:00:00.000Z",
     });
 
     expect(isPageRoomSnapshot(snapshot)).toBe(true);
     expect(snapshot.roomKind).toBe("page");
     if (snapshot.roomKind === "page") {
-      expect(snapshot.readingStats.sampleCount).toBe(3);
+      expect(snapshot.sessionCount).toBe(3);
     }
   });
 
@@ -85,7 +82,7 @@ describe("room snapshot union", () => {
 
   it("parses chat event envelopes", () => {
     const parsed = RealtimeServerMessageSchema.parse({
-      protocol: "realtime.ws.v1",
+      protocol: "realtime.ws.v2",
       type: "chat_event",
       roomId: "chat:lobby",
       roomKind: "chat",

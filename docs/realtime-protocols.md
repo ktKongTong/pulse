@@ -21,13 +21,16 @@
 - `web.v1`
   - [web-v1.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-protocol/src/web-v1.ts)
 - 统一房间流协议
-  - [realtime-v1.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-protocol/src/realtime-v1.ts)
+  - [realtime-v2.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-protocol/src/realtime-v2.ts)
 - Worker 路由
   - [index.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/index.ts)
 - Worker 房间聚合
   - [device-do.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/device-do.ts)
-  - [room-do.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/room-do.ts)
-  - [room-strategies.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/room-strategies.ts)
+  - [base-room.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/base-room.ts)
+  - [global-status-room.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/global-status-room.ts)
+  - [page-status-room.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/page-status-room.ts)
+  - [chat-room.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/chat-room.ts)
+  - [room-view-helpers.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/room-view-helpers.ts)
   - [session-do.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/session-do.ts)
 - macOS KMP bridge
   - [PulseBarBridge.macos.kt](/Users/kt/Documents/Playground/pulse/common/src/macosMain/kotlin/io/github/kt/pulsebar/export/PulseBarBridge.macos.kt)
@@ -47,12 +50,15 @@
 3. `server-derived room state`
    - `RoomSnapshot`
    - `RoomReader`
+4. `room-scoped websocket session capability`
+   - `GlobalStatusRoom / PageStatusRoom / ChatRoom` 继承的 session 抽象
+   - 每个 room 一条 websocket，自身完成 hibernation attachment 与 fan-out
 
 也就是：
 
 ```text
 macOS local state ----presence.v2----\
-                                       -> Durable Object room state -> realtime.v1-stream / snapshot
+                                       -> Durable Object room state -> room-scoped realtime.ws.v2 socket
 web local state ------web.v1---------/
 ```
 
@@ -61,6 +67,7 @@ web local state ------web.v1---------/
 - `presence.v2` 和 `web.v1` 是“上行写协议”
 - `realtime.v1-stream` 是“下行读协议”
 - 服务端不是简单转发，而是做去重、过期、房间归属、全局聚合
+- `RoomDO` 会直接向本 room 内的 websocket 连接广播 snapshot，不再经过独立 `SessionDO` hub
 
 ## 2. PulseBar -> Server: `presence.v2`
 
@@ -441,7 +448,7 @@ Worker 行为分两段：
 
 Worker 对外提供：
 
-- `GET /v1/realtime/ws`
+- `GET /v1/realtime/ws?workspaceId=...&roomId=...`
 - `GET /v1/site/history`
 - `GET /v1/site/lifetime`
 - `GET /v1/content/history`

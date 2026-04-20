@@ -32,7 +32,7 @@
 - 历史归档：`POST /v2/history/ingest`
 - 服务端查询/下发：
   - `GET /v1/meta`
-  - `GET /v1/realtime/ws`
+  - `GET /v1/realtime/ws?workspaceId=...&roomId=...`
   - `GET /v1/site/history`
   - `GET /v1/site/lifetime`
   - `GET /v1/content/history`
@@ -112,7 +112,7 @@ xcodebuild -project macosApp/PulseBarNative.xcodeproj \
 - `apps/realtime-worker`
   - Cloudflare Worker + Durable Object 服务端，负责 ingest、房间聚合、chat 与统计查询
 - `packages/realtime-protocol`
-  - TS 协议包，承载 `presence.v2`、`web.v1`、`realtime.ws.v1`
+  - TS 协议包，承载 `presence.v2`、`web.v1`、`realtime.ws.v2`
 - `packages/realtime-react`
   - Web 侧 realtime client façade，统一封装 transport、订阅管理与 hooks
 - `docs`
@@ -126,6 +126,8 @@ xcodebuild -project macosApp/PulseBarNative.xcodeproj \
   - 单独描述 SDK / wire protocol / canonical model 的演进策略与兼容矩阵
 - [Module Boundaries](/Users/kt/Documents/Playground/pulse/docs/module-boundaries.md)
   - 明确 `worker / protocol / realtime-react / native` 的职责边界和依赖方向
+- [Realtime React API](/Users/kt/Documents/Playground/pulse/docs/realtime-react-api.md)
+  - 整理 `@pulse/realtime-react` 当前暴露的 hooks、client API、facade 形状和推荐用例
 
 ## Realtime Workspace
 
@@ -163,7 +165,7 @@ Worker 当前暴露：
 - `POST /v2/history/ingest`
 - `POST /v1/web/ingest`
 - `GET /v1/meta`
-- `GET /v1/realtime/ws`
+- `GET /v1/realtime/ws?workspaceId=...&roomId=...`
 - `GET /v1/site/history`
 - `GET /v1/site/lifetime`
 - `GET /v1/content/history`

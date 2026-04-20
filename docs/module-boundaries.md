@@ -26,15 +26,15 @@ Pulse 当前按四层分工，后续改动默认遵守以下边界。
 职责：
 
 - 接收 `presence.v2` / `web.v1` 上行
-- 维护 `DeviceDO / RoomDO / SessionDO`
+- 维护 `DeviceDO / RoomDO / RoomDO 继承的 SessionDO 能力`
 - 生成 room snapshot、chat 状态和 stats 查询结果
 
 子职责：
 
 - `DeviceDO` 只处理设备 ingest、设备热状态、设备历史归档
-- `RoomDO` 只处理房间级聚合、房间状态持久化、广播
-- `SessionDO` 只处理 websocket 会话和订阅生命周期
-- `room-strategies.ts` 是 `global/page/chat` 房间行为的唯一分支点
+- `RoomDO` 现在拆成 `GlobalStatusRoom / PageStatusRoom / ChatRoom` 三个具体 DO 类，分别处理自己的聚合、持久化、room-scoped websocket 与广播
+- `SessionDO` 不再是独立 Durable Object；它现在只是 `RoomDO` 继承的 session/websocket 抽象能力
+- `room-view-helpers.ts` 只保留纯 reader/page snapshot 组装 helper，不再承载房间行为分发
 
 不负责：
 
@@ -59,6 +59,7 @@ Pulse 当前按四层分工，后续改动默认遵守以下边界。
 约束：
 
 - 页面组件只能通过 `client / subscriptions / hooks` 消费 realtime
+- 页面组件默认优先消费 `realtime-react` 提供的 facade hooks/selectors；raw snapshot 只用于调试或新增 facade 前的过渡场景
 - 组件层不直接解析 raw websocket message
 
 ## 4. `common` + `macosApp`

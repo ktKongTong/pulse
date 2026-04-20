@@ -89,6 +89,35 @@ export function RealtimeObservabilityPanel(props: { debug: RoomSubscriptionDebug
           )}
         </div>
 
+        <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5 lg:col-span-2">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-300">Room transports</h3>
+          {debug.transports.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-400">No active room transports.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {debug.transports.map((transport) => (
+                <article
+                  key={transport.roomId}
+                  className="flex items-start justify-between gap-4 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3"
+                >
+                  <div>
+                    <strong className="text-sm font-semibold text-white">{transport.roomId}</strong>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {transport.status} · refs {transport.refCount}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-slate-400">
+                    <div className="font-medium text-slate-200">
+                      {transport.selectedProtocol ?? "pending"}
+                    </div>
+                    <small>{transport.lastMessageType ?? "idle"}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
           <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-300">Last error</h3>
           <p className="mt-4 text-sm text-slate-300">{debug.transport.lastError ?? "none"}</p>

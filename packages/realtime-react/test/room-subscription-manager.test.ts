@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/realtime", () => ({
   fetchRealtimeMeta: vi.fn().mockResolvedValue({
-    serverVersion: "2026.04.17",
+    serverVersion: "2026.04.19",
     ingestProtocols: {
       presence: ["presence.v2"],
       web: ["web.v1"],
     },
-    streamProtocols: ["realtime.ws.v1"],
+    streamProtocols: ["realtime.ws.v2"],
     capabilities: {
       presence: true,
       multiRoom: true,
@@ -106,7 +106,229 @@ describe("RoomSubscriptionManager", () => {
     });
   });
 
-  it("joins chat rooms after websocket hello and resubscribes on reconnect", async () => {
+  it("opens one websocket per unique room and reuses the same room transport", async () => {
+    const manager = new RoomSubscriptionManager(config);
+
+    await manager.subscribePresence(
+      { capability: "presence", scope: "site", subject: "global" },
+      () => {},
+    );
+    await manager.subscribePresence(
+      { capability: "presence", scope: "site", subject: "global" },
+      () => {},
+    );
+    await manager.subscribePresence(
+      {
+        capability: "presence",
+        scope: "page",
+        canonicalUrl: "https://example.com/article",
+      },
+      () => {},
+    );
+    await manager.subscribeChatRoom(
+      "chat:general",
+      { displayName: "KT", userId: "user-1" },
+      () => {},
+    );
+
+    expect(MockWebSocket.instances).toHaveLength(3);
+    expect(MockWebSocket.instances.map((socket) => socket.url)).toEqual([
+      "wss://pulse.example.com/api/v1/realtime/ws?workspaceId=pulse-demo&roomId=global",
+      "wss://pulse.example.com/api/v1/realtime/ws?workspaceId=pulse-demo&roomId=page%3Ahttps%3A%2F%2Fexample.com%2Farticle",
+      "wss://pulse.example.com/api/v1/realtime/ws?workspaceId=pulse-demo&roomId=chat%3Ageneral",
+    ]);
+  });
+
+  it("bootstraps chat and presence transports on hello and reconnect per room", async () => {
+    const manager = new RoomSubscriptionManager(config);
+
+    manager.setPresenceContext({
+      sessionId: "session-1",
+      tabId: "tab-1",
+      page: {
+        title: "Article",
+        url: "https://example.com/article",
+      },
+    });
+
+    await manager.subscribePresence(
+      { capability: "presence", scope: "site", subject: "global" },
+      () => {},
+    );
+    await manager.subscribePresence(
+      {
+        capability: "presence",
+        scope: "page",
+        canonicalUrl: "https://example.com/article",
+      },
+      () => {},
+    );
+    await manager.subscribeChatRoom(
+      "chat:general",
+      { displayName: "KT", userId: "user-1" },
+      () => {},
+    );
+
+    const [globalSocket, pageSocket, chatSocket] = MockWebSocket.instances;
+    for (const socket of [globalSocket, pageSocket, chatSocket]) {
+      socket!.emit("open");
+      socket!.emit("message", {
+        data: JSON.stringify({
+          protocol: "realtime.ws.v2",
+          type: "hello_ack",
+          selectedProtocol: "realtime.ws.v2",
+          capabilities: {
+            presence: true,
+            multiRoom: true,
+            chat: true,
+            richMedia: true,
+            interaction: true,
+          },
+        }),
+      });
+    }
+
+    expect(globalSocket!.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({
+        type: "presence_context",
+      }),
+    );
+    expect(pageSocket!.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({
+        type: "presence_context",
+      }),
+    );
+    expect(chatSocket!.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({
+        type: "chat_join",
+        roomId: "chat:general",
+      }),
+    );
+
+    pageSocket!.emit("close");
+    vi.advanceTimersByTime(1000);
+    const reconnectedPageSocket = MockWebSocket.instances[3]!;
+    reconnectedPageSocket.emit("open");
+    reconnectedPageSocket.emit("message", {
+      data: JSON.stringify({
+        protocol: "realtime.ws.v2",
+        type: "hello_ack",
+        selectedProtocol: "realtime.ws.v2",
+        capabilities: {
+          presence: true,
+          multiRoom: true,
+          chat: true,
+          richMedia: true,
+          interaction: true,
+        },
+      }),
+    });
+
+    expect(
+      reconnectedPageSocket.sent.map((payload) => JSON.parse(payload)),
+    ).toContainEqual(expect.objectContaining({ type: "presence_context" }));
+  });
+
+  it("disconnects only the room transport whose last subscriber leaves", async () => {
+    const manager = new RoomSubscriptionManager(config);
+
+    const stopGlobal = await manager.subscribePresence(
+      { capability: "presence", scope: "site", subject: "global" },
+      () => {},
+    );
+    const stopPage = await manager.subscribePresence(
+      {
+        capability: "presence",
+        scope: "page",
+        canonicalUrl: "https://example.com/article",
+      },
+      () => {},
+    );
+
+    const [globalSocket, pageSocket] = MockWebSocket.instances;
+    globalSocket!.emit("open");
+    globalSocket!.emit("message", {
+      data: JSON.stringify({
+        protocol: "realtime.ws.v2",
+        type: "hello_ack",
+        selectedProtocol: "realtime.ws.v2",
+        capabilities: {
+          presence: true,
+          multiRoom: true,
+          chat: true,
+          richMedia: true,
+          interaction: true,
+        },
+      }),
+    });
+    pageSocket!.emit("open");
+    pageSocket!.emit("message", {
+      data: JSON.stringify({
+        protocol: "realtime.ws.v2",
+        type: "hello_ack",
+        selectedProtocol: "realtime.ws.v2",
+        capabilities: {
+          presence: true,
+          multiRoom: true,
+          chat: true,
+          richMedia: true,
+          interaction: true,
+        },
+      }),
+    });
+
+    stopPage();
+    expect(pageSocket!.readyState).toBe(MockWebSocket.CLOSED);
+    expect(globalSocket!.readyState).toBe(MockWebSocket.OPEN);
+
+    stopGlobal();
+    expect(globalSocket!.readyState).toBe(MockWebSocket.CLOSED);
+  });
+
+  it("exposes aggregate and per-room transport debug state", async () => {
+    const manager = new RoomSubscriptionManager(config);
+    const debugStates: ReturnType<typeof manager["onDebugState"]>[] = [];
+    let latest: ReturnType<typeof manager["onDebugState"]> | undefined;
+
+    const unsubscribeDebug = manager.onDebugState((state) => {
+      latest = state;
+      debugStates.push(() => {});
+    });
+    await manager.subscribePresence(
+      { capability: "presence", scope: "site", subject: "global" },
+      () => {},
+    );
+
+    const socket = MockWebSocket.instances[0]!;
+    socket.emit("open");
+    socket.emit("message", {
+      data: JSON.stringify({
+        protocol: "realtime.ws.v2",
+        type: "hello_ack",
+        selectedProtocol: "realtime.ws.v2",
+        capabilities: {
+          presence: true,
+          multiRoom: true,
+          chat: true,
+          richMedia: true,
+          interaction: true,
+        },
+      }),
+    });
+
+    expect(latest?.transport.status).toBe("ready");
+    expect(latest?.transports).toEqual([
+      expect.objectContaining({
+        roomId: "global",
+        status: "ready",
+      }),
+    ]);
+
+    unsubscribeDebug();
+    manager.dispose();
+  });
+
+  it("sends chat_leave before disposing chat transports", async () => {
     const manager = new RoomSubscriptionManager(config);
 
     await manager.subscribeChatRoom(
@@ -115,13 +337,13 @@ describe("RoomSubscriptionManager", () => {
       () => {},
     );
 
-    const socket = MockWebSocket.instances[0]!;
-    socket.emit("open");
-    socket.emit("message", {
+    const chatSocket = MockWebSocket.instances[0]!;
+    chatSocket.emit("open");
+    chatSocket.emit("message", {
       data: JSON.stringify({
-        protocol: "realtime.ws.v1",
+        protocol: "realtime.ws.v2",
         type: "hello_ack",
-        selectedProtocol: "realtime.ws.v1",
+        selectedProtocol: "realtime.ws.v2",
         capabilities: {
           presence: true,
           multiRoom: true,
@@ -132,38 +354,15 @@ describe("RoomSubscriptionManager", () => {
       }),
     });
 
-    const sentMessages = socket.sent.map((payload) => JSON.parse(payload));
-    expect(sentMessages.some((message) => message.type === "subscribe")).toBe(true);
-    expect(
-      sentMessages.some(
-        (message) =>
-          message.type === "chat_join" &&
-          message.roomId === "chat:general" &&
-          message.displayName === "KT",
-      ),
-    ).toBe(true);
+    manager.dispose();
 
-    socket.emit("close");
-    vi.advanceTimersByTime(1000);
-    const nextSocket = MockWebSocket.instances[1]!;
-    nextSocket.emit("open");
-    nextSocket.emit("message", {
-      data: JSON.stringify({
-        protocol: "realtime.ws.v1",
-        type: "hello_ack",
-        selectedProtocol: "realtime.ws.v1",
-        capabilities: {
-          presence: true,
-          multiRoom: true,
-          chat: true,
-          richMedia: true,
-          interaction: true,
-        },
+    const sentMessages = chatSocket.sent.map((payload) => JSON.parse(payload));
+    expect(sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: "chat_leave",
+        roomId: "chat:general",
       }),
-    });
-
-    const resentMessages = nextSocket.sent.map((payload) => JSON.parse(payload));
-    expect(resentMessages.some((message) => message.type === "subscribe")).toBe(true);
-    expect(resentMessages.some((message) => message.type === "chat_join")).toBe(true);
+    );
+    expect(chatSocket.readyState).toBe(MockWebSocket.CLOSED);
   });
 });

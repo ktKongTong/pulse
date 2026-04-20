@@ -23,7 +23,7 @@ Pulse 需要明确区分三个不同的“版本”概念：
    - 例如：
      - `presence.v2`
      - `web.v1`
-     - `realtime.ws.v1`
+     - `realtime.ws.v2`
 3. `server canonical model`
    - 服务端内部统一模型
    - 不应该直接与外部协议同名
@@ -154,7 +154,7 @@ v2 client -> v2 adapter -> canonical
 ```json
 {
   "type": "hello",
-  "supportedProtocols": ["realtime.ws.v2", "realtime.ws.v1"],
+  "supportedProtocols": ["realtime.ws.v2"],
   "sdkVersion": "0.8.0"
 }
 ```
@@ -164,7 +164,7 @@ v2 client -> v2 adapter -> canonical
 ```json
 {
   "type": "hello_ack",
-  "selectedProtocol": "realtime.ws.v1",
+  "selectedProtocol": "realtime.ws.v2",
   "capabilities": {
     "presence": true,
     "chat": false,
@@ -273,10 +273,6 @@ v2 client -> v2 adapter -> canonical
 
 下行统一成一个可协商协议：
 
-- `realtime.ws.v1`
-
-后续需要 breaking change 时：
-
 - `realtime.ws.v2`
 
 ### 7.3 Internal model
@@ -324,7 +320,7 @@ v2 client -> v2 adapter -> canonical
     "presence": ["presence.v2"],
     "web": ["web.v1"]
   },
-  "streamProtocols": ["realtime.ws.v1"],
+  "streamProtocols": ["realtime.ws.v2"],
   "capabilities": {
     "presence": true,
     "chat": false,
@@ -363,9 +359,9 @@ SDK 不应该负责：
 如果继续实现，建议下一步落：
 
 1. `GET /v1/meta`
-2. `realtime.ws.v1` 握手协议
-3. client room sdk 的版本协商和 fallback
+2. `realtime.ws.v2` room-scoped 握手协议
+3. client room sdk 的 room transport registry
 4. 服务端 adapter 层显式分离：
    - `presence.v2 -> canonical`
    - `web.v1 -> canonical`
-   - `canonical -> realtime.ws.v1`
+   - `canonical -> realtime.ws.v2`

@@ -1,7 +1,25 @@
-import {RealtimeRoom} from "./room-do";
-import type {RealtimeSession} from "./session-do";
+import type { DeviceDO } from "./device-do";
+import type { InteractionHub } from "./interaction-hub-do";
+import type { InteractionInbox } from "./interaction-inbox-do";
+import type { ChatRoom, GlobalStatusRoom, PageStatusRoom } from "./room-do";
 
-export type Env = Cloudflare.Env
+export type Env = Cloudflare.Env & {
+  GLOBAL_STATUS_ROOM: DurableObjectNamespace<GlobalStatusRoom>;
+  PAGE_STATUS_ROOM: DurableObjectNamespace<PageStatusRoom>;
+  CHAT_ROOM: DurableObjectNamespace<ChatRoom>;
+  INTERACTION_HUB: DurableObjectNamespace<InteractionHub>;
+  INTERACTION_INBOX: DurableObjectNamespace<InteractionInbox>;
+  DEVICE_DO: DurableObjectNamespace<DeviceDO>;
+  ASSETS: Fetcher;
+  WORKSPACE_ID: string;
+  SITE_ID: string;
+  ALLOWED_ORIGINS: string;
+  ROOM_SESSION_TTL_SECONDS?: string;
+  WEB_HEARTBEAT_SECONDS?: string;
+  AGGREGATE_FLUSH_SECONDS?: string;
+  DEBUG_LOGS?: string;
+  LOG_LEVEL?: string;
+}
 
 export function allowedOrigins(env: Env): Set<string> {
   return new Set(

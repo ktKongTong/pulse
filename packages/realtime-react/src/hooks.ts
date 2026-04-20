@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatEventEnvelope,
   ChatRoomSnapshot,
@@ -24,65 +24,300 @@ import {
 import { usePulseRealtimeClient } from "./provider";
 import type { RoomSubscriptionDebugState } from "./room-subscription-manager";
 import { getOrCreateSessionId, getOrCreateTabId } from "./session";
+import {
+  selectChatRoom,
+  selectGlobalStatus,
+  selectOwnerFocusApp,
+  selectOwnerMedia,
+  selectOwnerStats,
+  selectOwnerStatsSeries,
+  selectOwnerStatus,
+  selectPageStats,
+  selectPageStatsSeries,
+  selectPageStatus,
+  selectSiteStats,
+  selectSiteStatsSeries,
+  type ChatRoom,
+  type FocusStatus,
+  type GlobalStatus,
+  type MediaStatus,
+  type OwnerStats,
+  type OwnerStatus,
+  type PageStats,
+  type PageStatus,
+  type QueryState,
+  type SiteStats,
+  type StatsQueryOptions,
+  type StatsSeriesPoint,
+} from "./user-api";
+
+function useRefreshTrigger() {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refetch = useCallback(() => {
+    setRefreshKey((current) => current + 1);
+  }, []);
+  return { refreshKey, refetch };
+}
 
 export function useGlobalPresenceSnapshot() {
   const client = usePulseRealtimeClient();
-  const [snapshot, setSnapshot] = useState<GlobalRoomSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { refreshKey, refetch } = useRefreshTrigger();
+  const [state, setState] = useState<{
+    snapshot: GlobalRoomSnapshot | null;
+    loading: boolean;
+    error: string | null;
+  }>({
+    snapshot: null,
+    loading: true,
+    error: null,
+  });
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
+    setState((current) => ({ ...current, loading: true, error: null }));
     void client.subscriptions
       .subscribePresence(
         { capability: "presence", scope: "site", subject: "global" },
         (next) => {
           if (!isGlobalRoomSnapshot(next)) {
-            setError("unexpected_room_kind");
+            setState((current) => ({
+              ...current,
+              loading: false,
+              error: "unexpected_room_kind",
+            }));
             return;
           }
-          setSnapshot(next);
-          setError(null);
+          setState({
+            snapshot: next,
+            loading: false,
+            error: null,
+          });
         },
-        (message) => setError(message),
+        (message) =>
+          setState((current) => ({
+            ...current,
+            loading: false,
+            error: message,
+          })),
       )
       .then((unsubscribe) => {
         cleanup = unsubscribe;
       });
 
     return () => cleanup?.();
-  }, [client]);
+  }, [client, refreshKey]);
 
-  return { snapshot, error };
+  return { ...state, refetch };
 }
 
 export function usePagePresenceSnapshot(canonicalUrl: string) {
   const client = usePulseRealtimeClient();
-  const [snapshot, setSnapshot] = useState<PageRoomSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { refreshKey, refetch } = useRefreshTrigger();
+  const [state, setState] = useState<{
+    snapshot: PageRoomSnapshot | null;
+    loading: boolean;
+    error: string | null;
+  }>({
+    snapshot: null,
+    loading: true,
+    error: null,
+  });
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
+    setState((current) => ({ ...current, loading: true, error: null }));
     void client.subscriptions
       .subscribePresence(
         { capability: "presence", scope: "page", canonicalUrl },
         (next) => {
           if (!isPageRoomSnapshot(next)) {
-            setError("unexpected_room_kind");
+            setState((current) => ({
+              ...current,
+              loading: false,
+              error: "unexpected_room_kind",
+            }));
             return;
           }
-          setSnapshot(next);
-          setError(null);
+          setState({
+            snapshot: next,
+            loading: false,
+            error: null,
+          });
         },
-        (message) => setError(message),
+        (message) =>
+          setState((current) => ({
+            ...current,
+            loading: false,
+            error: message,
+          })),
       )
       .then((unsubscribe) => {
         cleanup = unsubscribe;
       });
 
     return () => cleanup?.();
-  }, [client, canonicalUrl]);
+  }, [client, canonicalUrl, refreshKey]);
 
-  return { snapshot, error };
+  return { ...state, refetch };
+}
+
+function useChatRoomStream(options: {
+  roomId: string;
+  displayName: string;
+  userId?: string;
+}) {
+  const client = usePulseRealtimeClient();
+  const { refreshKey, refetch } = useRefreshTrigger();
+  const [state, setState] = useState<{
+    snapshot: ChatRoomSnapshot | null;
+    events: ChatEventEnvelope[];
+    loading: boolean;
+    error: string | null;
+  }>({
+    snapshot: null,
+    events: [],
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    setState((current) => ({ ...current, loading: true, error: null }));
+    void client.subscriptions
+      .subscribeChatRoom(
+        options.roomId,
+        { displayName: options.displayName, userId: options.userId },
+        (next) => {
+          setState((current) => ({
+            ...current,
+            snapshot: next,
+            loading: false,
+            error: null,
+          }));
+        },
+        (event) =>
+          setState((current) => ({
+            ...current,
+            events: [...current.events.slice(-19), event],
+          })),
+        (message) =>
+          setState((current) => ({
+            ...current,
+            loading: false,
+            error: message,
+          })),
+      )
+      .then((unsubscribe) => {
+        cleanup = unsubscribe;
+      });
+
+    return () => cleanup?.();
+  }, [client, options.displayName, options.roomId, options.userId, refreshKey]);
+
+  return {
+    ...state,
+    refetch,
+    sendMessage(content: string) {
+      client.subscriptions.sendChatMessage(options.roomId, content);
+    },
+  };
+}
+
+export function useGlobalStatus(): QueryState<GlobalStatus> {
+  const realtime = useGlobalPresenceSnapshot();
+  const siteLifetime = useSiteLifetime();
+  const data = useMemo(
+    () =>
+      realtime.snapshot
+        ? selectGlobalStatus(realtime.snapshot, siteLifetime.data)
+        : null,
+    [realtime.snapshot, siteLifetime.data],
+  );
+
+  const refetch = useCallback(() => {
+    realtime.refetch();
+    siteLifetime.refetch();
+  }, [realtime, siteLifetime]);
+
+  return {
+    data,
+    loading: realtime.loading || siteLifetime.loading,
+    error: realtime.error ?? siteLifetime.error,
+    refetch,
+  };
+}
+
+export function useOwnerStatus(): QueryState<OwnerStatus> {
+  const realtime = useGlobalPresenceSnapshot();
+  const data = useMemo(
+    () => selectOwnerStatus(realtime.snapshot),
+    [realtime.snapshot],
+  );
+
+  return {
+    data,
+    loading: realtime.loading,
+    error: realtime.error,
+    refetch: realtime.refetch,
+  };
+}
+
+export function useOwnerFocusApp(): QueryState<FocusStatus> {
+  const realtime = useGlobalPresenceSnapshot();
+  const data = useMemo(
+    () => selectOwnerFocusApp(realtime.snapshot),
+    [realtime.snapshot],
+  );
+
+  return {
+    data,
+    loading: realtime.loading,
+    error: realtime.error,
+    refetch: realtime.refetch,
+  };
+}
+
+export function useOwnerMedia(): QueryState<MediaStatus> {
+  const realtime = useGlobalPresenceSnapshot();
+  const data = useMemo(
+    () => selectOwnerMedia(realtime.snapshot),
+    [realtime.snapshot],
+  );
+
+  return {
+    data,
+    loading: realtime.loading,
+    error: realtime.error,
+    refetch: realtime.refetch,
+  };
+}
+
+export function usePageStatus(canonicalUrl: string): QueryState<PageStatus> {
+  const realtime = usePagePresenceSnapshot(canonicalUrl);
+  const contentLifetime = useContentLifetime(canonicalUrl);
+  const data = useMemo(
+    () =>
+      realtime.snapshot
+        ? selectPageStatus(
+            canonicalUrl,
+            realtime.snapshot,
+            contentLifetime.data,
+          )
+        : null,
+    [canonicalUrl, contentLifetime.data, realtime.snapshot],
+  );
+
+  const refetch = useCallback(() => {
+    realtime.refetch();
+    contentLifetime.refetch();
+  }, [contentLifetime, realtime]);
+
+  return {
+    data,
+    loading: realtime.loading || contentLifetime.loading,
+    error: realtime.error ?? contentLifetime.error,
+    refetch,
+  };
 }
 
 export function useChatRoom(options: {
@@ -90,38 +325,15 @@ export function useChatRoom(options: {
   displayName: string;
   userId?: string;
 }) {
-  const client = usePulseRealtimeClient();
-  const [snapshot, setSnapshot] = useState<ChatRoomSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [events, setEvents] = useState<ChatEventEnvelope[]>([]);
-
-  useEffect(() => {
-    let cleanup: (() => void) | undefined;
-    void client.subscriptions
-      .subscribeChatRoom(
-        options.roomId,
-        { displayName: options.displayName, userId: options.userId },
-        (next) => {
-          setSnapshot(next);
-          setError(null);
-        },
-        (event) => setEvents((previous) => [...previous.slice(-19), event]),
-        (message) => setError(message),
-      )
-      .then((unsubscribe) => {
-        cleanup = unsubscribe;
-      });
-
-    return () => cleanup?.();
-  }, [client, options.displayName, options.roomId, options.userId]);
+  const room = useChatRoomStream(options);
+  const data = useMemo(() => selectChatRoom(room.snapshot), [room.snapshot]);
 
   return {
-    snapshot,
-    events,
-    error,
-    sendMessage(content: string) {
-      client.subscriptions.sendChatMessage(options.roomId, content);
-    },
+    data,
+    loading: room.loading,
+    error: room.error,
+    refetch: room.refetch,
+    sendMessage: room.sendMessage,
   };
 }
 
@@ -139,6 +351,7 @@ export function useRealtimeDebugState() {
     subscriptions: [],
     lastSnapshotMeta: null,
     meta: null,
+    transports: [],
   }));
 
   useEffect(() => client.subscriptions.onDebugState(setState), [client]);
@@ -185,6 +398,7 @@ export function useSiteHistory(options?: {
   limit?: number;
 }) {
   const client = usePulseRealtimeClient();
+  const { refreshKey, refetch } = useRefreshTrigger();
   const period = options?.period ?? "day";
   const anchorDay = options?.anchorDay ?? statsDayKey();
   const limit = options?.limit ?? 30;
@@ -209,16 +423,17 @@ export function useSiteHistory(options?: {
         setState({
           data: [],
           loading: false,
-          error: error instanceof Error ? error.message : "site_history_unavailable",
+          error:
+            error instanceof Error ? error.message : "site_history_unavailable",
         });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [anchorDay, client, limit, period]);
+  }, [anchorDay, client, limit, period, refreshKey]);
 
-  return state;
+  return { ...state, refetch };
 }
 
 export function useOwnerHistory(options?: {
@@ -227,6 +442,7 @@ export function useOwnerHistory(options?: {
   limit?: number;
 }) {
   const client = usePulseRealtimeClient();
+  const { refreshKey, refetch } = useRefreshTrigger();
   const period = options?.period ?? "day";
   const anchorDay = options?.anchorDay ?? statsDayKey();
   const limit = options?.limit ?? 30;
@@ -251,16 +467,19 @@ export function useOwnerHistory(options?: {
         setState({
           data: [],
           loading: false,
-          error: error instanceof Error ? error.message : "owner_history_unavailable",
+          error:
+            error instanceof Error
+              ? error.message
+              : "owner_history_unavailable",
         });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [anchorDay, client, limit, period]);
+  }, [anchorDay, client, limit, period, refreshKey]);
 
-  return state;
+  return { ...state, refetch };
 }
 
 export function useContentHistory(
@@ -272,6 +491,7 @@ export function useContentHistory(
   },
 ) {
   const client = usePulseRealtimeClient();
+  const { refreshKey, refetch } = useRefreshTrigger();
   const period = options?.period ?? "day";
   const anchorDay = options?.anchorDay ?? statsDayKey();
   const limit = options?.limit ?? 30;
@@ -296,20 +516,24 @@ export function useContentHistory(
         setState({
           data: [],
           loading: false,
-          error: error instanceof Error ? error.message : "content_history_unavailable",
+          error:
+            error instanceof Error
+              ? error.message
+              : "content_history_unavailable",
         });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [anchorDay, canonicalUrl, client, limit, period]);
+  }, [anchorDay, canonicalUrl, client, limit, period, refreshKey]);
 
-  return state;
+  return { ...state, refetch };
 }
 
 export function useSiteLifetime() {
   const client = usePulseRealtimeClient();
+  const { refreshKey, refetch } = useRefreshTrigger();
   const [state, setState] = useState<HistoryState<SiteLifetime | null>>({
     data: null,
     loading: true,
@@ -329,20 +553,24 @@ export function useSiteLifetime() {
         setState({
           data: null,
           loading: false,
-          error: error instanceof Error ? error.message : "site_lifetime_unavailable",
+          error:
+            error instanceof Error
+              ? error.message
+              : "site_lifetime_unavailable",
         });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [client]);
+  }, [client, refreshKey]);
 
-  return state;
+  return { ...state, refetch };
 }
 
 export function useOwnerLifetime() {
   const client = usePulseRealtimeClient();
+  const { refreshKey, refetch } = useRefreshTrigger();
   const [state, setState] = useState<HistoryState<OwnerLifetime | null>>({
     data: null,
     loading: true,
@@ -362,20 +590,24 @@ export function useOwnerLifetime() {
         setState({
           data: null,
           loading: false,
-          error: error instanceof Error ? error.message : "owner_lifetime_unavailable",
+          error:
+            error instanceof Error
+              ? error.message
+              : "owner_lifetime_unavailable",
         });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [client]);
+  }, [client, refreshKey]);
 
-  return state;
+  return { ...state, refetch };
 }
 
 export function useContentLifetime(canonicalUrl: string) {
   const client = usePulseRealtimeClient();
+  const { refreshKey, refetch } = useRefreshTrigger();
   const [state, setState] = useState<HistoryState<ContentLifetime | null>>({
     data: null,
     loading: true,
@@ -395,16 +627,97 @@ export function useContentLifetime(canonicalUrl: string) {
         setState({
           data: null,
           loading: false,
-          error: error instanceof Error ? error.message : "content_lifetime_unavailable",
+          error:
+            error instanceof Error
+              ? error.message
+              : "content_lifetime_unavailable",
         });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [canonicalUrl, client]);
+  }, [canonicalUrl, client, refreshKey]);
 
-  return state;
+  return { ...state, refetch };
+}
+
+export function useSiteStats(options?: StatsQueryOptions): {
+  history: StatsSeriesPoint<SiteStats>[];
+  lifetime: SiteStats | null;
+  loading: boolean;
+  error: string | null;
+  refetch: () => void;
+} {
+  const history = useSiteHistory(options);
+  const lifetime = useSiteLifetime();
+
+  const refetch = useCallback(() => {
+    history.refetch();
+    lifetime.refetch();
+  }, [history, lifetime]);
+
+  return {
+    history: useMemo(() => selectSiteStatsSeries(history.data), [history.data]),
+    lifetime: useMemo(() => selectSiteStats(lifetime.data), [lifetime.data]),
+    loading: history.loading || lifetime.loading,
+    error: history.error ?? lifetime.error,
+    refetch,
+  };
+}
+
+export function useOwnerStats(options?: StatsQueryOptions): {
+  history: StatsSeriesPoint<OwnerStats>[];
+  lifetime: OwnerStats | null;
+  loading: boolean;
+  error: string | null;
+  refetch: () => void;
+} {
+  const history = useOwnerHistory(options);
+  const lifetime = useOwnerLifetime();
+
+  const refetch = useCallback(() => {
+    history.refetch();
+    lifetime.refetch();
+  }, [history, lifetime]);
+
+  return {
+    history: useMemo(
+      () => selectOwnerStatsSeries(history.data),
+      [history.data],
+    ),
+    lifetime: useMemo(() => selectOwnerStats(lifetime.data), [lifetime.data]),
+    loading: history.loading || lifetime.loading,
+    error: history.error ?? lifetime.error,
+    refetch,
+  };
+}
+
+export function usePageStats(
+  canonicalUrl: string,
+  options?: StatsQueryOptions,
+): {
+  history: StatsSeriesPoint<PageStats>[];
+  lifetime: PageStats | null;
+  loading: boolean;
+  error: string | null;
+  refetch: () => void;
+} {
+  const history = useContentHistory(canonicalUrl, options);
+  const lifetime = useContentLifetime(canonicalUrl);
+
+  const refetch = useCallback(() => {
+    history.refetch();
+    lifetime.refetch();
+  }, [history, lifetime]);
+
+  return {
+    history: useMemo(() => selectPageStatsSeries(history.data), [history.data]),
+    lifetime: useMemo(() => selectPageStats(lifetime.data), [lifetime.data]),
+    loading: history.loading || lifetime.loading,
+    error: history.error ?? lifetime.error,
+    refetch,
+  };
 }
 
 export function usePresenceState() {
@@ -484,7 +797,10 @@ export function usePagePresence(
   const lastHeartbeatPresenceRef = useRef<string | null>(null);
   const lastHeartbeatVisibilityRef = useRef<string | null>(null);
   const heartbeatEvent = (trackReading: boolean) =>
-    client.ingestWebEvents([buildEvent("heartbeat", trackReading)]);
+    client.ingestWebEvents([buildEvent("heartbeat", trackReading)], {
+      sessionId,
+      tabId,
+    });
 
   useEffect(() => {
     presenceRef.current = presence;
@@ -535,7 +851,10 @@ export function usePagePresence(
 
   useEffect(() => {
     const trackReading = options?.trackReading ?? false;
-    void client.ingestWebEvents([buildEvent("page_view", trackReading)]);
+    void client.ingestWebEvents([buildEvent("page_view", trackReading)], {
+      sessionId,
+      tabId,
+    });
     lastProgressRef.current = trackReading ? computeReadingProgress() : null;
     lastHeartbeatPresenceRef.current = presenceRef.current;
     lastHeartbeatVisibilityRef.current = visibilityRef.current;
@@ -555,7 +874,10 @@ export function usePagePresence(
         return;
       lastProgressSentAtRef.current = now;
       lastProgressRef.current = progress;
-      void client.ingestWebEvents([buildEvent("reading_progress", true)]);
+      void client.ingestWebEvents([buildEvent("reading_progress", true)], {
+        sessionId,
+        tabId,
+      });
     };
 
     const heartbeat = window.setInterval(() => {
@@ -566,10 +888,15 @@ export function usePagePresence(
 
     const endSession = () => {
       const event = buildEvent("session_end", trackReading);
-      const beaconSent = client.ingestWebEventsBeacon([event]);
+      const beaconSent = client.ingestWebEventsBeacon([event], {
+        sessionId,
+        tabId,
+      });
       if (!beaconSent) {
         void client.ingestWebEvents([event], {
           keepalive: true,
+          sessionId,
+          tabId,
         });
       }
     };
@@ -613,6 +940,13 @@ export function usePagePresence(
     lastHeartbeatVisibilityRef.current = visibility;
     void heartbeatEvent(trackReading);
   }, [client, options?.trackReading, presence, visibility]);
+}
+
+export function useTrackPagePresence(
+  page: ReadingContext,
+  options?: { trackReading?: boolean },
+) {
+  return usePagePresence(page, options);
 }
 
 function statsDayKey() {

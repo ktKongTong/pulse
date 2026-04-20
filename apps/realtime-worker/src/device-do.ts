@@ -14,6 +14,7 @@ import type { RoomRpc } from "./durable-stubs";
 import type { Env } from "./env";
 import { createWorkerLogger } from "./logger";
 import type { DevicePresenceState } from "./runtime-models";
+import { realtimeRoomId } from "./room-stub";
 import { coerceNonNegativeInt, dayKeyFromIso } from "./stats-utils";
 
 const migrations = loadDrizzleMigrations();
@@ -143,7 +144,7 @@ export class DeviceDO extends DurableObject<Env> {
         focus: latestEvent.state?.focus?.state ?? null,
       });
       
-      // Push state up to RoomDO ('global') instead of SessionDO directly
+      // Push state into RoomDO ('global'); websocket fan-out now stays inside each room-scoped RoomDO session layer.
       this.ctx.waitUntil(this.notifyRoomDO());
     }
 
@@ -196,8 +197,8 @@ export class DeviceDO extends DurableObject<Env> {
         hasState: this.currentState != null,
         updatedAt: this.currentState?.updatedAt ?? null,
       });
-      const roomStub = this.env.REALTIME_ROOM.get(
-        this.env.REALTIME_ROOM.idFromName(`${this.workspaceId}:global`)
+      const roomStub = this.env.GLOBAL_STATUS_ROOM.get(
+        realtimeRoomId(this.env.GLOBAL_STATUS_ROOM, this.workspaceId, "global")
       ) as unknown as RoomRpc;
       
       await roomStub.pushDeviceUpdate(this.workspaceId, "global", this.deviceId, this.currentState);
