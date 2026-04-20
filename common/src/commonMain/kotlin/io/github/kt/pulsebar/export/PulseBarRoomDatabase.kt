@@ -1,13 +1,13 @@
 package io.github.kt.pulsebar.export
 
-import androidx.room.ConstructedBy
-import androidx.room.Dao
-import androidx.room.Database
-import androidx.room.Query
-import androidx.room.RoomDatabase
-import androidx.room.RoomDatabaseConstructor
-import androidx.room.Transaction
-import androidx.room.Upsert
+import androidx.room3.ConstructedBy
+import androidx.room3.Dao
+import androidx.room3.Database
+import androidx.room3.Query
+import androidx.room3.RoomDatabase
+import androidx.room3.RoomDatabaseConstructor
+import androidx.room3.Transaction
+import androidx.room3.Upsert
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.Json

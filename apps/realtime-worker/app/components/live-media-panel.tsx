@@ -1,5 +1,10 @@
-import { useEffect, useState } from "react";
 import type { RoomReader } from "@pulse/realtime-protocol";
+import {
+  formatClock,
+  resolveDisplayedProgressSeconds,
+  resolveProgressPercent,
+  useNowTick,
+} from "@pulse/realtime-react";
 
 export function LiveMediaPanel(props: { readers: RoomReader[]; title?: string; subtitle?: string }) {
   const mediaReaders = props.readers.filter((reader) => reader.media?.title);
@@ -36,11 +41,13 @@ export function LiveMediaPanel(props: { readers: RoomReader[]; title?: string; s
 
 function LiveMediaRow(props: { reader: RoomReader; now: number }) {
   const media = props.reader.media!;
-  const displayedProgress = resolveProgressSeconds(props.reader, props.now);
+  const displayedProgress = resolveDisplayedProgressSeconds(
+    media,
+    props.reader.updatedAt,
+    props.now,
+  );
   const durationSeconds = media.durationSeconds ?? 0;
-  const progressPercent = durationSeconds > 0
-    ? Math.max(0, Math.min(100, (displayedProgress / durationSeconds) * 100))
-    : 0;
+  const progressPercent = resolveProgressPercent(displayedProgress, durationSeconds);
   const subtitle = [
     media.artist,
     media.album,
@@ -96,8 +103,8 @@ function LiveMediaRow(props: { reader: RoomReader; now: number }) {
             />
           </div>
           <div className="mt-3 flex items-center justify-between text-sm text-slate-300">
-            <span>{clock(displayedProgress)}</span>
-            <span>{clock(durationSeconds)}</span>
+            <span>{formatClock(displayedProgress)}</span>
+            <span>{formatClock(durationSeconds)}</span>
           </div>
         </div>
 
@@ -132,48 +139,4 @@ function DetailPill(props: { label: string; value: string; href?: string }) {
   }
 
   return <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-3 py-2 text-xs text-slate-200">{content}</div>;
-}
-
-function useNowTick(intervalMs = 250) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setNow(Date.now());
-    }, intervalMs);
-    return () => window.clearInterval(timer);
-  }, [intervalMs]);
-
-  return now;
-}
-
-function resolveProgressSeconds(reader: RoomReader, nowMs: number) {
-  const media = reader.media;
-  if (!media) return 0;
-
-  const baseline = media.progressSeconds ?? 0;
-  const durationSeconds = media.durationSeconds ?? 0;
-  const updatedAtMs = Date.parse(reader.updatedAt);
-  const isPlaying = media.playbackState === "playing";
-
-  if (!isPlaying || !Number.isFinite(updatedAtMs)) {
-    return baseline;
-  }
-
-  const elapsedSeconds = Math.max(0, (nowMs - updatedAtMs) / 1000);
-  const progressed = baseline + elapsedSeconds;
-  return durationSeconds > 0 ? Math.min(durationSeconds, progressed) : progressed;
-}
-
-function clock(rawSeconds: number): string {
-  const total = Math.max(0, Math.round(rawSeconds));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }

@@ -26,11 +26,22 @@ export class PulseRealtimeClient {
     this.subscriptions.dispose();
   }
 
-  ingestWebEvents(events: WebEvent[], options?: { keepalive?: boolean; userId?: string }) {
+  ingestWebEvents(
+    events: WebEvent[],
+    options?: {
+      keepalive?: boolean;
+      userId?: string;
+      sessionId?: string;
+      tabId?: string;
+    },
+  ) {
     return this.realtime.ingestWebEvents(events, options);
   }
 
-  ingestWebEventsBeacon(events: WebEvent[], options?: { userId?: string }) {
+  ingestWebEventsBeacon(
+    events: WebEvent[],
+    options?: { userId?: string; sessionId?: string; tabId?: string },
+  ) {
     return this.realtime.ingestWebEventsBeacon(events, options);
   }
 

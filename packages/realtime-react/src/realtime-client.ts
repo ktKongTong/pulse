@@ -29,15 +29,19 @@ import { getOrCreateSessionId, getOrCreateTabId } from "./session";
 function buildWebIngestPayload(
   config: PulseRealtimeConfig,
   events: WebEvent[],
-  userId?: string,
+  options?: {
+    userId?: string;
+    sessionId?: string;
+    tabId?: string;
+  },
 ) {
   return {
     protocol: WEB_PROTOCOL_V1,
     workspaceId: config.workspaceId,
     siteId: config.siteId,
-    sessionId: getOrCreateSessionId(config),
-    tabId: getOrCreateTabId(config),
-    userId,
+    sessionId: options?.sessionId ?? getOrCreateSessionId(config),
+    tabId: options?.tabId ?? getOrCreateTabId(config),
+    userId: options?.userId,
     events,
   };
 }
@@ -48,10 +52,19 @@ export const createRealtimeApiClient = (
 ) => ({
   ingestWebEvents: (
     events: WebEvent[],
-    options?: APIOptions & { keepalive?: boolean; userId?: string }
+    options?: APIOptions & {
+      keepalive?: boolean;
+      userId?: string;
+      sessionId?: string;
+      tabId?: string;
+    }
   ): Promise<WebIngestAck> =>
     fetcher.post("/api/v1/web/ingest", {
-      json: buildWebIngestPayload(config, events, options?.userId),
+      json: buildWebIngestPayload(config, events, {
+        userId: options?.userId,
+        sessionId: options?.sessionId,
+        tabId: options?.tabId,
+      }),
       schema: WebIngestAckSchema,
       keepalive: options?.keepalive,
       signal: options?.signal,
@@ -63,13 +76,13 @@ export const createRealtimeApiClient = (
     }),
   ingestWebEventsBeacon: (
     events: WebEvent[],
-    options?: { userId?: string },
+    options?: { userId?: string; sessionId?: string; tabId?: string },
   ): boolean => {
     if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") {
       return false;
     }
 
-    const payload = buildWebIngestPayload(config, events, options?.userId);
+    const payload = buildWebIngestPayload(config, events, options);
     const url = new URL("/api/v1/web/ingest", config.baseUrl).toString();
     const body = new Blob([JSON.stringify(payload)], {
       type: "application/json",

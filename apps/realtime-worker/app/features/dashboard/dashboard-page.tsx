@@ -12,13 +12,11 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LiveMediaPanel } from "@/components/live-media-panel";
 import { RealtimeObservabilityPanel } from "@/components/realtime-observability-panel";
 import { articles } from "@/lib/articles";
 import {
-  useGlobalPresenceSnapshot,
-  useInteractionStates,
-  usePagePresence,
+  useGlobalStatus,
+  useTrackPagePresence,
   useRealtimeDebugState,
 } from "@pulse/realtime-react";
 
@@ -51,24 +49,15 @@ export function dashboardMeta() {
 
 export function DashboardPage() {
   const pageContext = useMemo(() => getDashboardContext(), []);
-  usePagePresence(pageContext);
+  useTrackPagePresence(pageContext);
 
   const debug = useRealtimeDebugState();
-  const { snapshot } = useGlobalPresenceSnapshot();
-  const { items: interactionStates } = useInteractionStates();
+  const { data: globalStatus } = useGlobalStatus();
 
-  const readers = snapshot?.activeReaders ?? [];
-  const webReaders = readers.filter((reader) => reader.source === "web");
-  const deviceReaders = readers.filter((reader) => reader.source === "device");
-  const activePages = Object.entries(snapshot?.pageConcurrencyMap ?? {})
-    .map(([canonicalUrl, count]) => ({
-      canonicalUrl,
-      title:
-        readers.find((reader) => reader.page?.canonicalUrl === canonicalUrl)?.page
-          ?.title ?? canonicalUrl,
-      count,
-    }))
-    .sort((left, right) => right.count - left.count);
+  const readers = globalStatus?.sessions ?? [];
+  const webReaderCount = globalStatus?.sessionCount ?? 0;
+  const activePages = globalStatus?.activePages ?? [];
+  const ownerFocus = globalStatus?.ownerStatus?.focus?.name ?? "Idle";
 
   return (
     <main className="min-h-screen bg-background px-6 py-10 text-foreground md:px-10">
@@ -109,23 +98,23 @@ export function DashboardPage() {
         <div className="grid gap-4 md:grid-cols-4">
           <SummaryCard
             title="Global room"
-            value={`${snapshot?.onlineCount ?? 0}`}
-            subtitle="Total live readers and devices."
+            value={`${webReaderCount}`}
+            subtitle="Total live reader sessions."
           />
           <SummaryCard
             title="Web readers"
-            value={`${webReaders.length}`}
+            value={`${webReaderCount}`}
             subtitle="Browser sessions currently online."
           />
           <SummaryCard
-            title="Devices"
-            value={`${deviceReaders.length}`}
-            subtitle="Foreground PulseBar devices."
+            title="Focus"
+            value={ownerFocus}
+            subtitle="Current owner focus."
           />
           <SummaryCard
-            title="Interactions"
-            value={`${interactionStates.length}`}
-            subtitle="Recent interaction requests."
+            title="Pages"
+            value={`${activePages.length}`}
+            subtitle="Page rooms currently active."
           />
         </div>
 
@@ -149,10 +138,10 @@ export function DashboardPage() {
                   <TabsContent value="global" className="space-y-4">
                     <RoomMetaList
                       rows={[
-                        ["Room", snapshot?.roomId ?? "global"],
-                        ["Revision", snapshot?.revision?.toString() ?? "0"],
-                        ["Updated", snapshot?.updatedAt ?? "—"],
-                        ["Online", snapshot?.onlineCount?.toString() ?? "0"],
+                        ["Room", "global"],
+                        ["Sessions", String(globalStatus?.sessionCount ?? 0)],
+                        ["Active pages", String(globalStatus?.activePageCount ?? 0)],
+                        ["Focus", ownerFocus],
                       ]}
                     />
                   </TabsContent>
@@ -165,22 +154,22 @@ export function DashboardPage() {
                         ) : (
                           activePages.map((page) => (
                             <Card
-                              key={page.canonicalUrl}
+                              key={page.id}
                               size="sm"
                               className="rounded-[1.25rem] border border-border/70 bg-background/90"
                             >
                               <CardContent className="flex items-start justify-between gap-4 pt-3">
                                 <div className="min-w-0">
                                   <div className="truncate font-medium">
-                                    {page.title}
+                                    {page.title ?? page.canonicalUrl ?? page.id}
                                   </div>
                                   <div className="mt-1 truncate text-xs text-muted-foreground">
-                                    {page.canonicalUrl}
+                                    {page.canonicalUrl ?? page.id}
                                   </div>
                                 </div>
                                 <div className="text-right">
                                   <div className="font-medium">
-                                    {page.count}
+                                    {page.sessionCount}
                                   </div>
                                   <div className="text-xs text-muted-foreground">
                                     active sessions
@@ -202,27 +191,21 @@ export function DashboardPage() {
                         ) : (
                           readers.map((reader) => (
                             <Card
-                              key={reader.readerId}
+                              key={reader.id}
                               size="sm"
                               className="rounded-[1.25rem] border border-border/70 bg-background/90"
                             >
                               <CardContent className="flex items-start justify-between gap-4 pt-3">
                                 <div>
                                   <div className="font-medium">
-                                    {reader.displayName}
+                                    {reader.userName ?? reader.id}
                                   </div>
                                   <div className="mt-1 text-xs text-muted-foreground">
-                                    {reader.page?.title ?? "No page"} ·{" "}
-                                    {reader.source}
+                                    {reader.userId ?? "anonymous"} · web
                                   </div>
                                 </div>
                                 <div className="text-right">
-                                  <Badge variant="secondary">
-                                    {reader.presenceState}
-                                  </Badge>
-                                  <div className="mt-2 text-xs text-muted-foreground">
-                                    {reader.reading?.progressPercent ?? 0}%
-                                  </div>
+                                  <Badge variant="secondary">session</Badge>
                                 </div>
                               </CardContent>
                             </Card>
@@ -239,12 +222,6 @@ export function DashboardPage() {
           </div>
 
           <div className="space-y-6">
-            <LiveMediaPanel
-              readers={deviceReaders}
-              title="Device media"
-              subtitle="Current media sessions visible in the global room."
-            />
-
             <Card className="rounded-[1.75rem] border border-border/70 bg-card/90 shadow-sm">
               <CardHeader>
                 <CardTitle>Room map</CardTitle>
@@ -260,8 +237,8 @@ export function DashboardPage() {
                     .slice(0, 4)
                     .map((page) => (
                       <RoomPill
-                        key={page.canonicalUrl}
-                        label={`presence:page:${page.canonicalUrl}`}
+                        key={page.id}
+                        label={`presence:page:${page.canonicalUrl ?? page.id}`}
                       />
                     ))
                 ) : (

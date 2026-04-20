@@ -9,9 +9,13 @@ settings:
     PRODUCT_NAME: PulseBarNative
     SWIFT_VERSION: "6.0"
     ENABLE_DEBUG_DYLIB: NO
+    CODE_SIGN_ENTITLEMENTS: PulseBarNative/PulseBarNative.entitlements
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
     GENERATE_INFOPLIST_FILE: YES
     INFOPLIST_KEY_LSUIElement: YES
     INFOPLIST_KEY_NSAppleEventsUsageDescription: PulseBar reads browser and Spotify metadata to show the current status in the menu bar.
+    OTHER_LDFLAGS: "$(inherited) -lsqlite3"
 targets:
   PulseBarNative:
     type: application
@@ -26,5 +30,5 @@ targets:
           export JAVA_HOME="$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home"
           export PATH="$JAVA_HOME/bin:$PATH"
           export GRADLE_USER_HOME="$SRCROOT/../.gradle-xcode"
-          export KONAN_DATA_DIR="$SRCROOT/../.konan-local"
+          export KONAN_DATA_DIR="${KONAN_DATA_DIR:-$HOME/.konan}"
           ./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode

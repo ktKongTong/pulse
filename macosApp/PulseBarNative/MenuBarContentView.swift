@@ -469,6 +469,7 @@ struct AppIconView: View {
     }
 }
 
+@MainActor
 private final class AppIconCache {
     static let shared = AppIconCache()
 

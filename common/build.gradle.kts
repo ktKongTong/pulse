@@ -3,7 +3,7 @@ import org.jetbrains.kotlin.gradle.swiftexport.ExperimentalSwiftExportDsl
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.ksp)
-    alias(libs.plugins.androidxRoom)
+    alias(libs.plugins.androidxRoom3)
 }
 
 kotlin {
@@ -22,7 +22,7 @@ kotlin {
     sourceSets {
         val commonMain by getting {
             dependencies {
-                implementation(libs.androidx.room.runtime)
+                implementation(libs.androidx.room3.runtime)
                 implementation(libs.androidx.sqlite.bundled)
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.serialization.json)
@@ -42,10 +42,10 @@ kotlin {
 }
 
 dependencies {
-    add("kspJvm", libs.androidx.room.compiler)
-    add("kspMacosArm64", libs.androidx.room.compiler)
+    add("kspJvm", libs.androidx.room3.compiler)
+    add("kspMacosArm64", libs.androidx.room3.compiler)
 }
 
-room {
+room3 {
     schemaDirectory("$projectDir/schemas")
 }

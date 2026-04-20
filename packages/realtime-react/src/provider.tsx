@@ -19,6 +19,8 @@ export function PulseRealtimeProvider(props: {
     props.config.readingProgressDeltaPercent,
     props.config.sessionStorageKey,
     props.config.tabStorageKey,
+    props.config.viewer?.kind,
+    props.config.viewer?.userId,
     props.config.interactionActor?.kind,
     props.config.interactionActor?.userId,
   ]);

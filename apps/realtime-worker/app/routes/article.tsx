@@ -1,15 +1,12 @@
 import { Link, useLoaderData, type LoaderFunctionArgs } from "react-router";
 import { useMemo } from "react";
 
-import { InteractionPanel } from "../components/interaction-panel";
-import { LiveMediaPanel } from "../components/live-media-panel";
 import { RealtimeObservabilityPanel } from "../components/realtime-observability-panel";
 import { StatCard } from "../components/stat-card";
 import { articleBySlug, type DemoArticle } from "../lib/articles";
 import {
-  useGlobalPresenceSnapshot,
-  useInteractionStates,
-  usePagePresenceSnapshot,
+  useGlobalStatus,
+  usePageStatus,
   useRealtimeDebugState,
 } from "@pulse/realtime-react";
 import { currentArticleUrl } from "../lib/realtime";
@@ -36,46 +33,10 @@ export function ArticleRoute() {
   });
 
   const debug = useRealtimeDebugState();
-  const { snapshot: pageSnapshot } = usePagePresenceSnapshot(canonicalUrl);
-  const { snapshot: globalSnapshot } = useGlobalPresenceSnapshot();
-  const { items: interactionStates, error: interactionError } =
-    useInteractionStates();
+  const { data: pageStatus } = usePageStatus(canonicalUrl);
+  const { data: globalStatus } = useGlobalStatus();
 
-  const readers = pageSnapshot?.activeReaders ?? [];
-  const deviceReaders = (globalSnapshot?.activeReaders ?? []).filter(
-    (reader) => reader.source === "device",
-  );
-  const appleMusicReader = deviceReaders.find(
-    (reader) => reader.media?.providerId === "apple-music",
-  );
-  const recommendation = appleMusicReader
-    ? {
-        provider: "apple-music" as const,
-        uri:
-          appleMusicReader.media?.trackId ??
-          appleMusicReader.media?.title ??
-          "apple-music:search",
-        title: appleMusicReader.media?.title,
-        artist: appleMusicReader.media?.artist,
-        album: appleMusicReader.media?.album ?? undefined,
-      }
-    : {
-        provider: "apple-music" as const,
-        uri: "apple-music:search",
-        title: "No Apple Music track available",
-      };
-  const interactionDisabled = !appleMusicReader;
-  const interactionDisabledReason = appleMusicReader
-    ? "Apple Music recommendations are resolved from local metadata and played in the background."
-    : "No active Apple Music-backed PulseBar device is currently available. Spotify remains disabled because its system API steals focus.";
-  const averageProgress = readers.length
-    ? Math.round(
-        readers.reduce(
-          (sum, reader) => sum + (reader.reading?.progressPercent ?? 0),
-          0,
-        ) / readers.length,
-      )
-    : 0;
+  const readers = pageStatus?.sessions ?? [];
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-10 md:px-10 md:py-14">
@@ -110,42 +71,17 @@ export function ArticleRoute() {
           <div className="grid gap-4">
             <StatCard
               title="Page room"
-              value={`${pageSnapshot?.onlineCount ?? 0} readers`}
+              value={`${pageStatus?.sessionCount ?? 0} readers`}
               secondary="Live readers on this article right now."
             />
             <StatCard
-              title="Average progress"
-              value={`${averageProgress}%`}
-              secondary="Average scroll progress for readers in this room."
-            />
-            <StatCard
               title="Global online"
-              value={`${globalSnapshot?.onlineCount ?? 0}`}
-              secondary="Readers and devices across the whole site."
+              value={`${globalStatus?.sessionCount ?? 0}`}
+              secondary="Readers across the whole site."
             />
           </div>
 
           <RealtimeObservabilityPanel debug={debug} />
-
-          <LiveMediaPanel
-            readers={deviceReaders}
-            title="Device media"
-            subtitle="What connected PulseBar devices are playing right now."
-          />
-
-          <InteractionPanel
-            title="Interactions"
-            subtitle="Send a background Apple Music recommendation to the active PulseBar device and watch the status flow."
-            recommendation={recommendation}
-            states={interactionStates}
-            disabled={interactionDisabled}
-            disabledReason={interactionDisabledReason}
-          />
-          {interactionError ? (
-            <p className="text-sm font-medium text-rose-600">
-              {interactionError}
-            </p>
-          ) : null}
 
           <section className="overflow-hidden rounded-[2rem] border border-white/80 bg-white/72 p-6 shadow-[0_26px_80px_rgba(15,23,42,0.08)] backdrop-blur-xl">
             <div className="flex items-start justify-between gap-4">
@@ -167,22 +103,22 @@ export function ArticleRoute() {
               <div className="mt-6 space-y-3">
                 {readers.map((reader) => (
                   <article
-                    key={reader.readerId}
+                    key={reader.id}
                     className="flex items-start justify-between gap-4 rounded-[1.5rem] border border-slate-200/70 bg-slate-50/80 px-5 py-4"
                   >
                     <div>
                       <h3 className="text-lg font-semibold text-slate-950">
-                        {reader.displayName}
+                        {reader.userName ?? reader.id}
                       </h3>
                       <p className="mt-1 text-sm text-slate-500">
-                        {reader.presenceState}
+                        Active reading session
                       </p>
                     </div>
                     <div className="text-right text-sm text-slate-500">
                       <span className="block text-base font-semibold text-slate-950">
-                        {reader.reading?.progressPercent ?? 0}%
+                        {reader.progress?.percent ?? 0}%
                       </span>
-                      <small>{reader.updatedAt}</small>
+                      <small>{reader.userId ?? "anonymous"}</small>
                     </div>
                   </article>
                 ))}

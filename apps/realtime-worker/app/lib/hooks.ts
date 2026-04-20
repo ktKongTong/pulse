@@ -1,4 +1,4 @@
-import { usePagePresence } from "@pulse/realtime-react";
+import { useTrackPagePresence } from "@pulse/realtime-react";
 
 export {
   useContentHistory,
@@ -7,7 +7,7 @@ export {
   useInteractionStates,
   useOwnerHistory,
   useOwnerLifetime,
-  usePagePresence,
+  useTrackPagePresence,
   usePagePresenceSnapshot,
   usePresenceState,
   useRealtimeDebugState,
@@ -21,5 +21,5 @@ export function useArticlePresence(article: {
   url: string;
   canonicalUrl: string;
 }) {
-  usePagePresence(article, { trackReading: true });
+  useTrackPagePresence(article, { trackReading: true });
 }

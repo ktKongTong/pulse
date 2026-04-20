@@ -1,14 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import type {
-  OwnerHistoryPoint,
-  OwnerMetrics,
-  SiteHistoryPoint,
-  SiteMetrics,
-  StatsPeriod,
-} from "@pulse/realtime-protocol";
+import { useEffect, useState } from "react";
+import type { StatsPeriod } from "@pulse/realtime-protocol";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useOwnerHistory, useSiteHistory } from "@pulse/realtime-react";
+import { useOwnerStats, useSiteStats } from "@pulse/realtime-react";
 
 import { DeviceFocusChart } from "./device-focus-chart";
 
@@ -16,29 +10,28 @@ const PERIODS: StatsPeriod[] = ["day", "month", "year"];
 
 export function StatusAggregateHistory() {
   const [period, setPeriod] = useState<StatsPeriod>("day");
-  const siteHistory = useSiteHistory({ period });
-  const ownerHistory = useOwnerHistory({ period });
-
-  const buckets = useMemo(
-    () => mergeBuckets(siteHistory.data, ownerHistory.data),
-    [ownerHistory.data, siteHistory.data],
-  );
   const [selectedBucketKey, setSelectedBucketKey] = useState<string | null>(null);
+  const site = useSiteStats({ period });
+  const owner = useOwnerStats({ period });
+  const buckets = mergeBuckets(site.history, owner.history);
 
   useEffect(() => {
     setSelectedBucketKey((current) => {
-      if (buckets.length === 0) return null;
       if (current && buckets.some((bucket) => bucket.key === current)) return current;
       return buckets[0]?.key ?? null;
     });
   }, [buckets]);
 
-  const selectedBucket = buckets.find((bucket) => bucket.key === selectedBucketKey) ?? null;
-  const selectedSite = findSite(siteHistory.data, selectedBucketKey);
-  const selectedOwner = findOwner(ownerHistory.data, selectedBucketKey);
-
-  const loading = siteHistory.loading || ownerHistory.loading;
-  const error = siteHistory.error ?? ownerHistory.error;
+  const selectedBucket =
+    buckets.find((bucket) => bucket.key === selectedBucketKey) ?? null;
+  const selectedSite =
+    site.history.find((point) => point.bucket.key === selectedBucketKey)?.value ??
+    site.lifetime;
+  const selectedOwner =
+    owner.history.find((point) => point.bucket.key === selectedBucketKey)?.value ??
+    owner.lifetime;
+  const loading = site.loading || owner.loading;
+  const error = site.error ?? owner.error;
 
   return (
     <section className="space-y-6 text-left">
@@ -108,12 +101,12 @@ export function StatusAggregateHistory() {
             <Metric label="UV" value={String(selectedSite?.uv ?? 0)} hint="Distinct visitor sessions in this bucket" />
             <Metric
               label="Read time"
-              value={formatDuration(selectedSite?.readTimeSeconds ?? 0)}
+              value={selectedSite?.readTimeLabel ?? "0s"}
               hint="Accumulated effective reading time"
             />
             <Metric
               label="Active apps"
-              value={String(selectedOwner?.appPresenceSecondsByApp.length ?? 0)}
+              value={String(selectedOwner?.activeAppCount ?? 0)}
               hint="Owner apps observed in this bucket"
             />
           </div>
@@ -131,7 +124,7 @@ export function StatusAggregateHistory() {
             <TabsContent value="site" className="space-y-4">
               <p className="text-[14px] leading-7 text-stone-500">
                 {selectedBucket
-                  ? `${selectedBucket.label} covers ${selectedBucket.startDay} → ${selectedBucket.endDay}. The site received ${selectedSite?.pv ?? 0} opens, ${selectedSite?.uv ?? 0} visitor sessions, and accumulated ${formatDuration(selectedSite?.readTimeSeconds ?? 0)} of read time.`
+                  ? `${selectedBucket.label} covers ${selectedBucket.startDay} → ${selectedBucket.endDay}. The site received ${selectedSite?.pv ?? 0} opens, ${selectedSite?.uv ?? 0} visitor sessions, and accumulated ${selectedSite?.readTimeLabel ?? "0s"} of read time.`
                   : "Select a retained bucket to inspect aggregate detail."}
               </p>
             </TabsContent>
@@ -162,35 +155,15 @@ function Metric(props: { label: string; value: string; hint?: string }) {
   );
 }
 
-function mergeBuckets(site: SiteHistoryPoint[], owner: OwnerHistoryPoint[]) {
-  const merged = new Map<string, { key: string; label: string; startDay: string; endDay: string }>();
+function mergeBuckets(
+  site: Array<{ bucket: { key: string; label: string; startDay: string; endDay: string; period: StatsPeriod } }>,
+  owner: Array<{ bucket: { key: string; label: string; startDay: string; endDay: string; period: StatsPeriod } }>,
+) {
+  const merged = new Map<string, (typeof site)[number]["bucket"]>();
+
   for (const point of [...site, ...owner]) {
-    merged.set(point.bucket.key, {
-      key: point.bucket.key,
-      label: point.bucket.label,
-      startDay: point.bucket.startDay,
-      endDay: point.bucket.endDay,
-    });
+    merged.set(point.bucket.key, point.bucket);
   }
+
   return [...merged.values()].sort((left, right) => (left.key < right.key ? 1 : -1));
-}
-
-function findSite(points: SiteHistoryPoint[], bucketKey: string | null): SiteMetrics | null {
-  if (!bucketKey) return null;
-  return points.find((point) => point.bucket.key === bucketKey)?.value ?? null;
-}
-
-function findOwner(points: OwnerHistoryPoint[], bucketKey: string | null): OwnerMetrics | null {
-  if (!bucketKey) return null;
-  return points.find((point) => point.bucket.key === bucketKey)?.value ?? null;
-}
-
-function formatDuration(totalSeconds: number) {
-  const seconds = Math.max(0, Math.round(totalSeconds));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainingSeconds = seconds % 60;
-  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
-  if (minutes > 0) return `${minutes}m ${String(remainingSeconds).padStart(2, "0")}s`;
-  return `${remainingSeconds}s`;
 }

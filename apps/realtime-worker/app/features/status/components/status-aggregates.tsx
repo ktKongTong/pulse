@@ -1,5 +1,10 @@
 interface StatusAggregatesProps {
-  activePages: Array<[string, number]>;
+  activePages: Array<{
+    id: string;
+    canonicalUrl?: string;
+    title?: string;
+    sessionCount: number;
+  }>;
   currentAppLabel: string;
   onlineCount: number;
 }
@@ -34,13 +39,17 @@ export function StatusAggregates(props: StatusAggregatesProps) {
           </p>
         ) : (
           <div className="space-y-1">
-            {props.activePages.map(([page, count]) => (
+            {props.activePages.map((page) => (
               <div
-                key={page}
+                key={page.id}
                 className="flex items-center justify-between rounded-[1.25rem] border border-stone-200 bg-white/70 px-4 py-3"
               >
-                <span className="truncate text-[14px] text-stone-700">{page}</span>
-                <span className="text-[14px] font-medium text-stone-950">{count}</span>
+                <span className="truncate text-[14px] text-stone-700">
+                  {page.title ?? page.canonicalUrl ?? page.id}
+                </span>
+                <span className="text-[14px] font-medium text-stone-950">
+                  {page.sessionCount}
+                </span>
               </div>
             ))}
           </div>

@@ -35,6 +35,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import platform.AppKit.NSWorkspace
 import platform.Foundation.NSAppleScript
+import platform.Foundation.NSBundle
 import platform.Foundation.NSDate
 import platform.Foundation.NSDateFormatter
 import platform.Foundation.NSFileManager
@@ -263,8 +264,11 @@ actual class PulseBarBridge actual constructor() {
 
     private fun resolvedFrontmostApplication(): FrontApp {
         val app = NSWorkspace.sharedWorkspace.frontmostApplication
-        val name = app?.localizedName ?: "Unknown App"
         val bundleId = app?.bundleIdentifier ?: "unknown"
+        val name = resolvedApplicationName(
+            bundleId = bundleId,
+            fallbackName = app?.localizedName
+        )
         if (bundleId !in excludedStatsBundleIds && name != "PulseBarNative") {
             return FrontApp(name, bundleId)
         }
@@ -281,6 +285,23 @@ actual class PulseBarBridge actual constructor() {
             appName = resolved.getOrNull(0)?.ifBlank { name } ?: name,
             bundleId = resolved.getOrNull(1)?.ifBlank { bundleId } ?: bundleId
         )
+    }
+
+    private fun resolvedApplicationName(bundleId: String, fallbackName: String?): String {
+        val bundleName = bundleId
+            .takeIf { it.isNotBlank() && it != "unknown" }
+            ?.let(NSBundle::bundleWithIdentifier)
+            ?.infoDictionary
+            ?.let { info ->
+                sequenceOf(
+                    info["CFBundleDisplayName"] as? String,
+                    info["CFBundleName"] as? String
+                ).firstOrNull { !it.isNullOrBlank() }
+            }
+        val candidate = bundleName
+            ?: fallbackName?.takeIf { it.isNotBlank() }
+            ?: "Unknown App"
+        return candidate
     }
 
     private fun updateUsage(snapshot: PulseBarSnapshot) {

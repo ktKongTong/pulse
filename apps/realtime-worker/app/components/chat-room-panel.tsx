@@ -16,16 +16,18 @@ export function ChatRoomPanel(props: {
   const client = usePulseRealtimeClient();
   const participantName = useMemo(() => {
     if (props.participantName?.trim()) return props.participantName.trim();
-    const explicitUserId = client.config.interactionActor?.userId?.trim();
+    const explicitUserId =
+      client.config.viewer?.userId?.trim() ??
+      client.config.interactionActor?.userId?.trim();
     if (explicitUserId) return explicitUserId;
     const sessionId = getOrCreateSessionId(client.config);
     return `Anonymous ${sessionId.slice(0, 6)}`;
   }, [client.config, props.participantName]);
 
-  const { snapshot, error, sendMessage } = useChatRoom({
+  const { data, error, sendMessage } = useChatRoom({
     roomId: props.roomId,
     displayName: participantName,
-    userId: client.config.interactionActor?.userId,
+    userId: client.config.viewer?.userId ?? client.config.interactionActor?.userId,
   });
 
   const [draft, setDraft] = useState("");
@@ -54,15 +56,8 @@ export function ChatRoomPanel(props: {
       );
   }, [open]);
 
-  const messages = snapshot?.messages ?? [];
-  const participants = snapshot?.participants ?? [];
-  const duplicateNameCounts = participants.reduce<Record<string, number>>(
-    (acc, participant) => {
-      acc[participant.displayName] = (acc[participant.displayName] ?? 0) + 1;
-      return acc;
-    },
-    {},
-  );
+  const messages = data?.latestMessages ?? [];
+  const participants = data?.participants ?? [];
 
   const submitDraft = () => {
     const trimmed = draft.trim();
@@ -116,13 +111,12 @@ export function ChatRoomPanel(props: {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              {participants.slice(0, 8).map((participant) => {
-                const isSelf = participant.displayName === participantName;
-                const isDuplicateName =
-                  (duplicateNameCounts[participant.displayName] ?? 0) > 1;
+                {participants.slice(0, 8).map((participant) => {
+                  const isSelf = participant.displayName === participantName;
+                  const isDuplicateName = participant.duplicateCount > 1;
                 return (
                   <div
-                    key={participant.readerId}
+                    key={participant.id}
                     className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white/80 px-2.5 py-1.5 text-stone-700"
                   >
                     <ChatAvatar
@@ -135,7 +129,7 @@ export function ChatRoomPanel(props: {
                     </span>
                     {isDuplicateName ? (
                       <span className="text-[10px] uppercase tracking-[0.16em] text-stone-400">
-                        {participant.readerId.slice(-4)}
+                        {participant.id.slice(-4)}
                       </span>
                     ) : null}
                   </div>
@@ -155,11 +149,13 @@ export function ChatRoomPanel(props: {
               ) : (
                 messages.map((message) => {
                   const isSelf = message.senderDisplayName === participantName;
-                  const isDuplicateName =
-                    (duplicateNameCounts[message.senderDisplayName] ?? 0) > 1;
+                  const isDuplicateName = participants.filter(
+                    (participant) =>
+                      participant.displayName === message.senderDisplayName,
+                  ).length > 1;
                   return (
                     <article
-                      key={message.msgId}
+                      key={message.id}
                       className={`rounded-[1.35rem] border px-4 py-3 ${
                         isSelf
                           ? "border-stone-900/10 bg-[#f7f1e8]"
@@ -176,11 +172,11 @@ export function ChatRoomPanel(props: {
                           <div className="flex items-center justify-between gap-4">
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="text-[11px] font-medium uppercase tracking-[0.22em] text-stone-400">
-                                {isSelf ? "You" : message.senderDisplayName}
-                              </span>
-                              {isDuplicateName ? (
-                                <span className="text-[10px] uppercase tracking-[0.16em] text-stone-300">
-                                  {message.senderId.slice(-4)}
+                              {isSelf ? "You" : message.senderDisplayName}
+                            </span>
+                            {isDuplicateName ? (
+                              <span className="text-[10px] uppercase tracking-[0.16em] text-stone-300">
+                                {message.senderId.slice(-4)}
                                 </span>
                               ) : null}
                             </div>

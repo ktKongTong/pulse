@@ -1,28 +1,29 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { getAppBrandAsset } from "@/lib/brand-assets";
-
-import { iconForApp } from "../lib/status-icons";
+import { resolveDefaultAppBranding } from "@pulse/realtime-react";
 
 export function AppIcon(props: { appId: string; label: string }) {
-  const asset = getAppBrandAsset(props.appId);
-  const fallback = iconForApp(props.appId, props.label);
+  const branding = resolveDefaultAppBranding(props.appId, props.label);
 
   return (
     <Avatar
       size="lg"
-      className="size-[60px] rounded-[1.25rem] bg-[#ece6db] text-stone-900 after:hidden"
+      aria-label={props.label}
+      className="size-[60px] rounded-[1.25rem] bg-[#ece6db] after:hidden"
     >
-      {asset ? (
+      {branding.assetUrl ? (
         <AvatarImage
           className="rounded-[1.25rem] object-cover"
-          src={asset}
+          src={branding.assetUrl}
           alt={props.label}
         />
-      ) : (
-        <AvatarFallback className="rounded-[1.25rem] bg-[#ece6db] text-stone-900">
-          {fallback}
-        </AvatarFallback>
-      )}
+      ) : null}
+      <AvatarFallback className="rounded-[1.25rem] bg-[#ece6db] text-stone-900">
+        {initial(props.label)}
+      </AvatarFallback>
     </Avatar>
   );
+}
+
+function initial(label: string) {
+  return label.trim()[0]?.toUpperCase() ?? "?";
 }

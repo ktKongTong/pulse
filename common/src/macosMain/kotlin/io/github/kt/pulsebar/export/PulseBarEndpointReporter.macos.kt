@@ -357,7 +357,7 @@ internal class PulseBarEndpointReporter {
 
     private fun enqueue(endpointUrl: String, apiKey: String, entry: RawJournalEntry) {
         rawJournal.append(entry)
-        maybeReplayPending(endpointUrl, apiKey, force = false)
+        maybeReplayPending(endpointUrl, apiKey, force = true)
     }
 
     private fun scheduleHealthProbe(endpointUrl: String, apiKey: String, force: Boolean) {
@@ -510,7 +510,7 @@ internal class PulseBarEndpointReporter {
         if (!force) {
             val lastIssuedAt = lastReplayIssuedAtMillis
             val replayIntervalMillis = when (syncState.status) {
-                "healthy", "idle" -> 0L
+                "healthy", "idle" -> healthyProbeIntervalMillis
                 else -> unhealthyProbeIntervalMillis
             }
             if (lastIssuedAt != null && nowMillis - lastIssuedAt < replayIntervalMillis) {

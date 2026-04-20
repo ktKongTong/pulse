@@ -20,6 +20,7 @@ DerivedData/
 *.xcodeproj/xcuserdata/
 **/xcuserdata/
 *.xcuserstate
+.xcode-derived*
 *.swp
 gradle-dist/
 local.properties

@@ -1,15 +1,12 @@
 import { Link } from "react-router";
 import { useMemo } from "react";
 
-import { InteractionPanel } from "../components/interaction-panel";
-import { LiveMediaPanel } from "../components/live-media-panel";
 import { RealtimeObservabilityPanel } from "../components/realtime-observability-panel";
 import { StatCard } from "../components/stat-card";
 import { articles } from "../lib/articles";
 import {
-  useGlobalPresenceSnapshot,
-  useInteractionStates,
-  usePagePresence,
+  useGlobalStatus,
+  useTrackPagePresence,
   useRealtimeDebugState,
 } from "@pulse/realtime-react";
 
@@ -36,52 +33,18 @@ export default function RootLayout() {
     [],
   );
 
-  usePagePresence({
+  useTrackPagePresence({
     title: pageContext.title,
     url: pageContext.url,
     canonicalUrl: pageContext.canonicalUrl,
   });
 
   const debug = useRealtimeDebugState();
-  const { snapshot } = useGlobalPresenceSnapshot();
-  const { items: interactionStates, error: interactionError } =
-    useInteractionStates();
-  const readers = snapshot?.activeReaders ?? [];
-  const webReaders = readers.filter((reader) => reader.source === "web");
-  const deviceReaders = readers.filter((reader) => reader.source === "device");
-  const appleMusicReader = deviceReaders.find(
-    (reader) => reader.media?.providerId === "apple-music",
-  );
-  const recommendation = appleMusicReader
-    ? {
-        provider: "apple-music" as const,
-        uri:
-          appleMusicReader.media?.trackId ??
-          appleMusicReader.media?.title ??
-          "apple-music:search",
-        title: appleMusicReader.media?.title,
-        artist: appleMusicReader.media?.artist,
-        album: appleMusicReader.media?.album ?? undefined,
-      }
-    : {
-        provider: "apple-music" as const,
-        uri: "apple-music:search",
-        title: "No Apple Music track available",
-      };
-  const interactionDisabled = !appleMusicReader;
-  const interactionDisabledReason = appleMusicReader
-    ? "Apple Music recommendations are resolved from local metadata and played in the background."
-    : "No active Apple Music-backed PulseBar device is currently available. Spotify remains disabled because its system API steals focus.";
-
-  const activePages = Object.entries(snapshot?.pageConcurrencyMap ?? {})
-    .map(([canonicalUrl, count]) => ({
-      canonicalUrl,
-      title:
-        readers.find((reader) => reader.page?.canonicalUrl === canonicalUrl)?.page
-          ?.title ?? canonicalUrl,
-      count,
-    }))
-    .sort((left, right) => right.count - left.count);
+  const { data: globalStatus } = useGlobalStatus();
+  const readers = globalStatus?.sessions ?? [];
+  const webReaderCount = globalStatus?.sessionCount ?? 0;
+  const activePages = globalStatus?.activePages ?? [];
+  const currentAppLabel = globalStatus?.ownerStatus?.focus?.name ?? "Idle";
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-10 md:px-10 md:py-14">
@@ -119,18 +82,18 @@ export default function RootLayout() {
       <section className="mt-8 grid gap-4 md:grid-cols-3">
         <StatCard
           title="Global room"
-          value={`${snapshot?.onlineCount ?? 0} online`}
-          secondary="Combined device presence and active web readers."
+          value={`${webReaderCount} readers`}
+          secondary="Realtime web sessions currently visible to the site."
         />
         <StatCard
           title="Web readers"
-          value={`${webReaders.length}`}
+          value={`${webReaderCount}`}
           secondary="Anonymous reader sessions currently visible to the site."
         />
         <StatCard
-          title="Device presence"
-          value={`${deviceReaders.length}`}
-          secondary="Foreground devices currently feeding presence.v2 snapshots."
+          title="Creator app"
+          value={currentAppLabel}
+          secondary="Current owner focus reported by the worker."
         />
       </section>
 
@@ -155,22 +118,22 @@ export default function RootLayout() {
             ) : (
               activePages.map((page) => (
                 <article
-                  key={page.canonicalUrl}
+                  key={page.id}
                   className="flex items-start justify-between gap-4 rounded-[1.5rem] border border-slate-200/70 bg-slate-50/80 px-5 py-4"
                 >
                   <div>
                     <h3 className="text-lg font-semibold text-slate-950">
-                      {page.title}
+                      {page.title ?? page.canonicalUrl ?? page.id}
                     </h3>
                     <p className="mt-1 text-sm text-slate-500">
-                      {page.canonicalUrl}
+                      {page.canonicalUrl ?? page.id}
                     </p>
                   </div>
                   <div className="text-right text-sm text-slate-500">
                     <strong className="block text-base font-semibold text-slate-950">
-                      {page.count} readers
+                      {page.sessionCount} readers
                     </strong>
-                    <span>{page.count} active sessions</span>
+                    <span>{page.sessionCount} active sessions</span>
                   </div>
                 </article>
               ))
@@ -180,17 +143,6 @@ export default function RootLayout() {
 
         <div className="space-y-6">
           <RealtimeObservabilityPanel debug={debug} />
-          <LiveMediaPanel readers={deviceReaders} />
-          <InteractionPanel
-            recommendation={recommendation}
-            states={interactionStates}
-            subtitle="Recommend the current Spotify track to the active PulseBar device. PulseBar decides locally whether to accept it."
-            disabled={interactionDisabled}
-            disabledReason={interactionDisabledReason}
-          />
-          {interactionError ? (
-            <p className="error-copy">{interactionError}</p>
-          ) : null}
 
           <section className="overflow-hidden rounded-[2rem] border border-white/80 bg-white/72 p-6 shadow-[0_26px_80px_rgba(15,23,42,0.08)] backdrop-blur-xl">
             <div className="flex items-start justify-between gap-4">
@@ -209,23 +161,20 @@ export default function RootLayout() {
               ) : (
                 readers.map((reader) => (
                   <article
-                    key={reader.readerId}
+                    key={reader.id}
                     className="flex items-start justify-between gap-4 rounded-[1.5rem] border border-slate-200/70 bg-slate-50/80 px-5 py-4"
                   >
                     <div>
                       <h3 className="text-lg font-semibold text-slate-950">
-                        {reader.displayName}
+                        {reader.userName ?? reader.id}
                       </h3>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {reader.page?.title ?? "No page"} ·{" "}
-                        {reader.presenceState}
-                      </p>
+                      <p className="mt-1 text-sm text-slate-500">Active web session</p>
                     </div>
                     <div className="text-right text-sm text-slate-500">
                       <span className="block text-base font-semibold text-slate-950">
-                        {reader.reading?.progressPercent ?? 0}%
+                        {reader.userId ?? "anonymous"}
                       </span>
-                      <small>{reader.source}</small>
+                      <small>web</small>
                     </div>
                   </article>
                 ))
