@@ -16,21 +16,21 @@
     "assets"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsgo -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@pulse/realtime-protocol": "workspace:*",
     "ofetch": "^1.4.1",
-    "zod": "^4.1.5"
+    "zod": "catalog:"
   },
   "peerDependencies": {
     "react": "^19.0.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.14",
-    "typescript": "^5.9.2",
-    "vitest": "^4.1.4"
+    "@types/react": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

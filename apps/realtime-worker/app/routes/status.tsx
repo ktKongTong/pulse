@@ -46,17 +46,6 @@ export default function StatusPage() {
   return (
     <main className="min-h-screen  bg-[#f8f3f0] px-6 py-12  text-stone-900 md:px-10">
       <section className="mx-auto relative flex max-w-4xl flex-col space-y-4  items-center">
-        <div className="absolute right-0 top-0 flex items-center gap-2">
-          <div className={cn(
-            "size-4 rounded-full",
-            "from-green-300/80 via-green-300/60 to-green-100/40 bg-radial bg-clip-content"
-          )} />
-          <div className="text-xs font-sans">
-          {globalStatus?.sessionCount}
-          </div>
-
-        </div>
-
         <StatusHero />
         <StatusAggregateHistory />
       </section>

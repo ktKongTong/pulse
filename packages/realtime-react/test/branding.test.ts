@@ -5,7 +5,7 @@ import { resolveDefaultAppBranding, resolveDefaultProviderBranding } from "../sr
 describe("resolveDefaultAppBranding", () => {
   it("returns packaged brand asset URLs from the SDK for real assets", () => {
     const url = resolveDefaultAppBranding("com.apple.Music", "Music").assetUrl;
-    expect(url).toContain("/packages/realtime-react/assets/apple-music.png");
+    expect(url).toContain("/packages/realtime-react/assets/apple-music.svg");
   });
 
   it("returns null for apps without real packaged assets", () => {
@@ -17,7 +17,7 @@ describe("resolveDefaultAppBranding", () => {
 describe("resolveDefaultProviderBranding", () => {
   it("returns packaged provider asset URLs from the SDK", () => {
     const url = resolveDefaultProviderBranding("spotify")?.assetUrl ?? "";
-    expect(url).toContain("/packages/realtime-react/assets/spotify.png");
+    expect(url).toContain("/packages/realtime-react/assets/spotify.svg");
   });
 
   it("returns null for providers without real packaged assets", () => {

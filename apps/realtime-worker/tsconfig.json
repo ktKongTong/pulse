@@ -6,9 +6,9 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["./app/*"]
+      "@/*": ["./app/*"],
+      "*": ["./*"]
     },
     "strict": true,
     "skipLibCheck": true,
