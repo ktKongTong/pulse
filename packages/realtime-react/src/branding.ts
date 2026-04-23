@@ -24,19 +24,19 @@ export function resolveDefaultProviderBranding(
 function knownAppBrandUrl(appId: string) {
   switch (appId) {
     case "com.spotify.client":
-      return assetUrl("spotify.png");
+      return assetUrl("spotify.svg");
     case "com.apple.Music":
-      return assetUrl("apple-music.png");
+      return assetUrl("apple-music.svg");
     case "com.microsoft.edgemac":
-      return assetUrl("microsoft-edge.png");
+      return assetUrl("microsoft-edge.svg");
     case "com.openai.codex":
       return assetUrl("codex.svg");
     case "com.jetbrains.WebStorm":
       return assetUrl("webstorm.svg");
     case "com.tencent.xinWeChat":
-      return assetUrl("wechat.png");
+      return assetUrl("wechat.svg");
     case "com.github.GitHubClient":
-      return assetUrl("github.png");
+      return assetUrl("github-desktop.svg");
     default:
       return null;
   }
@@ -45,9 +45,9 @@ function knownAppBrandUrl(appId: string) {
 function knownProviderBrandUrl(providerId: string) {
   switch (providerId) {
     case "spotify":
-      return assetUrl("spotify.png");
+      return assetUrl("spotify.svg");
     case "apple-music":
-      return assetUrl("apple-music.png");
+      return assetUrl("apple-music.svg");
     default:
       return null;
   }

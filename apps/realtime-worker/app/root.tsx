@@ -17,6 +17,7 @@ import {
   SITE_ID,
   WORKSPACE_ID,
 } from "./lib/config";
+import { TooltipProvider } from "./components/ui/tooltip";
 
 export const links = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -34,29 +35,31 @@ export const links = () => [
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-    <head>
-      <meta charSet="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <Meta />
-      <Links />
-    </head>
-    <body className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.96),_rgba(243,247,255,0.92)_28%,_rgba(231,239,250,0.9)_58%,_#dce6ef_100%)] text-slate-950 antialiased">
-    <PulseRealtimeProvider
-      config={{
-        baseUrl: REALTIME_BASE_URL,
-        workspaceId: WORKSPACE_ID,
-        siteId: SITE_ID,
-        readingHeartbeatMs: READING_HEARTBEAT_MS,
-        readingProgressThrottleMs: READING_PROGRESS_THROTTLE_MS,
-        readingProgressDeltaPercent: READING_PROGRESS_DELTA_PERCENT,
-        interactionActor: { kind: "owner", userId: "kt" },
-      }}
-    >
-      {children}
-    </PulseRealtimeProvider>
-    <ScrollRestoration />
-    <Scripts />
-    </body>
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <Meta />
+        <Links />
+      </head>
+      <body className="min-h-screen text-slate-950 antialiased">
+        <TooltipProvider>
+        <PulseRealtimeProvider
+          config={{
+            // baseUrl: REALTIME_BASE_URL,
+            workspaceId: WORKSPACE_ID,
+            siteId: SITE_ID,
+            readingHeartbeatMs: READING_HEARTBEAT_MS,
+            readingProgressThrottleMs: READING_PROGRESS_THROTTLE_MS,
+            readingProgressDeltaPercent: READING_PROGRESS_DELTA_PERCENT,
+            interactionActor: { kind: "owner", userId: "kt" },
+          }}
+        >
+          {children}
+          </PulseRealtimeProvider>
+        </TooltipProvider>
+        <ScrollRestoration />
+        <Scripts />
+      </body>
     </html>
   );
 }
@@ -83,15 +86,19 @@ export function ErrorBoundary({ error }: { error: unknown }) {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl items-center justify-center px-6 py-20">
-      <section className="w-full max-w-2xl rounded-[2rem] border border-white/80 bg-white/75 p-10 shadow-[0_30px_90px_rgba(15,23,42,0.12)] backdrop-blur-xl">
-      <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-500">PulseBar</p>
-      <h1 className="mt-4 font-display text-5xl font-bold tracking-tight text-slate-950">{message}</h1>
-      <p className="mt-4 text-lg text-slate-600">{details}</p>
-      {stack && (
-        <pre className="mt-8 w-full overflow-x-auto rounded-3xl bg-slate-950 p-5 text-sm text-slate-100">
-          <code>{stack}</code>
-        </pre>
-      )}
+      <section className="w-full max-w-2xl rounded-[2rem] border p-10 shadow-[0_30px_90px_rgba(15,23,42,0.12)] backdrop-blur-xl">
+        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-500">
+          PulseBar
+        </p>
+        <h1 className="mt-4 font-display text-5xl font-bold tracking-tight text-slate-950">
+          {message}
+        </h1>
+        <p className="mt-4 text-lg text-slate-600">{details}</p>
+        {stack && (
+          <pre className="mt-8 w-full overflow-x-auto rounded-3xl bg-slate-950 p-5 text-sm text-slate-100">
+            <code>{stack}</code>
+          </pre>
+        )}
       </section>
     </main>
   );

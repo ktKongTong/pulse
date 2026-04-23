@@ -358,6 +358,27 @@ export function useRealtimeDebugState() {
   return state;
 }
 
+export type PulseRealtimeConnectionStatus =
+  RoomSubscriptionDebugState["transport"] & {
+    activeMode: RoomSubscriptionDebugState["activeMode"];
+    transportCount: number;
+  };
+
+export function selectRealtimeConnectionStatus(
+  state: RoomSubscriptionDebugState,
+): PulseRealtimeConnectionStatus {
+  return {
+    ...state.transport,
+    activeMode: state.activeMode,
+    transportCount: state.transports.length,
+  };
+}
+
+export function useRealtimeConnectionStatus(): PulseRealtimeConnectionStatus {
+  const state = useRealtimeDebugState();
+  return useMemo(() => selectRealtimeConnectionStatus(state), [state]);
+}
+
 export function useInteractionStates() {
   const client = usePulseRealtimeClient();
   const [items, setItems] = useState<InteractionState[]>([]);

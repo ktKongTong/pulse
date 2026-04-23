@@ -4,7 +4,7 @@ export interface PulseRealtimeViewer {
 }
 
 export interface PulseRealtimeConfig {
-  baseUrl: string;
+  baseUrl?: string;
   workspaceId: string;
   siteId: string;
   debug?: boolean;
@@ -32,6 +32,12 @@ export const defaultPulseRealtimeConfig = {
   },
 };
 
-export function resolveConfigViewer(config: PulseRealtimeConfig): PulseRealtimeViewer {
-  return config.viewer ?? config.interactionActor ?? defaultPulseRealtimeConfig.viewer;
+export function resolveConfigViewer(
+  config: PulseRealtimeConfig,
+): PulseRealtimeViewer {
+  return (
+    config.viewer ??
+    config.interactionActor ??
+    defaultPulseRealtimeConfig.viewer
+  );
 }

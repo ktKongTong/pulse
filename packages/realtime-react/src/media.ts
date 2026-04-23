@@ -42,7 +42,7 @@ export function resolveDisplayedProgressSeconds(
 }
 
 export function useMediaProgress(media?: MediaStatus | null): number {
-  const now = useNowTick();
+  const now = useNowTick(800);
 
   if (!media) return 0;
 

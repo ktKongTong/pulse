@@ -83,7 +83,11 @@ export const createRealtimeApiClient = (
     }
 
     const payload = buildWebIngestPayload(config, events, options);
-    const url = new URL("/api/v1/web/ingest", config.baseUrl).toString();
+
+    const url = config.baseUrl ? new URL(`${config.baseUrl}/api/v1/web/ingest`).toString() : new URL(`${window.location.origin}/api/v1/web/ingest`).toString();
+
+    console.log(url)
+
     const body = new Blob([JSON.stringify(payload)], {
       type: "application/json",
     });

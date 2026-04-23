@@ -262,11 +262,48 @@
 
 ### 3.3 Interaction / Debug
 
+#### `useRealtimeConnectionStatus()`
+
+定义：
+
+- [hooks.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/hooks.ts)
+
+返回：
+
+- `status: "idle" | "connecting" | "ready" | "reconnecting" | "closed" | "error"`
+- `selectedProtocol: string | null`
+- `capabilities: RealtimeCapabilities | null`
+- `lastError: string | null`
+- `lastMessageType: RealtimeServerMessage["type"] | null`
+- `activeMode: "ws" | "unknown"`
+- `transportCount: number`
+
+说明：
+
+- 这是一个面向 UI 展示的轻量 hook，用来直接显示当前 ws 连接状态
+- 状态是对当前所有活跃 room transport 的聚合结果，不区分单个 room
+- 当还没有任何活跃订阅时，`status = "idle"` 且 `transportCount = 0`
+
+#### `selectRealtimeConnectionStatus(debugState)`
+
+定义：
+
+- [hooks.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/hooks.ts)
+
+返回：
+
+- 与 `useRealtimeConnectionStatus()` 相同的轻量状态对象
+
+说明：
+
+- 用于非 React 场景，或你已经拿到了 `RoomSubscriptionDebugState` 想复用同一套状态聚合逻辑
+- 典型输入来源是 `useRealtimeDebugState()` 返回值或 `client.subscriptions.onDebugState(...)`
+
 #### `useInteractionStates()`
 
 定义：
 
-- [hooks.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/hooks.ts#L183)
+- [hooks.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/hooks.ts#L382)
 
 返回：
 
@@ -282,7 +319,7 @@
 
 定义：
 
-- [hooks.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/hooks.ts#L163)
+- [hooks.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/hooks.ts#L340)
 
 返回：
 
@@ -295,7 +332,7 @@
 
 对应类型：
 
-- [room-subscription-manager.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/room-subscription-manager.ts#L55)
+- [room-subscription-manager.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-react/src/room-subscription-manager.ts#L65)
 
 ### 3.4 History / Lifetime
 

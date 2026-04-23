@@ -120,6 +120,8 @@ xcodebuild -project macosApp/PulseBarNative.xcodeproj \
 
 ## 文档
 
+- [Realtime Current State](/Users/kt/Documents/Playground/pulse/docs/realtime-current-state.md)
+  - 当前代码对齐的协议、路由、DO 状态模型和具体状态流转
 - [Realtime Protocols](/Users/kt/Documents/Playground/pulse/docs/realtime-protocols.md)
   - 详细描述 `presence.v2`、`web.v1`、房间聚合以及各端内部模型变换
 - [Protocol Evolution](/Users/kt/Documents/Playground/pulse/docs/protocol-evolution.md)

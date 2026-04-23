@@ -13,7 +13,13 @@ type MessageHandler = (message: RealtimeServerMessage) => void;
 type ReadyHandler = () => void;
 type StateHandler = (state: RealtimeTransportState) => void;
 
-export type RealtimeTransportStatus = "idle" | "connecting" | "ready" | "reconnecting" | "closed" | "error";
+export type RealtimeTransportStatus =
+  | "idle"
+  | "connecting"
+  | "ready"
+  | "reconnecting"
+  | "closed"
+  | "error";
 
 export interface RealtimeTransportState {
   status: RealtimeTransportStatus;
@@ -49,7 +55,11 @@ export class RealtimeTransport {
   }
 
   connect() {
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+    if (
+      this.socket &&
+      (this.socket.readyState === WebSocket.OPEN ||
+        this.socket.readyState === WebSocket.CONNECTING)
+    ) {
       this.debug("connect.skip", {
         readyState: this.socket.readyState,
         handshakeComplete: this.handshakeComplete,
@@ -59,10 +69,14 @@ export class RealtimeTransport {
 
     this.manuallyClosed = false;
     this.updateState({
-      status: this.state.status === "reconnecting" ? "reconnecting" : "connecting",
+      status:
+        this.state.status === "reconnecting" ? "reconnecting" : "connecting",
       lastError: null,
     });
-    const endpoint = new URL(`${this.config.baseUrl}/api/v1/realtime/ws`, typeof window === "undefined" ? "http://localhost" : window.location.origin);
+    const endpoint = new URL(
+      `/api/v1/realtime/ws`,
+      this.config.baseUrl ? this.config.baseUrl : window.location.origin,
+    );
     endpoint.searchParams.set("workspaceId", this.config.workspaceId);
     endpoint.searchParams.set("roomId", this.roomId);
     this.debug("connect.start", {
@@ -81,16 +95,20 @@ export class RealtimeTransport {
           type: "hello",
           supportedProtocols: [REALTIME_WS_PROTOCOL_V2],
           sdkVersion: "0.1.0",
-        })
+        }),
       );
     });
 
     socket.addEventListener("message", (event) => {
-      const raw = typeof event.data === "string" ? event.data : String(event.data);
+      const raw =
+        typeof event.data === "string" ? event.data : String(event.data);
       this.debug("socket.message", { raw });
       const parsed = RealtimeServerMessageSchema.safeParse(JSON.parse(raw));
       if (!parsed.success) {
-        this.updateState({ status: "error", lastError: "invalid_server_message" });
+        this.updateState({
+          status: "error",
+          lastError: "invalid_server_message",
+        });
         this.debug("socket.invalid_message");
         return;
       }
@@ -122,7 +140,9 @@ export class RealtimeTransport {
       this.debug("socket.close", { manuallyClosed: this.manuallyClosed });
       this.socket = null;
       this.handshakeComplete = false;
-      this.updateState({ status: this.manuallyClosed ? "closed" : "reconnecting" });
+      this.updateState({
+        status: this.manuallyClosed ? "closed" : "reconnecting",
+      });
       if (!this.manuallyClosed) {
         this.scheduleReconnect();
       }
