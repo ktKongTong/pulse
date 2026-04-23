@@ -21,9 +21,9 @@ export function StatusHero() {
   const deviceName = currentAppLabel
   return (
     <div  className="flex flex-col items-center text-center w-full">
-      <Avatar className="relative size-48 md:size-60">
-        <AvatarImage src={"https://i.pinimg.com/1200x/fe/fe/f4/fefef443ac0195b4bb570edef0b588d0.jpg"} alt={deviceName} />
-        <AvatarFallback className="bg-transparent text-5xl font-bold tracking-tight text-stone-900 md:text-6xl">
+      <Avatar className="relative size-48 md:size-60 rounded-none border-none after:hidden">
+        <AvatarImage src={"https://s3.ktlab.io/avatar.png"} className={"rounded-none border-none"} alt={deviceName} />
+        <AvatarFallback className="bg-transparent text-5xl border-none font-bold tracking-tight text-stone-900 md:text-6xl">
           {'KT'}
         </AvatarFallback>
       </Avatar>

@@ -32,6 +32,7 @@ coverage/
 apps/**/dist/
 apps/**/.react-router/
 wrangler.jsonc
+**/*.wrangler.jsonc
 worker-configuration.d.ts
 .wrangler
 .react-router
