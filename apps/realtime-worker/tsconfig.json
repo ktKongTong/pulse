@@ -13,7 +13,7 @@
     "strict": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "@cloudflare/workers-types/2026-04-23"]
   },
   "include": [
 

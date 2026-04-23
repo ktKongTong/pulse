@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createRequestHandler } from "react-router";
 
-import app from '../src/index'
+import api from '../src/index'
 export { GlobalStatusRoom, PageStatusRoom, ChatRoom, InteractionHub, InteractionInbox, DeviceDO } from '../src/index'
 const requestHandler = createRequestHandler(
   // @ts-ignore
@@ -9,20 +9,14 @@ const requestHandler = createRequestHandler(
   import.meta.env.MODE
 );
 
+const app = new Hono();
 
-const _app = new Hono();
+app.route('/api', api)
 
-_app.route('/api', app)
-
-_app.all("*", (c) => {
+app.all("*", (c) => {
   return requestHandler(c.req.raw, {
     cloudflare: { env: c.env, ctx: c.executionCtx as ExecutionContext },
-    onerror: () => {
-
-    }
   });
 });
 
-
-
-export default _app;
+export default app;
