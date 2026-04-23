@@ -1,6 +1,6 @@
-import { FocusSwitcher } from "@/components/focus-switcher";
+import { FocusSwitcher } from "@/components/features/status/hero/focus/focus-switcher";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { MediaState } from "../media/media-state";
+import { MediaState } from "./media/media-state";
 import { useOwnerStatus } from "@pulse/realtime-react";
 
 function initialsFromName(name: string) {

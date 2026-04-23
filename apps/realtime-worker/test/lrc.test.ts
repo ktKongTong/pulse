@@ -4,7 +4,7 @@ import {
   parseLrc,
   resolveActiveLyricIndex,
   resolveLyricCue,
-} from "../app/components/features/status/media/lrc";
+} from "../app/components/features/status/hero/media/lrc";
 
 describe("lrc helpers", () => {
   it("parses standard lrc lines and ignores metadata", () => {
