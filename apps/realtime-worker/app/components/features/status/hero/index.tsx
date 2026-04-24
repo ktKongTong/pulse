@@ -19,7 +19,7 @@ export function StatusHero() {
             Hi, I'm KT.
           </div>
           <div className="font-serif text-start sm:-translate-y-6 font-medium text-md">
-            正在尝试理解
+            想要理解
             <br/>这荒诞而迷人的世界
           </div>
           <FocusSwitcher className="my-2 h-8 w-50" appId={currentAppId} appLabel={currentAppLabel} />

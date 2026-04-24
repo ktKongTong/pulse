@@ -8,7 +8,7 @@ export function AppIcon(props: { appId: string; label: string }) {
     <Avatar
       size="default"
       aria-label={props.label}
-      className="rounded-none after:hidden"
+      className="rounded-none size-6 after:hidden"
     >
       {assetUrl ? (
         <AvatarImage

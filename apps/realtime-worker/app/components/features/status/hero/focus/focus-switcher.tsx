@@ -28,20 +28,11 @@ export function FocusSwitcher({appId, appLabel, className, ...rest}: FocusSwitch
           }}
           className="absolute items-start text-start inset-y-0 left-0"
         >
-          <div className="flex items-center justify-center gap-4">
+          <div className="flex items-center justify-center gap-2">
             <AppIcon appId={appId} label={appLabel} />
-            <div className="flex flex-col gap-0">
-              {/*<p className="text-xs font-medium text-nowrap font-sans uppercase tracking-[0.2rem] text-[#7b4110]">
-                {appLabel}
-
-              </p>*/}
-              <p className="text-xs font-medium text-nowrap font-sans text-[#7b4110]">
-                正在 {appLabel} 中闲逛
-
-              </p>
-              {/*<span className="text-[10px] font-medium text-nowrap font-sans text-[#7b4110]">正在网上冲浪🏄</span>*/}
-            </div>
-
+            <p className="text-xs font-medium text-nowrap font-sans">
+              正在 {appLabel} 中闲逛
+            </p>
           </div>
         </motion.div>
       </AnimatePresence>
