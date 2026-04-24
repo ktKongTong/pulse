@@ -11,12 +11,18 @@ actual class PulseBarBridge actual constructor() {
 
     actual fun readConfig(): PulseBarConfig =
         PulseBarConfig(
-            endpointEnabled = false,
-            transport = PulseBarTransport.WEBSOCKET,
-            transportName = PulseBarTransport.WEBSOCKET.name,
-            endpointUrl = "",
-            apiKey = "",
-            batchWindowSeconds = 15,
+            endpoints = listOf(
+                PulseBarEndpointConfig(
+                    id = "default-endpoint",
+                    name = "Primary endpoint",
+                    enabled = false,
+                    transport = PulseBarTransport.WEBSOCKET,
+                    transportName = PulseBarTransport.WEBSOCKET.name,
+                    endpointUrl = "",
+                    apiKey = "",
+                    batchWindowSeconds = 15
+                )
+            ),
             idleThresholdSeconds = 300,
             changeStabilityMillis = 1200,
             heartbeatSeconds = 60,
@@ -66,19 +72,32 @@ actual class PulseBarBridge actual constructor() {
     actual fun readSyncState(): PulseBarSyncState =
         PulseBarSyncState(
             enabled = false,
-            transportName = PulseBarTransport.WEBSOCKET.name,
-            endpointUrl = "",
+            enabledEndpointCount = 0,
+            totalEndpointCount = 1,
             status = "disabled",
             lastStatus = null,
             pendingCount = 0,
             needsAttention = false,
-            lastAttemptAtIso8601 = null,
-            lastProbeAtIso8601 = null,
-            lastSuccessAtIso8601 = null,
-            lastFailureAtIso8601 = null,
-            lastErrorMessage = null,
-            acknowledgedSeqMax = 0,
-            acknowledgedAtIso8601 = null
+            endpoints = listOf(
+                PulseBarEndpointSyncState(
+                    id = "default-endpoint",
+                    name = "Primary endpoint",
+                    enabled = false,
+                    transportName = PulseBarTransport.WEBSOCKET.name,
+                    endpointUrl = "",
+                    status = "disabled",
+                    lastStatus = null,
+                    pendingCount = 0,
+                    needsAttention = false,
+                    lastAttemptAtIso8601 = null,
+                    lastProbeAtIso8601 = null,
+                    lastSuccessAtIso8601 = null,
+                    lastFailureAtIso8601 = null,
+                    lastErrorMessage = null,
+                    acknowledgedSeqMax = 0,
+                    acknowledgedAtIso8601 = null
+                )
+            )
         )
 
     actual fun retryEndpoint(): Boolean = false

@@ -48,6 +48,18 @@ internal fun resolvedEndpointBase(rawEndpoint: String): String? {
     return if (trimmed.endsWith("/")) trimmed.dropLast(1) else trimmed
 }
 
+internal fun resolvedEndpointIngestUrl(rawEndpoint: String): String {
+    val trimmed = rawEndpoint.trim()
+    return when {
+        trimmed.isBlank() -> "http://localhost:8900/api/v2/presence/ingest"
+        trimmed.endsWith("/") -> "${trimmed}api/v2/presence/ingest"
+        trimmed.endsWith("/api/v2/presence/ingest") -> trimmed
+        trimmed.endsWith("/v2/presence/ingest") -> trimmed.replace("/v2/presence/ingest", "/api/v2/presence/ingest")
+        !trimmed.contains("/api/v2/") -> "$trimmed/api/v2/presence/ingest"
+        else -> trimmed
+    }
+}
+
 internal fun nativeCurrentTimeMillis(): Long =
     (NSDate().timeIntervalSinceReferenceDate * 1000.0).toLong()
 

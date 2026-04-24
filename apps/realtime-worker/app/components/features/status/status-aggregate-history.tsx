@@ -30,10 +30,10 @@ export function StatusAggregateHistory() {
   const error = site.error ?? owner.error;
 
   return (
-    <section className="space-y-6 text-left w-full max-w-2xl">
+    <section className="space-y-6 px-4 sm:px-6 md:px-10 pt-10 pb-6 py-4 text-left w-full max-w-2xl">
       {buckets.length > 0 ? (
         <>
-          <div className="grid gap-6 border-stone-200/80 pt-8 sm:grid-cols-3">
+          <div className="grid gap-6 grid-cols-3">
             <Metric label="PV" value={String(selectedSite?.pv ?? 0)} />
             <Metric label="UV" value={String(selectedSite?.uv ?? 0)} />
             <Metric label="Read time" value={selectedSite?.readTimeLabel ?? "0s"} />

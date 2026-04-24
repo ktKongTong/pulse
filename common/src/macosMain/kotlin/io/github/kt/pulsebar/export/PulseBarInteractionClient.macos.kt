@@ -72,18 +72,24 @@ internal class PulseBarInteractionClient(
     private var latestMedia: PulseBarMedia? = null
 
     fun updateConfig(newConfig: PulseBarConfig) {
+        val previousEndpoint = config.primaryInteractionEndpoint()?.endpointUrl
+        val nextEndpoint = newConfig.primaryInteractionEndpoint()?.endpointUrl
         config = newConfig
-        if (!newConfig.allowWebInteractions) {
+        if (!newConfig.allowWebInteractions || nextEndpoint == null) {
             connectionJob?.cancel()
             connectionJob = null
             activeSocket = null
             return
         }
-        if (resolvedInteractionWsUrl(newConfig.endpointUrl) == null) return
+        if (previousEndpoint != nextEndpoint) {
+            connectionJob?.cancel()
+            connectionJob = null
+            activeSocket = null
+        }
         if (connectionJob?.isActive == true) return
         connectionJob = scope.launch {
             while (isActive) {
-                val endpoint = resolvedInteractionWsUrl(config.endpointUrl)
+                val endpoint = config.primaryInteractionEndpoint()?.let { resolvedInteractionWsUrl(it.endpointUrl) }
                 if (endpoint == null || !config.allowWebInteractions) {
                     delay(2000)
                     continue
@@ -336,6 +342,11 @@ internal class PulseBarInteractionClient(
         val host = hostAndPath.substringBefore("/")
         return "${scheme}${host}/api/v1/device-interactions/ws?workspaceId=$workspaceId&deviceId=$deviceId"
     }
+
+    private fun PulseBarConfig.primaryInteractionEndpoint(): PulseBarEndpointConfig? =
+        endpoints.firstOrNull { endpoint ->
+            endpoint.enabled && resolvedInteractionWsUrl(endpoint.endpointUrl) != null
+        }
 
     private suspend fun queueOrPlayLocally(
         requestId: String,

@@ -163,6 +163,18 @@ final class NativeMonitorModel: ObservableObject {
         bridge.updateConfig(config: Self.makeConfig(from: settingsDraft))
     }
 
+    func addEndpoint() {
+        if settingsDraft.endpoints.isEmpty {
+            settingsDraft.endpoints.append(.defaultPrimary())
+        } else {
+            settingsDraft.endpoints.append(.default(index: settingsDraft.endpoints.count))
+        }
+    }
+
+    func removeEndpoint(_ endpointID: String) {
+        settingsDraft.endpoints.removeAll { $0.id == endpointID }
+    }
+
     func mediaCommand(_ command: PulseBarPlaybackCommand) {
         _ = bridge.mediaCommand(command: command)
     }
@@ -273,7 +285,29 @@ final class NativeMonitorModel: ObservableObject {
         )
     }
 
-    private static func mapSyncState(
+    private static func mapEndpointDraft(
+        id: String,
+        name: String,
+        enabled: Bool,
+        transport: TransportOption,
+        endpointURL: String,
+        apiKey: String,
+        batchWindowSeconds: Int
+    ) -> EndpointSettingsDraft {
+        EndpointSettingsDraft(
+            id: id,
+            name: name,
+            enabled: enabled,
+            transport: transport,
+            endpointUrl: endpointURL,
+            apiKey: apiKey,
+            batchWindowSeconds: max(batchWindowSeconds, 1)
+        )
+    }
+
+    private static func mapEndpointSyncState(
+        id: String,
+        name: String,
         enabled: Bool,
         transportName: String,
         endpointURL: String,
@@ -288,8 +322,10 @@ final class NativeMonitorModel: ObservableObject {
         lastErrorMessage: String?,
         acknowledgedSeqMax: Int,
         acknowledgedAtIso8601: String?
-    ) -> SyncStatusInfo {
-        return SyncStatusInfo(
+    ) -> EndpointSyncStatusInfo {
+        EndpointSyncStatusInfo(
+            id: id,
+            name: name,
             enabled: enabled,
             transportName: transportName,
             endpointURL: endpointURL,
@@ -304,6 +340,28 @@ final class NativeMonitorModel: ObservableObject {
             lastErrorMessage: lastErrorMessage,
             acknowledgedSeqMax: acknowledgedSeqMax,
             acknowledgedAt: acknowledgedAtIso8601.flatMap(iso8601Formatter.date(from:))
+        )
+    }
+
+    private static func mapSyncState(
+        enabled: Bool,
+        enabledEndpointCount: Int,
+        totalEndpointCount: Int,
+        status: String,
+        lastStatus: String?,
+        pendingCount: Int,
+        needsAttention: Bool,
+        endpoints: [EndpointSyncStatusInfo]
+    ) -> SyncStatusInfo {
+        SyncStatusInfo(
+            enabled: enabled,
+            enabledEndpointCount: enabledEndpointCount,
+            totalEndpointCount: totalEndpointCount,
+            status: status,
+            lastStatus: lastStatus,
+            pendingCount: pendingCount,
+            needsAttention: needsAttention,
+            endpoints: endpoints
         )
     }
 
@@ -527,21 +585,39 @@ final class NativeMonitorModel: ObservableObject {
         guard let bridgeRef else { return nil }
         let syncRef = io_github_kt_pulsebar_export_PulseBarBridge_readSyncState(bridgeRef)
         return withDisposedExternalRef(syncRef) { syncRef in
-            mapSyncState(
+            let rawEndpoints = io_github_kt_pulsebar_export_PulseBarSyncState_endpoints_get(syncRef) as [AnyObject]
+            let endpoints: [EndpointSyncStatusInfo] = rawEndpoints.compactMap { rawObject -> EndpointSyncStatusInfo? in
+                guard let endpointRef = externalRCRef(of: rawObject) else { return nil }
+                return withDisposedExternalRef(endpointRef) { endpointRef in
+                    mapEndpointSyncState(
+                        id: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_id_get(endpointRef),
+                        name: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_name_get(endpointRef),
+                        enabled: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_enabled_get(endpointRef),
+                        transportName: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_transportName_get(endpointRef),
+                        endpointURL: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_endpointUrl_get(endpointRef),
+                        status: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_status_get(endpointRef),
+                        lastStatus: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastStatus_get(endpointRef),
+                        pendingCount: Int(io_github_kt_pulsebar_export_PulseBarEndpointSyncState_pendingCount_get(endpointRef)),
+                        needsAttention: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_needsAttention_get(endpointRef),
+                        lastAttemptAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastAttemptAtIso8601_get(endpointRef),
+                        lastProbeAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastProbeAtIso8601_get(endpointRef),
+                        lastSuccessAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastSuccessAtIso8601_get(endpointRef),
+                        lastFailureAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastFailureAtIso8601_get(endpointRef),
+                        lastErrorMessage: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastErrorMessage_get(endpointRef),
+                        acknowledgedSeqMax: Int(io_github_kt_pulsebar_export_PulseBarEndpointSyncState_acknowledgedSeqMax_get(endpointRef)),
+                        acknowledgedAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_acknowledgedAtIso8601_get(endpointRef)
+                    )
+                }
+            }
+            return mapSyncState(
                 enabled: io_github_kt_pulsebar_export_PulseBarSyncState_enabled_get(syncRef),
-                transportName: io_github_kt_pulsebar_export_PulseBarSyncState_transportName_get(syncRef),
-                endpointURL: io_github_kt_pulsebar_export_PulseBarSyncState_endpointUrl_get(syncRef),
+                enabledEndpointCount: Int(io_github_kt_pulsebar_export_PulseBarSyncState_enabledEndpointCount_get(syncRef)),
+                totalEndpointCount: Int(io_github_kt_pulsebar_export_PulseBarSyncState_totalEndpointCount_get(syncRef)),
                 status: io_github_kt_pulsebar_export_PulseBarSyncState_status_get(syncRef),
                 lastStatus: io_github_kt_pulsebar_export_PulseBarSyncState_lastStatus_get(syncRef),
                 pendingCount: Int(io_github_kt_pulsebar_export_PulseBarSyncState_pendingCount_get(syncRef)),
                 needsAttention: io_github_kt_pulsebar_export_PulseBarSyncState_needsAttention_get(syncRef),
-                lastAttemptAtIso8601: io_github_kt_pulsebar_export_PulseBarSyncState_lastAttemptAtIso8601_get(syncRef),
-                lastProbeAtIso8601: io_github_kt_pulsebar_export_PulseBarSyncState_lastProbeAtIso8601_get(syncRef),
-                lastSuccessAtIso8601: io_github_kt_pulsebar_export_PulseBarSyncState_lastSuccessAtIso8601_get(syncRef),
-                lastFailureAtIso8601: io_github_kt_pulsebar_export_PulseBarSyncState_lastFailureAtIso8601_get(syncRef),
-                lastErrorMessage: io_github_kt_pulsebar_export_PulseBarSyncState_lastErrorMessage_get(syncRef),
-                acknowledgedSeqMax: Int(io_github_kt_pulsebar_export_PulseBarSyncState_acknowledgedSeqMax_get(syncRef)),
-                acknowledgedAtIso8601: io_github_kt_pulsebar_export_PulseBarSyncState_acknowledgedAtIso8601_get(syncRef)
+                endpoints: endpoints
             )
         }
     }
@@ -551,32 +627,55 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     private static func mapConfig(_ config: PulseBarConfig) -> SettingsDraft {
-        SettingsDraft(
-            endpointEnabled: config.endpointEnabled,
-            transport: mapTransportName(config.transportName),
-            endpointUrl: config.endpointUrl,
-            apiKey: config.apiKey,
-            batchWindowSeconds: Int(config.batchWindowSeconds),
-            idleThresholdSeconds: Int(config.idleThresholdSeconds),
-            changeStabilityMillis: Int(config.changeStabilityMillis),
-            heartbeatSeconds: Int(config.heartbeatSeconds),
-            appPollingMillis: Int(config.appPollingMillis),
-            pagePollingMillis: Int(config.pagePollingMillis),
-            mediaPollingMillis: Int(config.mediaPollingMillis),
-            allowWebInteractions: config.allowWebInteractions,
-            interactionExecutionMode: mapInteractionModeName(config.interactionExecutionModeName),
-            interactionPlaybackMode: mapInteractionPlaybackModeName(config.interactionPlaybackModeName)
-        )
+        guard let configRef = externalRCRef(of: config as AnyObject) else {
+            return SettingsDraft()
+        }
+        return withDisposedExternalRef(configRef) { configRef in
+            let rawEndpoints = io_github_kt_pulsebar_export_PulseBarConfig_endpoints_get(configRef) as [AnyObject]
+            let endpoints: [EndpointSettingsDraft] = rawEndpoints.compactMap { rawObject -> EndpointSettingsDraft? in
+                guard let endpointRef = externalRCRef(of: rawObject) else { return nil }
+                return withDisposedExternalRef(endpointRef) { endpointRef in
+                    mapEndpointDraft(
+                        id: io_github_kt_pulsebar_export_PulseBarEndpointConfig_id_get(endpointRef),
+                        name: io_github_kt_pulsebar_export_PulseBarEndpointConfig_name_get(endpointRef),
+                        enabled: io_github_kt_pulsebar_export_PulseBarEndpointConfig_enabled_get(endpointRef),
+                        transport: mapTransportName(io_github_kt_pulsebar_export_PulseBarEndpointConfig_transportName_get(endpointRef)),
+                        endpointURL: io_github_kt_pulsebar_export_PulseBarEndpointConfig_endpointUrl_get(endpointRef),
+                        apiKey: io_github_kt_pulsebar_export_PulseBarEndpointConfig_apiKey_get(endpointRef),
+                        batchWindowSeconds: Int(io_github_kt_pulsebar_export_PulseBarEndpointConfig_batchWindowSeconds_get(endpointRef))
+                    )
+                }
+            }
+            return SettingsDraft(
+                endpoints: endpoints,
+                idleThresholdSeconds: Int(io_github_kt_pulsebar_export_PulseBarConfig_idleThresholdSeconds_get(configRef)),
+                changeStabilityMillis: Int(io_github_kt_pulsebar_export_PulseBarConfig_changeStabilityMillis_get(configRef)),
+                heartbeatSeconds: Int(io_github_kt_pulsebar_export_PulseBarConfig_heartbeatSeconds_get(configRef)),
+                appPollingMillis: Int(io_github_kt_pulsebar_export_PulseBarConfig_appPollingMillis_get(configRef)),
+                pagePollingMillis: Int(io_github_kt_pulsebar_export_PulseBarConfig_pagePollingMillis_get(configRef)),
+                mediaPollingMillis: Int(io_github_kt_pulsebar_export_PulseBarConfig_mediaPollingMillis_get(configRef)),
+                allowWebInteractions: io_github_kt_pulsebar_export_PulseBarConfig_allowWebInteractions_get(configRef),
+                interactionExecutionMode: mapInteractionModeName(io_github_kt_pulsebar_export_PulseBarConfig_interactionExecutionModeName_get(configRef)),
+                interactionPlaybackMode: mapInteractionPlaybackModeName(io_github_kt_pulsebar_export_PulseBarConfig_interactionPlaybackModeName_get(configRef))
+            )
+        } ?? SettingsDraft()
     }
 
     private static func makeConfig(from draft: SettingsDraft) -> PulseBarConfig {
-        PulseBarConfig(
-            endpointEnabled: draft.endpointEnabled,
-            transport: mapTransport(draft.transport),
-            transportName: draft.transport.rawValue,
-            endpointUrl: draft.endpointUrl,
-            apiKey: draft.apiKey,
-            batchWindowSeconds: Int32(draft.batchWindowSeconds),
+        let endpoints = draft.endpoints.map { endpoint in
+            PulseBarEndpointConfig(
+                id: endpoint.id,
+                name: endpoint.name,
+                enabled: endpoint.enabled,
+                transport: mapTransport(endpoint.transport),
+                transportName: endpoint.transport.rawValue,
+                endpointUrl: endpoint.endpointUrl,
+                apiKey: endpoint.apiKey,
+                batchWindowSeconds: Int32(endpoint.batchWindowSeconds)
+            )
+        }
+        return PulseBarConfig(
+            endpoints: endpoints,
             idleThresholdSeconds: Int32(draft.idleThresholdSeconds),
             changeStabilityMillis: Int32(draft.changeStabilityMillis),
             heartbeatSeconds: Int32(draft.heartbeatSeconds),

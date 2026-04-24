@@ -216,10 +216,13 @@ private struct DashboardActivityPane: View {
 private struct DashboardSyncPane: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 18, alignment: .top),
-        GridItem(.flexible(), spacing: 18, alignment: .top)
-    ]
+    private var configuredEndpointCount: Int {
+        monitor.syncState?.totalEndpointCount ?? monitor.settingsDraft.endpoints.count
+    }
+
+    private var enabledEndpointCount: Int {
+        monitor.syncState?.enabledEndpointCount ?? monitor.settingsDraft.endpoints.filter { $0.enabled }.count
+    }
 
     var body: some View {
         ScrollView {
@@ -228,53 +231,56 @@ private struct DashboardSyncPane: View {
                     title: "Sync",
                     subtitle: "Transport and sampling settings that affect delivery."
                 ) {
-                    Button("Reconnect Now") {
+                    Button(enabledEndpointCount > 1 ? "Reconnect Enabled Endpoints" : "Reconnect Endpoint") {
                         monitor.retryEndpoint()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!(monitor.syncState?.enabled ?? false))
+                    .disabled(!(monitor.syncState?.enabled ?? (enabledEndpointCount > 0)))
                 }
 
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                    DashboardSectionSurface {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text("Endpoint")
+                DashboardSectionSurface {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack {
+                            Text("Endpoints")
+                                .font(.title3.weight(.bold))
+                            Spacer()
+                            Text("\(enabledEndpointCount)/\(configuredEndpointCount) enabled")
                                 .font(.headline.weight(.semibold))
-                            if let sync = monitor.syncState {
-                                SyncStatusBadge(sync: sync)
-                            }
-                            DashboardKeyValueRow(key: "Enabled", value: monitor.settingsDraft.endpointEnabled ? "Yes" : "No")
-                            DashboardKeyValueRow(key: "Transport", value: monitor.settingsDraft.transport.title)
-                            DashboardKeyValueRow(
-                                key: "URL",
-                                value: monitor.settingsDraft.endpointUrl.isEmpty ? "Not configured" : monitor.settingsDraft.endpointUrl
-                            )
-                            DashboardKeyValueRow(key: "Batch", value: "\(monitor.settingsDraft.batchWindowSeconds)s")
-                            if let sync = monitor.syncState {
-                                DashboardKeyValueRow(key: "Pending", value: "\(sync.pendingCount)")
-                                DashboardKeyValueRow(key: "Ack Seq", value: "\(sync.acknowledgedSeqMax)")
-                                DashboardKeyValueRow(key: "Last Status", value: sync.lastStatus ?? "—")
-                                DashboardKeyValueRow(key: "Last Probe", value: formatSyncDate(sync.lastProbeAt))
-                                DashboardKeyValueRow(key: "Last Success", value: formatSyncDate(sync.lastSuccessAt))
-                                DashboardKeyValueRow(key: "Last Failure", value: formatSyncDate(sync.lastFailureAt))
-                                if let error = sync.lastErrorMessage, !error.isEmpty {
-                                    DashboardKeyValueRow(key: "Error", value: error)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let sync = monitor.syncState {
+                            SyncStatusBadge(sync: sync)
+                            DashboardKeyValueRow(key: "Pending", value: "\(sync.pendingCount)")
+                            DashboardKeyValueRow(key: "Last Status", value: sync.lastStatus ?? "—")
+                        }
+
+                        if let sync = monitor.syncState, !sync.endpoints.isEmpty {
+                            VStack(spacing: 14) {
+                                ForEach(sync.endpoints) { endpoint in
+                                    EndpointSyncCard(endpoint: endpoint)
                                 }
                             }
+                        } else if !monitor.settingsDraft.endpoints.isEmpty {
+                            Text("Status will appear after the next refresh.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("No endpoints configured.")
+                                .foregroundStyle(.secondary)
                         }
                     }
+                }
 
-                    DashboardSectionSurface {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text("Sampling")
-                                .font(.headline.weight(.semibold))
-                            DashboardKeyValueRow(key: "Idle", value: "\(monitor.settingsDraft.idleThresholdSeconds)s")
-                            DashboardKeyValueRow(key: "Stability", value: "\(monitor.settingsDraft.changeStabilityMillis)ms")
-                            DashboardKeyValueRow(key: "Heartbeat", value: "\(monitor.settingsDraft.heartbeatSeconds)s")
-                            DashboardKeyValueRow(key: "App", value: "\(monitor.settingsDraft.appPollingMillis)ms")
-                            DashboardKeyValueRow(key: "Page", value: "\(monitor.settingsDraft.pagePollingMillis)ms")
-                            DashboardKeyValueRow(key: "Media", value: "\(monitor.settingsDraft.mediaPollingMillis)ms")
-                        }
+                DashboardSectionSurface {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Sampling")
+                            .font(.headline.weight(.semibold))
+                        DashboardKeyValueRow(key: "Idle", value: "\(monitor.settingsDraft.idleThresholdSeconds)s")
+                        DashboardKeyValueRow(key: "Stability", value: "\(monitor.settingsDraft.changeStabilityMillis)ms")
+                        DashboardKeyValueRow(key: "Heartbeat", value: "\(monitor.settingsDraft.heartbeatSeconds)s")
+                        DashboardKeyValueRow(key: "App", value: "\(monitor.settingsDraft.appPollingMillis)ms")
+                        DashboardKeyValueRow(key: "Page", value: "\(monitor.settingsDraft.pagePollingMillis)ms")
+                        DashboardKeyValueRow(key: "Media", value: "\(monitor.settingsDraft.mediaPollingMillis)ms")
                     }
                 }
             }
@@ -302,23 +308,63 @@ private struct SyncStatusBadge: View {
     }
 
     private var statusLabel: String {
-        sync.status
-            .replacingOccurrences(of: "_", with: " ")
-            .capitalized
+        syncStatusLabel(sync.status)
     }
 
     private var statusColor: Color {
-        switch sync.status {
-        case "healthy":
-            return .green
-        case "probing":
-            return .orange
-        case "disabled":
-            return .secondary
-        case "idle":
-            return .secondary
-        default:
-            return .red
+        syncStatusColor(sync.status)
+    }
+}
+
+private struct EndpointSyncCard: View {
+    let endpoint: EndpointSyncStatusInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(endpoint.name)
+                        .font(.headline)
+                    Text(endpoint.transportName.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                EndpointSyncBadge(endpoint: endpoint)
+            }
+
+            DashboardKeyValueRow(
+                key: "URL",
+                value: endpoint.endpointURL.isEmpty ? "Not configured" : endpoint.endpointURL
+            )
+            DashboardKeyValueRow(key: "Pending", value: "\(endpoint.pendingCount)")
+            DashboardKeyValueRow(key: "Ack Seq", value: "\(endpoint.acknowledgedSeqMax)")
+            DashboardKeyValueRow(key: "Last Status", value: endpoint.lastStatus ?? "—")
+            DashboardKeyValueRow(key: "Last Probe", value: formatSyncDate(endpoint.lastProbeAt))
+            DashboardKeyValueRow(key: "Last Success", value: formatSyncDate(endpoint.lastSuccessAt))
+            DashboardKeyValueRow(key: "Last Failure", value: formatSyncDate(endpoint.lastFailureAt))
+            if let error = endpoint.lastErrorMessage, !error.isEmpty {
+                DashboardKeyValueRow(key: "Error", value: error)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white.opacity(0.58))
+        )
+    }
+}
+
+private struct EndpointSyncBadge: View {
+    let endpoint: EndpointSyncStatusInfo
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(syncStatusColor(endpoint.status))
+                .frame(width: 9, height: 9)
+            Text(endpoint.enabled ? syncStatusLabel(endpoint.status) : "Disabled")
+                .font(.subheadline.weight(.semibold))
         }
     }
 }
@@ -371,44 +417,52 @@ private struct SettingsEditorContent: View {
                         }
                     }
 
-                    SettingsCard(title: "Endpoint Delivery", subtitle: "Configure remote sync target and auth.") {
+                    SettingsCard(title: "Endpoint Delivery", subtitle: "Configure multiple sync targets and keep each one independently enabled or disabled.") {
                         VStack(alignment: .leading, spacing: 16) {
-                            ToggleRow(
-                                title: "Enable endpoint",
-                                subtitle: "When disabled, PulseBar works locally only.",
-                                isOn: draftBinding(\.endpointEnabled)
-                            )
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Transport")
-                                    .font(.subheadline.weight(.semibold))
-                                Picker("Transport", selection: draftBinding(\.transport)) {
-                                    ForEach(TransportOption.allCases) { option in
-                                        Text(option.title).tag(option)
-                                    }
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Configured endpoints")
+                                        .font(.headline)
+                                    Text("Each endpoint keeps its own auth, transport, and enabled state.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
-                                .pickerStyle(.segmented)
+                                Spacer()
+                                Button("Add Endpoint") {
+                                    monitor.addEndpoint()
+                                    saved = false
+                                }
+                                .buttonStyle(.bordered)
                             }
 
-                            LabeledField(
-                                title: "Endpoint URL",
-                                subtitle: "WebSocket, webhook, or batch HTTP target.",
-                                text: draftBinding(\.endpointUrl)
-                            )
-
-                            LabeledSecureField(
-                                title: "API Key",
-                                subtitle: "Optional bearer or shared secret value.",
-                                text: draftBinding(\.apiKey)
-                            )
-
-                            PresetNumericRow(
-                                title: "Batch window",
-                                subtitle: "How long to buffer HTTP batch events.",
-                                unit: "s",
-                                value: draftBinding(\.batchWindowSeconds),
-                                presets: [5, 15, 30, 60]
-                            )
+                            if monitor.settingsDraft.endpoints.isEmpty {
+                                Text("No endpoints configured yet.")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                VStack(spacing: 14) {
+                                    ForEach(Array(monitor.settingsDraft.endpoints.enumerated()), id: \.element.id) { index, endpoint in
+                                        EndpointEditorCard(
+                                            index: index,
+                                            canRemove: true
+                                        ) {
+                                            monitor.removeEndpoint(endpoint.id)
+                                            saved = false
+                                        } enabled: {
+                                            endpointBinding(id: endpoint.id, fallback: endpoint.enabled, \.enabled)
+                                        } name: {
+                                            endpointBinding(id: endpoint.id, fallback: endpoint.name, \.name)
+                                        } transport: {
+                                            endpointBinding(id: endpoint.id, fallback: endpoint.transport, \.transport)
+                                        } endpointURL: {
+                                            endpointBinding(id: endpoint.id, fallback: endpoint.endpointUrl, \.endpointUrl)
+                                        } apiKey: {
+                                            endpointBinding(id: endpoint.id, fallback: endpoint.apiKey, \.apiKey)
+                                        } batchWindowSeconds: {
+                                            endpointBinding(id: endpoint.id, fallback: endpoint.batchWindowSeconds, \.batchWindowSeconds)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -521,6 +575,145 @@ private struct SettingsEditorContent: View {
                 saved = false
             }
         )
+    }
+
+    private func endpointBinding<T>(
+        id endpointID: String,
+        fallback: T,
+        _ keyPath: WritableKeyPath<EndpointSettingsDraft, T>
+    ) -> Binding<T> {
+        Binding(
+            get: {
+                monitor.settingsDraft.endpoints.first { $0.id == endpointID }?[keyPath: keyPath] ?? fallback
+            },
+            set: {
+                guard let index = monitor.settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
+                    return
+                }
+                monitor.settingsDraft.endpoints[index][keyPath: keyPath] = $0
+                saved = false
+            }
+        )
+    }
+}
+
+private struct EndpointEditorCard: View {
+    let index: Int
+    let canRemove: Bool
+    let onRemove: () -> Void
+    @Binding var enabled: Bool
+    @Binding var name: String
+    @Binding var transport: TransportOption
+    @Binding var endpointURL: String
+    @Binding var apiKey: String
+    @Binding var batchWindowSeconds: Int
+
+    init(
+        index: Int,
+        canRemove: Bool,
+        onRemove: @escaping () -> Void,
+        enabled: @escaping () -> Binding<Bool>,
+        name: @escaping () -> Binding<String>,
+        transport: @escaping () -> Binding<TransportOption>,
+        endpointURL: @escaping () -> Binding<String>,
+        apiKey: @escaping () -> Binding<String>,
+        batchWindowSeconds: @escaping () -> Binding<Int>
+    ) {
+        self.index = index
+        self.canRemove = canRemove
+        self.onRemove = onRemove
+        self._enabled = enabled()
+        self._name = name()
+        self._transport = transport()
+        self._endpointURL = endpointURL()
+        self._apiKey = apiKey()
+        self._batchWindowSeconds = batchWindowSeconds()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(name.isEmpty ? "Endpoint \(index + 1)" : name)
+                        .font(.headline)
+                    Text("Delivery target, auth, and transport options.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if canRemove {
+                    Button("Remove", action: onRemove)
+                        .buttonStyle(.bordered)
+                }
+            }
+
+            ToggleRow(
+                title: "Enabled",
+                subtitle: "Disabled endpoints stay saved but do not receive reports.",
+                isOn: $enabled
+            )
+
+            LabeledField(
+                title: "Name",
+                subtitle: "Shown in Sync status and settings.",
+                text: $name
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Transport")
+                    .font(.subheadline.weight(.semibold))
+                Picker("Transport", selection: $transport) {
+                    ForEach(TransportOption.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            LabeledField(
+                title: "Endpoint URL",
+                subtitle: "Base host or ingest URL for this endpoint.",
+                text: $endpointURL
+            )
+
+            LabeledSecureField(
+                title: "API Key",
+                subtitle: "Optional bearer or shared secret value.",
+                text: $apiKey
+            )
+
+            PresetNumericRow(
+                title: "Batch window",
+                subtitle: "How long to buffer HTTP batch events.",
+                unit: "s",
+                value: $batchWindowSeconds,
+                presets: [5, 15, 30, 60]
+            )
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white.opacity(0.58))
+        )
+    }
+}
+
+private func syncStatusLabel(_ status: String) -> String {
+    status
+        .replacingOccurrences(of: "_", with: " ")
+        .capitalized
+}
+
+private func syncStatusColor(_ status: String) -> Color {
+    switch status {
+    case "healthy":
+        return .green
+    case "probing":
+        return .orange
+    case "disabled", "idle":
+        return .secondary
+    default:
+        return .red
     }
 }
 

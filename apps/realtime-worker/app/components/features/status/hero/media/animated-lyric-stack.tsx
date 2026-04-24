@@ -161,7 +161,7 @@ export function AnimatedLyricStack(props: AnimatedLyricStackProps) {
   const items = useMemo(() => buildStackItems(props.cue), [props.cue]);
 
   return (
-    <div className="relative h-20 w-full overflow-hidden">
+    <div className="relative h-12 w-full overflow-hidden">
       <AnimatePresence initial={false} mode="sync">
         {items.map((item) => (
           <motion.p

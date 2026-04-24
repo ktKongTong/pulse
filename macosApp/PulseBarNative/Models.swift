@@ -51,7 +51,9 @@ struct LiveSnapshot: Equatable {
     let media: MediaInfo?
 }
 
-struct SyncStatusInfo: Equatable {
+struct EndpointSyncStatusInfo: Identifiable, Equatable {
+    let id: String
+    let name: String
     let enabled: Bool
     let transportName: String
     let endpointURL: String
@@ -66,6 +68,17 @@ struct SyncStatusInfo: Equatable {
     let lastErrorMessage: String?
     let acknowledgedSeqMax: Int
     let acknowledgedAt: Date?
+}
+
+struct SyncStatusInfo: Equatable {
+    let enabled: Bool
+    let enabledEndpointCount: Int
+    let totalEndpointCount: Int
+    let status: String
+    let lastStatus: String?
+    let pendingCount: Int
+    let needsAttention: Bool
+    let endpoints: [EndpointSyncStatusInfo]
 }
 
 enum DashboardSection: String, CaseIterable, Identifiable {
@@ -140,11 +153,7 @@ enum InteractionPlaybackMode: String, CaseIterable, Identifiable {
 }
 
 struct SettingsDraft: Equatable {
-    var endpointEnabled = false
-    var transport: TransportOption = .websocket
-    var endpointUrl = ""
-    var apiKey = ""
-    var batchWindowSeconds = 15
+    var endpoints: [EndpointSettingsDraft] = [EndpointSettingsDraft.defaultPrimary()]
     var idleThresholdSeconds = 300
     var changeStabilityMillis = 1200
     var heartbeatSeconds = 60
@@ -154,4 +163,32 @@ struct SettingsDraft: Equatable {
     var allowWebInteractions = true
     var interactionExecutionMode: InteractionExecutionMode = .confirm
     var interactionPlaybackMode: InteractionPlaybackMode = .playNext
+}
+
+struct EndpointSettingsDraft: Identifiable, Equatable {
+    var id: String
+    var name: String
+    var enabled: Bool
+    var transport: TransportOption
+    var endpointUrl: String
+    var apiKey: String
+    var batchWindowSeconds: Int
+
+    static func `default`(index: Int) -> EndpointSettingsDraft {
+        EndpointSettingsDraft(
+            id: UUID().uuidString.lowercased(),
+            name: "Endpoint \(index + 1)",
+            enabled: false,
+            transport: .websocket,
+            endpointUrl: "",
+            apiKey: "",
+            batchWindowSeconds: 15
+        )
+    }
+
+    static func defaultPrimary() -> EndpointSettingsDraft {
+        var draft = EndpointSettingsDraft.default(index: 0)
+        draft.name = "Primary endpoint"
+        return draft
+    }
 }

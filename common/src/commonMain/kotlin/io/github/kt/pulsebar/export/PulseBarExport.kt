@@ -29,13 +29,19 @@ enum class PulseBarPlaybackCommand {
     NEXT
 }
 
-class PulseBarConfig(
-    val endpointEnabled: Boolean,
+class PulseBarEndpointConfig(
+    val id: String,
+    val name: String,
+    val enabled: Boolean,
     val transport: PulseBarTransport,
     val transportName: String,
     val endpointUrl: String,
     val apiKey: String,
-    val batchWindowSeconds: Int,
+    val batchWindowSeconds: Int
+)
+
+class PulseBarConfig(
+    val endpoints: List<PulseBarEndpointConfig>,
     val idleThresholdSeconds: Int,
     val changeStabilityMillis: Int,
     val heartbeatSeconds: Int,
@@ -126,7 +132,9 @@ class PulseBarInteractionState(
     val lastStatus: String?
 )
 
-class PulseBarSyncState(
+class PulseBarEndpointSyncState(
+    val id: String,
+    val name: String,
     val enabled: Boolean,
     val transportName: String,
     val endpointUrl: String,
@@ -141,6 +149,17 @@ class PulseBarSyncState(
     val lastErrorMessage: String?,
     val acknowledgedSeqMax: Long,
     val acknowledgedAtIso8601: String?
+)
+
+class PulseBarSyncState(
+    val enabled: Boolean,
+    val enabledEndpointCount: Int,
+    val totalEndpointCount: Int,
+    val status: String,
+    val lastStatus: String?,
+    val pendingCount: Int,
+    val needsAttention: Boolean,
+    val endpoints: List<PulseBarEndpointSyncState>
 )
 
 expect class PulseBarBridge() {

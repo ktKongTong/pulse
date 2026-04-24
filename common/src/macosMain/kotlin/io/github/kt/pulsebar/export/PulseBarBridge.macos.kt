@@ -585,7 +585,7 @@ actual class PulseBarBridge actual constructor() {
 
     private fun pushRealtimeSnapshot() {
         val config = store.readConfig()
-        if (!config.endpointEnabled) return
+        if (config.endpoints.none { it.enabled }) return
         reporter.forceSync(readSnapshot(), config)
     }
 

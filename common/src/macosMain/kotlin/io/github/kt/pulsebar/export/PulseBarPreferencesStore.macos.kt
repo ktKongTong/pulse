@@ -2,6 +2,12 @@ package io.github.kt.pulsebar.export
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSHomeDirectory
 import platform.Foundation.NSJSONReadingMutableContainers
@@ -9,10 +15,21 @@ import platform.Foundation.NSJSONSerialization
 import platform.Foundation.NSNumber
 import platform.Foundation.NSUserDefaults
 
+private const val ENDPOINTS_CONFIG_KEY = "pulsebar.config.endpoints.v1"
+private const val LEGACY_ENDPOINT_ENABLED_KEY = "pulsebar.config.endpoint.enabled"
+private const val LEGACY_ENDPOINT_NAME_KEY = "pulsebar.config.endpoint.name"
+private const val LEGACY_ENDPOINT_TRANSPORT_KEY = "pulsebar.config.endpoint.transport"
+private const val LEGACY_ENDPOINT_URL_KEY = "pulsebar.config.endpoint.url"
+private const val LEGACY_ENDPOINT_API_KEY = "pulsebar.config.endpoint.apiKey"
+private const val LEGACY_ENDPOINT_BATCH_WINDOW_KEY = "pulsebar.config.endpoint.batchWindowSeconds"
+private const val DEFAULT_ENDPOINT_ID = "default-endpoint"
+private const val DEFAULT_ENDPOINT_NAME = "Primary endpoint"
+
 @OptIn(ExperimentalForeignApi::class)
 internal class PulseBarPreferencesStore {
     private val defaults = NSUserDefaults.standardUserDefaults
     private val rootPath = NSHomeDirectory() + "/Library/Application Support/PulseBar"
+    private val json = PulseBarRoomProvider.json
     private val database get() = PulseBarRoomProvider.database
     private val usageDao get() = database.usageDao()
 
@@ -96,19 +113,8 @@ internal class PulseBarPreferencesStore {
     }
 
     fun readConfig(): PulseBarConfig {
-        val transportName = defaults.stringForKey("pulsebar.config.endpoint.transport") ?: PulseBarTransport.WEBSOCKET.name
-        val transport = when (transportName) {
-            "WEBHOOK" -> PulseBarTransport.WEBHOOK
-            "HTTP_BATCH" -> PulseBarTransport.HTTP_BATCH
-            else -> PulseBarTransport.WEBSOCKET
-        }
         return PulseBarConfig(
-            endpointEnabled = defaults.boolForKey("pulsebar.config.endpoint.enabled"),
-            transport = transport,
-            transportName = transportName,
-            endpointUrl = defaults.stringForKey("pulsebar.config.endpoint.url") ?: "",
-            apiKey = defaults.stringForKey("pulsebar.config.endpoint.apiKey") ?: "",
-            batchWindowSeconds = intForKey("pulsebar.config.endpoint.batchWindowSeconds", 15),
+            endpoints = readEndpoints(),
             idleThresholdSeconds = intForKey("pulsebar.config.idleThresholdSeconds", 300),
             changeStabilityMillis = intForKey("pulsebar.config.changeStabilityMillis", 1200),
             heartbeatSeconds = intForKey("pulsebar.config.heartbeatSeconds", 60),
@@ -130,11 +136,16 @@ internal class PulseBarPreferencesStore {
     }
 
     fun writeConfig(config: PulseBarConfig) {
-        defaults.setBool(config.endpointEnabled, "pulsebar.config.endpoint.enabled")
-        defaults.setObject(config.transportName, "pulsebar.config.endpoint.transport")
-        defaults.setObject(config.endpointUrl, "pulsebar.config.endpoint.url")
-        defaults.setObject(config.apiKey, "pulsebar.config.endpoint.apiKey")
-        defaults.setInteger(config.batchWindowSeconds.toLong(), "pulsebar.config.endpoint.batchWindowSeconds")
+        val endpoints = normalizeEndpoints(config.endpoints)
+        defaults.setObject(
+            buildJsonArray {
+                endpoints.forEach { endpoint ->
+                    add(endpoint.toJson())
+                }
+            }.toString(),
+            ENDPOINTS_CONFIG_KEY
+        )
+        mirrorLegacyEndpoint(endpoints.firstOrNull())
         defaults.setInteger(config.idleThresholdSeconds.toLong(), "pulsebar.config.idleThresholdSeconds")
         defaults.setInteger(config.changeStabilityMillis.toLong(), "pulsebar.config.changeStabilityMillis")
         defaults.setInteger(config.heartbeatSeconds.toLong(), "pulsebar.config.heartbeatSeconds")
@@ -243,11 +254,12 @@ internal class PulseBarPreferencesStore {
         val data = NSFileManager.defaultManager.contentsAtPath(path) ?: return
         val json = NSJSONSerialization.JSONObjectWithData(data, NSJSONReadingMutableContainers, null) as? Map<*, *> ?: return
         val endpoint = json["endpoint"] as? Map<*, *>
-        defaults.setBool((endpoint?.get("enabled") as? Boolean) ?: false, "pulsebar.config.endpoint.enabled")
-        defaults.setObject(endpoint?.get("transport") as? String ?: "WEBSOCKET", "pulsebar.config.endpoint.transport")
-        defaults.setObject(endpoint?.get("url") as? String ?: "", "pulsebar.config.endpoint.url")
-        defaults.setObject(endpoint?.get("apiKey") as? String ?: "", "pulsebar.config.endpoint.apiKey")
-        defaults.setInteger(numberValue(endpoint?.get("batchWindowSeconds"), 15).toLong(), "pulsebar.config.endpoint.batchWindowSeconds")
+        defaults.setBool((endpoint?.get("enabled") as? Boolean) ?: false, LEGACY_ENDPOINT_ENABLED_KEY)
+        defaults.setObject(endpoint?.get("name") as? String ?: DEFAULT_ENDPOINT_NAME, LEGACY_ENDPOINT_NAME_KEY)
+        defaults.setObject(endpoint?.get("transport") as? String ?: PulseBarTransport.WEBSOCKET.name, LEGACY_ENDPOINT_TRANSPORT_KEY)
+        defaults.setObject(endpoint?.get("url") as? String ?: "", LEGACY_ENDPOINT_URL_KEY)
+        defaults.setObject(endpoint?.get("apiKey") as? String ?: "", LEGACY_ENDPOINT_API_KEY)
+        defaults.setInteger(numberValue(endpoint?.get("batchWindowSeconds"), 15).toLong(), LEGACY_ENDPOINT_BATCH_WINDOW_KEY)
         defaults.setInteger(numberValue(json["idleThresholdSeconds"], 300).toLong(), "pulsebar.config.idleThresholdSeconds")
         defaults.setInteger(numberValue(json["changeStabilityMillis"], 1200).toLong(), "pulsebar.config.changeStabilityMillis")
         defaults.setInteger(numberValue(json["heartbeatSeconds"], 60).toLong(), "pulsebar.config.heartbeatSeconds")
@@ -276,6 +288,99 @@ internal class PulseBarPreferencesStore {
         defaults.synchronize()
     }
 
+    private fun readEndpoints(): List<PulseBarEndpointConfig> {
+        if (defaults.containsKey(ENDPOINTS_CONFIG_KEY)) {
+            val stored = defaults.stringForKey(ENDPOINTS_CONFIG_KEY)
+                ?.let { serialized ->
+                    runCatching {
+                        json.parseToJsonElement(serialized)
+                            .jsonArray
+                            .map { it.jsonObject.toPulseBarEndpointConfig() }
+                    }.getOrDefault(emptyList())
+                }
+                .orEmpty()
+            return normalizeEndpoints(stored)
+        }
+
+        return normalizeEndpoints(listOf(legacyEndpointConfig()))
+    }
+
+    private fun mirrorLegacyEndpoint(endpoint: PulseBarEndpointConfig?) {
+        val primary = endpoint ?: defaultEndpointConfig()
+        defaults.setBool(primary.enabled, LEGACY_ENDPOINT_ENABLED_KEY)
+        defaults.setObject(primary.name, LEGACY_ENDPOINT_NAME_KEY)
+        defaults.setObject(primary.transportName, LEGACY_ENDPOINT_TRANSPORT_KEY)
+        defaults.setObject(primary.endpointUrl, LEGACY_ENDPOINT_URL_KEY)
+        defaults.setObject(primary.apiKey, LEGACY_ENDPOINT_API_KEY)
+        defaults.setInteger(primary.batchWindowSeconds.toLong(), LEGACY_ENDPOINT_BATCH_WINDOW_KEY)
+    }
+
+    private fun legacyEndpointConfig(): PulseBarEndpointConfig {
+        val transportName = defaults.stringForKey(LEGACY_ENDPOINT_TRANSPORT_KEY) ?: PulseBarTransport.WEBSOCKET.name
+        val endpointUrl = defaults.stringForKey(LEGACY_ENDPOINT_URL_KEY) ?: ""
+        val migratedId = resolvedEndpointIngestUrl(endpointUrl).ifBlank { DEFAULT_ENDPOINT_ID }
+        return PulseBarEndpointConfig(
+            id = migratedId,
+            name = defaults.stringForKey(LEGACY_ENDPOINT_NAME_KEY) ?: DEFAULT_ENDPOINT_NAME,
+            enabled = defaults.boolForKey(LEGACY_ENDPOINT_ENABLED_KEY),
+            transport = transportFromName(transportName),
+            transportName = transportName,
+            endpointUrl = endpointUrl,
+            apiKey = defaults.stringForKey(LEGACY_ENDPOINT_API_KEY) ?: "",
+            batchWindowSeconds = intForKey(LEGACY_ENDPOINT_BATCH_WINDOW_KEY, 15)
+        )
+    }
+
+    private fun defaultEndpointConfig(
+        id: String = DEFAULT_ENDPOINT_ID,
+        name: String = DEFAULT_ENDPOINT_NAME
+    ): PulseBarEndpointConfig =
+        PulseBarEndpointConfig(
+            id = id,
+            name = name,
+            enabled = false,
+            transport = PulseBarTransport.WEBSOCKET,
+            transportName = PulseBarTransport.WEBSOCKET.name,
+            endpointUrl = "",
+            apiKey = "",
+            batchWindowSeconds = 15
+        )
+
+    private fun normalizeEndpoints(endpoints: List<PulseBarEndpointConfig>): List<PulseBarEndpointConfig> {
+        val usedIds = mutableSetOf<String>()
+        return endpoints.mapIndexed { index, endpoint ->
+            val fallbackName = if (index == 0) DEFAULT_ENDPOINT_NAME else "Endpoint ${index + 1}"
+            val baseId = endpoint.id
+                .trim()
+                .ifBlank {
+                    endpoint.endpointUrl.trim().ifBlank { "endpoint-${index + 1}" }
+                }
+            var resolvedId = baseId
+            var suffix = 2
+            while (!usedIds.add(resolvedId)) {
+                resolvedId = "$baseId-$suffix"
+                suffix += 1
+            }
+            PulseBarEndpointConfig(
+                id = resolvedId,
+                name = endpoint.name.trim().ifBlank { fallbackName },
+                enabled = endpoint.enabled,
+                transport = transportFromName(endpoint.transportName),
+                transportName = endpoint.transportName.ifBlank { PulseBarTransport.WEBSOCKET.name },
+                endpointUrl = endpoint.endpointUrl.trim(),
+                apiKey = endpoint.apiKey,
+                batchWindowSeconds = endpoint.batchWindowSeconds.coerceAtLeast(1)
+            )
+        }
+    }
+
+    private fun transportFromName(transportName: String): PulseBarTransport =
+        when (transportName) {
+            PulseBarTransport.WEBHOOK.name -> PulseBarTransport.WEBHOOK
+            PulseBarTransport.HTTP_BATCH.name -> PulseBarTransport.HTTP_BATCH
+            else -> PulseBarTransport.WEBSOCKET
+        }
+
     private fun intForKey(key: String, defaultValue: Int): Int {
         val value = defaults.integerForKey(key).toInt()
         return if (value == 0) defaultValue else value
@@ -292,4 +397,29 @@ internal class PulseBarPreferencesStore {
             is Double -> value.toInt()
             else -> defaultValue
         }
+
+    private fun PulseBarEndpointConfig.toJson() =
+        buildJsonObject {
+            put("id", id)
+            put("name", name)
+            put("enabled", enabled)
+            put("transport", transportName)
+            put("url", endpointUrl)
+            put("apiKey", apiKey)
+            put("batchWindowSeconds", batchWindowSeconds)
+        }
+
+    private fun kotlinx.serialization.json.JsonObject.toPulseBarEndpointConfig(): PulseBarEndpointConfig {
+        val transportName = this["transport"]?.jsonPrimitive?.content ?: PulseBarTransport.WEBSOCKET.name
+        return PulseBarEndpointConfig(
+            id = this["id"]?.jsonPrimitive?.content.orEmpty(),
+            name = this["name"]?.jsonPrimitive?.content.orEmpty(),
+            enabled = this["enabled"]?.jsonPrimitive?.content == "true",
+            transport = transportFromName(transportName),
+            transportName = transportName,
+            endpointUrl = this["url"]?.jsonPrimitive?.content.orEmpty(),
+            apiKey = this["apiKey"]?.jsonPrimitive?.content.orEmpty(),
+            batchWindowSeconds = this["batchWindowSeconds"]?.jsonPrimitive?.content?.toIntOrNull() ?: 15
+        )
+    }
 }

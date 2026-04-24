@@ -13,10 +13,10 @@
     "strict": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
-    "types": ["vite/client", "@cloudflare/workers-types/2026-04-23"]
+    "types": ["vite/client", "@cloudflare/workers-types"]
   },
   "include": [
-
+    "worker/**/*.ts",
     "**/*.ts",
     "**/*.tsx",
     "**/.server/**/*.ts",
