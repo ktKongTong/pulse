@@ -14,19 +14,41 @@ export type Env = Cloudflare.Env & {
   WORKSPACE_ID: string;
   SITE_ID: string;
   ALLOWED_ORIGINS: string;
-  ROOM_SESSION_TTL_SECONDS?: string;
-  WEB_HEARTBEAT_SECONDS?: string;
-  AGGREGATE_FLUSH_SECONDS?: string;
+  ROOM_SESSION_TTL_SECONDS: string;
+  WEB_HEARTBEAT_SECONDS: string;
+  AGGREGATE_FLUSH_SECONDS: string;
   DEBUG_LOGS?: string;
   LOG_LEVEL?: string;
 }
 
+function requiredEnvValue(env: Env, key: keyof Env): string {
+  const value = env[key];
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`Missing required environment variable: ${String(key)}`);
+  }
+  return value;
+}
+
+function requiredEnvNumber(env: Env, key: keyof Env): number {
+  const raw = requiredEnvValue(env, key);
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    throw new Error(`Invalid numeric environment variable: ${String(key)}`);
+  }
+  return value;
+}
+
 export function allowedOrigins(env: Env): Set<string> {
-  return new Set(
-    env.ALLOWED_ORIGINS.split(",")
-      .map((value) => value.trim())
-      .filter(Boolean)
-  );
+  const values = requiredEnvValue(env, "ALLOWED_ORIGINS")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (values.length === 0) {
+    throw new Error("Missing required environment variable: ALLOWED_ORIGINS");
+  }
+
+  return new Set(values);
 }
 
 export function isAllowedOrigin(env: Env, origin: string | null): boolean {
@@ -41,24 +63,31 @@ export function isAllowedOriginForRequest(env: Env, origin: string | null, reque
 }
 
 export function webSessionTtlMs(env: Env): number {
-  const fallbackSeconds = Math.max(45, webHeartbeatSeconds(env) * 2);
-  const seconds = Number(env.ROOM_SESSION_TTL_SECONDS ?? String(fallbackSeconds));
-  return Math.max(1, Number.isFinite(seconds) ? seconds : 45) * 1000;
+  const seconds = requiredEnvNumber(env, "ROOM_SESSION_TTL_SECONDS");
+  if (seconds < 1) {
+    throw new Error("Invalid numeric environment variable: ROOM_SESSION_TTL_SECONDS");
+  }
+  return seconds * 1000;
 }
 
 export function webHeartbeatSeconds(env: Env): number {
-  const seconds = Number(env.WEB_HEARTBEAT_SECONDS ?? "30");
-  return Math.max(1, Number.isFinite(seconds) ? seconds : 30);
+  const seconds = requiredEnvNumber(env, "WEB_HEARTBEAT_SECONDS");
+  if (seconds < 1) {
+    throw new Error("Invalid numeric environment variable: WEB_HEARTBEAT_SECONDS");
+  }
+  return seconds;
 }
 
 export function deviceSessionTtlMs(env: Env): number {
-  return Math.max(120, webHeartbeatSeconds(env) * 2) * 1000;
+  return webHeartbeatSeconds(env) * 2 * 1000;
 }
 
 export function aggregateFlushMs(env: Env): number {
-  const values = env as unknown as Record<string, unknown>;
-  const seconds = Number(values.AGGREGATE_FLUSH_SECONDS ?? "30");
-  return Math.max(5, Number.isFinite(seconds) ? seconds : 30) * 1000;
+  const seconds = requiredEnvNumber(env, "AGGREGATE_FLUSH_SECONDS");
+  if (seconds < 1) {
+    throw new Error("Invalid numeric environment variable: AGGREGATE_FLUSH_SECONDS");
+  }
+  return seconds * 1000;
 }
 
 export function debugLoggingEnabled(env: Env): boolean {

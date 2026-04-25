@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useMemo } from "react";
 
-import type { LyricCue, LyricLine } from "./lrc";
+import type { LyricCue, LyricLine } from "@pulse/realtime-react";
 import { cn } from "@/lib/utils";
 
 type LyricRole = "previous" | "current" | "next";

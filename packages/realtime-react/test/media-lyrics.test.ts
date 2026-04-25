@@ -1,12 +1,50 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildDefaultMediaLyricsQuery,
+  serializeMediaLyricsQuery,
   parseLrc,
   resolveActiveLyricIndex,
+  resolveMediaProgressSnapshot,
   resolveLyricCue,
-} from "../app/components/features/status/hero/media/lrc";
+} from "../src/media";
 
-describe("lrc helpers", () => {
+describe("media helpers", () => {
+  it("resolves media progress seconds, percent, and labels together", () => {
+    expect(resolveMediaProgressSnapshot({
+      title: "Song",
+      progressSeconds: 30,
+      durationSeconds: 120,
+      playbackState: "playing",
+      updatedAt: "2026-04-25T00:00:00.000Z",
+    }, Date.parse("2026-04-25T00:00:30.000Z"))).toEqual({
+      progressSeconds: 60,
+      progressPercent: 50,
+      progressLabel: "1:00",
+      durationSeconds: 120,
+      durationLabel: "2:00",
+    });
+  });
+
+  it("builds optional default lyrics queries from normalized media fields", () => {
+    const query = buildDefaultMediaLyricsQuery({
+      title: "  Song Title  ",
+      album: " Album ",
+      artist: " Artist ",
+    });
+
+    expect(query?.toString()).toBe("title=Song+Title&album=Album&artist=Artist");
+    expect(buildDefaultMediaLyricsQuery({ title: " " })?.toString()).toBeUndefined();
+  });
+
+  it("serializes caller-owned lyrics queries without enforcing a schema", () => {
+    expect(serializeMediaLyricsQuery("?q=artist%3Atitle")).toBe("q=artist%3Atitle");
+    expect(serializeMediaLyricsQuery({ q: " artist:title ", provider: "netease" })).toBe(
+      "q=artist%3Atitle&provider=netease",
+    );
+    expect(serializeMediaLyricsQuery({ title: " ", empty: null })).toBeNull();
+  });
+
   it("parses standard lrc lines and ignores metadata", () => {
     const lines = parseLrc([
       "[ar:Artist]",

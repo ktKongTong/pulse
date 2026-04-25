@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo } from "react";
 import type { ReactNode } from "react";
 
 import { PulseRealtimeClient } from "./client";
+import { MediaProgressTickProvider } from "./media";
 import type { PulseRealtimeConfig } from "./types";
 
 const PulseRealtimeContext = createContext<PulseRealtimeClient | null>(null);
@@ -29,7 +30,7 @@ export function PulseRealtimeProvider(props: {
 
   return (
     <PulseRealtimeContext.Provider value={client}>
-      {props.children}
+      <MediaProgressTickProvider>{props.children}</MediaProgressTickProvider>
     </PulseRealtimeContext.Provider>
   );
 }

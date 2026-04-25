@@ -1,16 +1,16 @@
 import { motion } from "motion/react";
 import React from "react";
 import {
+  buildDefaultMediaLyricsQuery,
   formatClock,
-  resolveProgressPercent,
+  resolveLyricCue,
+  useMediaLyrics,
   useMediaProgress,
   useOwnerMedia,
   type MediaStatus,
 } from "@pulse/realtime-react";
 import { AnimatedLyricStack } from "./animated-lyric";
 import { ProviderBadge } from "./provider-badge";
-import { resolveLyricCue } from "./lrc";
-import { useMediaLyrics } from "./use-media-lyrics";
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 
@@ -63,9 +63,10 @@ export function MediaState({ className }: MediaStateProps) {
 }
 
 function Lyric({ media }: { media?: MediaStatus | undefined | null }) {
-  const lyrics = useMediaLyrics(media);
-  const progressSeconds = useMediaProgress(media);
-  const lyricCue = resolveLyricCue(lyrics.lines, progressSeconds);
+  const lyricsQuery = useMemo(() => buildDefaultMediaLyricsQuery(media), [media]);
+  const lyrics = useMediaLyrics(lyricsQuery);
+  const progress = useMediaProgress(media);
+  const lyricCue = resolveLyricCue(lyrics.lines, progress.progressSeconds);
   return <AnimatedLyricStack cue={lyricCue} />
 }
 
@@ -75,24 +76,19 @@ type ProgressProps = {
 
 function Progress({ media, className,  ...rest }: ProgressProps) {
 
-  const progressSeconds = useMediaProgress(media);
-  const progressPercent = resolveProgressPercent(
-    progressSeconds,
-    media?.durationSeconds ?? 0,
-  );
-  const progressLabel = formatClock(progressSeconds);
+  const progress = useMediaProgress(media);
   return <div className={cn('w-full', className)} {...rest}>
     <div className="h-0.5  my-3 w-full bg-stone-300/80">
       <motion.div
         className="h-0.5 bg-stone-900 "
-        animate={{ width: `${progressPercent}%` }}
+        animate={{ width: `${progress.progressPercent}%` }}
         transition={{ duration: 0.18, ease: "linear" }}
-        style={{ width: `${progressPercent}%` }}
+        style={{ width: `${progress.progressPercent}%` }}
       />
     </div>
     <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.26em] text-stone-400">
-      <span>{progressLabel}</span>
-      <span>{media?.durationLabel}</span>
+      <span>{progress.progressLabel}</span>
+      <span>{progress.durationLabel}</span>
     </div>
   </div>
 }

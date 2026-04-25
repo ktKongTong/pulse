@@ -738,10 +738,38 @@
 
 公开函数：
 
+- `MediaProgressTickProvider({ intervalMs?, children })`
+- `useMediaProgressTick(intervalMs?)`
 - `useNowTick(intervalMs = 250)`
+- `useMediaProgress(media?, options?)`
+- `useMediaLyrics(query, options?)`
+- `serializeMediaLyricsQuery(query)`
+- `createEndpointMediaLyricsLoader({ endpoint, fetcher? })`
+- `buildDefaultMediaLyricsQuery(media)`
+- `parseLrc(source)`
+- `resolveActiveLyricIndex(lines, progressSeconds)`
+- `resolveLyricCue(lines, progressSeconds)`
+- `resolveMediaProgressSnapshot(media, nowMs)`
 - `resolveDisplayedProgressSeconds(media, updatedAt, nowMs)`
 - `resolveProgressPercent(progressSeconds, durationSeconds)`
 - `formatClock(rawSeconds)`
+
+`PulseRealtimeProvider` 默认包裹 `MediaProgressTickProvider`，同一 provider 子树内的 `useMediaProgress` 会共享一个 tick interval；未放在 provider 下时，hook 会使用本地 fallback tick。`useMediaProgress` 返回 `{ progressSeconds, progressPercent, progressLabel, durationSeconds, durationLabel }`，避免消费端重复计算秒数、百分比和时间标签。
+
+`useMediaLyrics` 不限定歌词查询框架；调用方传入自己的 `query`，也可以用 `options.loader` 完全接管加载逻辑。默认 loader 只是一个便捷实现，会把 query 序列化后请求 `options.endpoint ?? "/api/lyrics"`，因此 endpoint 可以继续作为 worker backend 的一部分。
+
+可选默认适配器：
+
+- `buildDefaultMediaLyricsQuery(media)`: 从 `MediaStatus` 生成 `{ title, album, artist }` 查询。
+- `createEndpointMediaLyricsLoader(...)`: 读取 text/LRC endpoint 并交给 `parseLrc` 解析。
+
+歌词相关类型：
+
+- `MediaLyricsQuery`: `string | URLSearchParams | Record<string, string | number | boolean | null | undefined> | null | undefined`
+- `MediaLyricsLoader`: `(query, { signal, queryKey }) => Promise<string | LyricLine[] | null | undefined>`
+- `LyricLine`: `{ timeSeconds, text }`
+- `LyricCue`: `{ previous, current, next, state }`
+- `MediaLyricsState`: `{ lines, status }`
 
 ### Branding
 
