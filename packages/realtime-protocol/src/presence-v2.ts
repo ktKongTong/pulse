@@ -158,6 +158,7 @@ export const PresenceEventSchema = z.object({
 export const PresenceIngestRequestSchema = z.object({
   protocol: z.literal(PRESENCE_PROTOCOL_V2).default(PRESENCE_PROTOCOL_V2),
   workspaceId: z.string().min(1),
+  siteId: z.string().min(1),
   deviceId: z.string().min(1),
   sessionId: z.string().min(1),
   events: z.array(PresenceEventSchema).min(1),

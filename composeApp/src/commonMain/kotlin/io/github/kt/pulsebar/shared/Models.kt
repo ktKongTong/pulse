@@ -21,7 +21,8 @@ data class MonitorConfig(
 data class EndpointConfig(
     val enabled: Boolean = false,
     val transport: EndpointTransport = EndpointTransport.WEBSOCKET,
-    val workspaceId: String = "default",
+    val workspaceId: String = "",
+    val siteId: String = "",
     val url: String = "",
     val apiKey: String = "",
     val batchWindowSeconds: Long = 15

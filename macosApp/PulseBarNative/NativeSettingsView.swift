@@ -229,9 +229,9 @@ private struct DashboardSyncPane: View {
             VStack(alignment: .leading, spacing: 24) {
                 DashboardPageHeader(
                     title: "Sync",
-                    subtitle: "Transport and sampling settings that affect delivery."
+                    subtitle: "Local capture always writes SQLite first. Server probe only gates replay."
                 ) {
-                    Button(enabledEndpointCount > 1 ? "Reconnect Enabled Endpoints" : "Reconnect Endpoint") {
+                    Button(enabledEndpointCount > 1 ? "Replay Enabled Endpoints" : "Replay Endpoint") {
                         monitor.retryEndpoint()
                     }
                     .buttonStyle(.borderedProminent)
@@ -251,8 +251,13 @@ private struct DashboardSyncPane: View {
 
                         if let sync = monitor.syncState {
                             SyncStatusBadge(sync: sync)
-                            DashboardKeyValueRow(key: "Pending", value: "\(sync.pendingCount)")
-                            DashboardKeyValueRow(key: "Last Status", value: sync.lastStatus ?? "—")
+                            DashboardKeyValueRow(key: "Server Probe", value: axisStatusLabel(derivedServerStatus(sync.status)))
+                            DashboardKeyValueRow(key: "Ingest Config", value: axisStatusLabel(derivedClientStatus(sync.status)))
+                            DashboardKeyValueRow(key: "SQLite Queue", value: "\(sync.pendingCount) pending")
+                            DashboardKeyValueRow(
+                                key: "Delivery",
+                                value: syncStatusDetail(sync.status, sync.lastStatus, nil)
+                            )
                         }
 
                         if let sync = monitor.syncState, !sync.endpoints.isEmpty {
@@ -337,9 +342,14 @@ private struct EndpointSyncCard: View {
                 key: "URL",
                 value: endpoint.endpointURL.isEmpty ? "Not configured" : endpoint.endpointURL
             )
-            DashboardKeyValueRow(key: "Pending", value: "\(endpoint.pendingCount)")
+            DashboardKeyValueRow(key: "Server Probe", value: axisStatusLabel(derivedServerStatus(endpoint.status)))
+            DashboardKeyValueRow(key: "Ingest Config", value: axisStatusLabel(derivedClientStatus(endpoint.status)))
+            DashboardKeyValueRow(key: "SQLite Queue", value: "\(endpoint.pendingCount) pending")
             DashboardKeyValueRow(key: "Ack Seq", value: "\(endpoint.acknowledgedSeqMax)")
-            DashboardKeyValueRow(key: "Last Status", value: endpoint.lastStatus ?? "—")
+            DashboardKeyValueRow(
+                key: "Delivery",
+                value: syncStatusDetail(endpoint.status, endpoint.lastStatus, endpoint.lastErrorMessage)
+            )
             DashboardKeyValueRow(key: "Last Probe", value: formatSyncDate(endpoint.lastProbeAt))
             DashboardKeyValueRow(key: "Last Success", value: formatSyncDate(endpoint.lastSuccessAt))
             DashboardKeyValueRow(key: "Last Failure", value: formatSyncDate(endpoint.lastFailureAt))
@@ -455,6 +465,10 @@ private struct SettingsEditorContent: View {
                                             endpointBinding(id: endpoint.id, fallback: endpoint.transport, \.transport)
                                         } endpointURL: {
                                             endpointBinding(id: endpoint.id, fallback: endpoint.endpointUrl, \.endpointUrl)
+                                        } workspaceId: {
+                                            endpointBinding(id: endpoint.id, fallback: endpoint.workspaceId, \.workspaceId)
+                                        } siteId: {
+                                            endpointBinding(id: endpoint.id, fallback: endpoint.siteId, \.siteId)
                                         } apiKey: {
                                             endpointBinding(id: endpoint.id, fallback: endpoint.apiKey, \.apiKey)
                                         } batchWindowSeconds: {
@@ -605,6 +619,8 @@ private struct EndpointEditorCard: View {
     @Binding var name: String
     @Binding var transport: TransportOption
     @Binding var endpointURL: String
+    @Binding var workspaceId: String
+    @Binding var siteId: String
     @Binding var apiKey: String
     @Binding var batchWindowSeconds: Int
 
@@ -616,6 +632,8 @@ private struct EndpointEditorCard: View {
         name: @escaping () -> Binding<String>,
         transport: @escaping () -> Binding<TransportOption>,
         endpointURL: @escaping () -> Binding<String>,
+        workspaceId: @escaping () -> Binding<String>,
+        siteId: @escaping () -> Binding<String>,
         apiKey: @escaping () -> Binding<String>,
         batchWindowSeconds: @escaping () -> Binding<Int>
     ) {
@@ -626,6 +644,8 @@ private struct EndpointEditorCard: View {
         self._name = name()
         self._transport = transport()
         self._endpointURL = endpointURL()
+        self._workspaceId = workspaceId()
+        self._siteId = siteId()
         self._apiKey = apiKey()
         self._batchWindowSeconds = batchWindowSeconds()
     }
@@ -676,9 +696,21 @@ private struct EndpointEditorCard: View {
                 text: $endpointURL
             )
 
+            LabeledField(
+                title: "Workspace ID",
+                subtitle: "Must match the Worker WORKSPACE_ID.",
+                text: $workspaceId
+            )
+
+            LabeledField(
+                title: "Site ID",
+                subtitle: "Must match the Worker SITE_ID used by this site.",
+                text: $siteId
+            )
+
             LabeledSecureField(
                 title: "API Key",
-                subtitle: "Optional bearer or shared secret value.",
+                subtitle: "Required bearer token for device ingest.",
                 text: $apiKey
             )
 
@@ -699,21 +731,131 @@ private struct EndpointEditorCard: View {
 }
 
 private func syncStatusLabel(_ status: String) -> String {
-    status
-        .replacingOccurrences(of: "_", with: " ")
-        .capitalized
+    switch status {
+    case "healthy":
+        return "Healthy"
+    case "probing", "checking_server":
+        return "Checking Server"
+    case "misconfigured", "configuration_error":
+        return "Configuration Error"
+    case "server_unavailable":
+        return "Server Unavailable"
+    case "local_unavailable":
+        return "Local Offline"
+    case "disabled":
+        return "Disabled"
+    case "idle":
+        return "Idle"
+    case "degraded":
+        return "Degraded"
+    default:
+        return status
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+    }
 }
 
 private func syncStatusColor(_ status: String) -> Color {
     switch status {
     case "healthy":
         return .green
-    case "probing":
+    case "probing", "checking_server":
         return .orange
     case "disabled", "idle":
         return .secondary
     default:
         return .red
+    }
+}
+
+private func axisStatusLabel(_ status: String) -> String {
+    switch status {
+    case "available":
+        return "Available"
+    case "unavailable":
+        return "Unavailable"
+    case "checking":
+        return "Checking"
+    default:
+        return "Unknown"
+    }
+}
+
+private func derivedServerStatus(_ status: String) -> String {
+    switch status {
+    case "healthy", "configuration_error":
+        return "available"
+    case "server_unavailable", "degraded":
+        return "unavailable"
+    case "checking_server":
+        return "checking"
+    default:
+        return "unknown"
+    }
+}
+
+private func derivedClientStatus(_ status: String) -> String {
+    switch status {
+    case "healthy", "server_unavailable", "checking_server", "local_unavailable":
+        return "available"
+    case "configuration_error", "misconfigured", "degraded":
+        return "unavailable"
+    default:
+        return "unknown"
+    }
+}
+
+private func syncStatusDetail(_ status: String, _ lastStatus: String?, _ lastErrorMessage: String?) -> String {
+    if let lastStatus {
+        switch lastStatus {
+        case "skip:missing_workspace_site_or_api_key":
+            return "Missing Workspace ID, Site ID, or API Key"
+        case "skip:endpoint_disabled":
+            return "Endpoint disabled"
+        case "skip:no_change":
+            return "No changes to send"
+        case "replay:unauthorized":
+            return "API Key is invalid"
+        case "replay:workspace_mismatch":
+            return "Workspace ID does not match the server"
+        case "replay:site_mismatch":
+            return "Site ID does not match the server"
+        case let value where value.hasPrefix("replay:ok:"):
+            return "Events delivered successfully"
+        case let value where value.hasPrefix("replay:http:"):
+            return lastErrorMessage ?? "Server rejected the ingest request"
+        case "replay:error":
+            return lastErrorMessage ?? "Temporary delivery error"
+        case "replay:local_unavailable":
+            return lastErrorMessage ?? "Local network unavailable; probe is paused"
+        case let value where value.hasPrefix("replay:attempt:"):
+            return "Sending queued events"
+        default:
+            break
+        }
+    }
+
+    if let lastErrorMessage, !lastErrorMessage.isEmpty {
+        return lastErrorMessage
+    }
+
+    switch status {
+    case "healthy":
+        return "Ready to send"
+    case "probing":
+        return "Checking server health"
+    case "misconfigured":
+        return "Endpoint configuration needs attention"
+    case "server_unavailable":
+        return "Server unavailable; new events stay in SQLite"
+    case "local_unavailable":
+        return "Local network unavailable; server probe is paused"
+    case "checking_server":
+        return "Checking server before replay"
+    case "disabled":
+        return "Endpoint disabled"
+    default:
+        return "—"
     }
 }
 

@@ -71,6 +71,9 @@ class EndpointReporter : Closeable {
         if (!config.enabled || config.url.isBlank()) {
             return null
         }
+        if (config.workspaceId.isBlank() || config.siteId.isBlank() || config.apiKey.isBlank()) {
+            return "Endpoint missing workspace, site, or API key"
+        }
 
         return try {
             when (config.transport) {
@@ -133,7 +136,8 @@ class EndpointReporter : Closeable {
 
     private suspend fun postEvents(deviceId: String, events: List<PresenceEvent>) {
         val request = PresenceIngestRequest(
-            workspaceId = config.workspaceId.ifBlank { "default" },
+            workspaceId = config.workspaceId,
+            siteId = config.siteId,
             deviceId = deviceId,
             sessionId = sessionId,
             events = events

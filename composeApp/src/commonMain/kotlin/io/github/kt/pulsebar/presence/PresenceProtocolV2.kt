@@ -150,6 +150,7 @@ enum class PresenceStreamKind {
 data class PresenceIngestRequest(
     val protocol: String = PRESENCE_PROTOCOL_V2,
     val workspaceId: String,
+    val siteId: String,
     val deviceId: String,
     val sessionId: String,
     val events: List<PresenceEvent>
@@ -159,6 +160,7 @@ data class PresenceIngestRequest(
 data class PresenceIngestAck(
     val protocol: String = PRESENCE_ACK_PROTOCOL_V2,
     val workspaceId: String,
+    val siteId: String? = null,
     val deviceId: String,
     val acceptedSeqMax: Long,
     val dedupedEventIds: List<String> = emptyList(),

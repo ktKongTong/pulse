@@ -29,11 +29,13 @@ import kotlinx.serialization.json.put
 
 fun ActivityEnvelope.toPresenceIngestRequest(
     workspaceId: String,
+    siteId: String,
     deviceId: String,
     sessionId: String
 ): PresenceIngestRequest =
     PresenceIngestRequest(
         workspaceId = workspaceId,
+        siteId = siteId,
         deviceId = deviceId,
         sessionId = sessionId,
         events = listOf(toPresenceEvent(deviceId))

@@ -13,6 +13,7 @@ export type Env = Cloudflare.Env & {
   ASSETS: Fetcher;
   WORKSPACE_ID: string;
   SITE_ID: string;
+  DEVICE_API_KEY: string;
   ALLOWED_ORIGINS: string;
   ROOM_SESSION_TTL_SECONDS: string;
   WEB_HEARTBEAT_SECONDS: string;
@@ -27,6 +28,10 @@ function requiredEnvValue(env: Env, key: keyof Env): string {
     throw new Error(`Missing required environment variable: ${String(key)}`);
   }
   return value;
+}
+
+export function requiredDeviceApiKey(env: Env): string {
+  return requiredEnvValue(env, "DEVICE_API_KEY");
 }
 
 function requiredEnvNumber(env: Env, key: keyof Env): number {

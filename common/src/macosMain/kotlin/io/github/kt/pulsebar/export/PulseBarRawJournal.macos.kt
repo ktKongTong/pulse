@@ -17,7 +17,7 @@ private const val RAW_CHECKPOINTS_KEY = "pulsebar.rawJournal.checkpoints"
 private const val RAW_SEQUENCE_KEY = "pulsebar.rawJournal.sequence"
 private const val ROOM_RAW_JOURNAL_MIGRATION_KEY = "pulsebar.migration.room.raw-journal-v1"
 private const val ROOM_RAW_SEQUENCE_KEY = "raw_sequence"
-private const val ROOM_RAW_JOURNAL_MAX_ENTRIES = 2048L
+private const val ROOM_RAW_JOURNAL_MAX_ENTRIES = 10_000L
 
 internal data class RawJournalEntry(
     val protocol: String,
@@ -107,7 +107,7 @@ internal class PulseBarRawJournalStore {
         }
     }
 
-    fun nextReplayBatch(endpointKey: String, nowMillis: Long, maxEvents: Int = 32): List<RawJournalEntry> {
+    fun nextReplayBatch(endpointKey: String, nowMillis: Long, maxEvents: Int = 128): List<RawJournalEntry> {
         val entries = runBlocking {
             dao.pruneExpired(nowMillis - DEVICE_RAW_RETENTION_MS)
             dao.pruneOverflow(2048)

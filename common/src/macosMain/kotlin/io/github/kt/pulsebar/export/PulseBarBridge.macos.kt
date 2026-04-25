@@ -108,7 +108,9 @@ actual class PulseBarBridge actual constructor() {
         store.importLegacyFilesIfNeeded()
         store.migrateRoomUsageIfNeeded()
         reporter.migrateStorageIfNeeded()
-        interactionClient.updateConfig(store.readConfig())
+        val config = store.readConfig()
+        reporter.updateConfig(config)
+        interactionClient.updateConfig(config)
     }
 
     actual fun readMenuState(): PulseBarMenuState {
@@ -116,7 +118,10 @@ actual class PulseBarBridge actual constructor() {
         val snapshot = readSnapshot()
         interactionClient.reconcilePlayback(snapshot.media)
         updateUsage(snapshot)
-        reporter.sync(snapshot, store.readConfig())
+        val config = store.readConfig()
+        reporter.updateConfig(config)
+        reporter.capture(snapshot, config)
+        reporter.sync(config)
         val rows = store.topRowsForDay(todayKey(), 3)
         return PulseBarMenuState(
             snapshot = snapshot,
@@ -156,6 +161,7 @@ actual class PulseBarBridge actual constructor() {
 
     actual fun updateConfig(config: PulseBarConfig) {
         store.writeConfig(config)
+        reporter.updateConfig(config)
         reporter.resetIfDisabled(config)
         interactionClient.updateConfig(config)
     }

@@ -14,6 +14,7 @@ import {
 import {
   deviceSessionTtlMs,
   isAllowedOriginForRequest,
+  requiredDeviceApiKey,
   webSessionTtlMs,
   type Env,
 } from "./env";
@@ -35,7 +36,7 @@ app.use("*", async (c, next) => {
   if (isAllowedOriginForRequest(c.env, origin, c.req.url)) {
     c.header("Access-Control-Allow-Origin", origin!);
     c.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    c.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
+    c.header("Access-Control-Allow-Headers", "Content-Type,Authorization,X-PulseBar-Protocol");
   }
 });
 
@@ -143,9 +144,15 @@ app.get("/v1/meta", (c) =>
 
 app.post("/v2/presence/ingest", async (c) => {
   const logger = createWorkerLogger(c.env, "worker.index");
+  if (!isValidBearerToken(c.req.header("Authorization") ?? null, requiredDeviceApiKey(c.env))) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
   const payload = PresenceIngestRequestSchema.parse(await c.req.json());
   if (payload.workspaceId !== c.env.WORKSPACE_ID) {
     return c.json({ error: "workspace_mismatch" }, 403);
+  }
+  if (payload.siteId !== c.env.SITE_ID) {
+    return c.json({ error: "site_mismatch" }, 403);
   }
 
   const device = deviceStub(c.env, payload.workspaceId, payload.deviceId);
@@ -251,6 +258,11 @@ export { GlobalStatusRoom, PageStatusRoom, ChatRoom, InteractionHub, Interaction
 function deviceStub(env: Env, workspaceId: string, deviceId: string): DeviceRpc {
   const id = env.DEVICE_DO.idFromName(`${workspaceId}:${deviceId}`);
   return env.DEVICE_DO.get(id) as unknown as DeviceRpc;
+}
+
+function isValidBearerToken(header: string | null, expectedToken: string): boolean {
+  const match = header?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() === expectedToken;
 }
 
 // Stubs for non-refactored objects

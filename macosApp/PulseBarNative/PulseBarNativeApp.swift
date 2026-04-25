@@ -7,6 +7,7 @@ final class PulseBarNativeAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         monitor.start()
+        focusPulseBarDashboardWindow()
     }
 }
 

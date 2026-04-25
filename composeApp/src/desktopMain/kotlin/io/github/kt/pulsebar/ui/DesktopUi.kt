@@ -667,7 +667,13 @@ private fun EndpointTab(config: MonitorConfig, controller: AppController) {
             Spacer(Modifier.height(8.dp))
             ImmediateTextField("Workspace ID", config.endpoint.workspaceId) {
                 controller.updateConfig { current ->
-                    current.copy(endpoint = current.endpoint.copy(workspaceId = it.ifBlank { "default" }))
+                    current.copy(endpoint = current.endpoint.copy(workspaceId = it))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            ImmediateTextField("Site ID", config.endpoint.siteId) {
+                controller.updateConfig { current ->
+                    current.copy(endpoint = current.endpoint.copy(siteId = it))
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -700,7 +706,8 @@ private fun EndpointTab(config: MonitorConfig, controller: AppController) {
                     """
                     {
                       "protocol": "presence.v2",
-                      "workspaceId": "default",
+                      "workspaceId": "koft",
+                      "siteId": "pulse",
                       "deviceId": "macos-macbook-pro",
                       "sessionId": "f59831db-9d3d-4ec4-9101-f3a975ad8a4b",
                       "events": [

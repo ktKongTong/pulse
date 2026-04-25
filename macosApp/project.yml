@@ -14,7 +14,7 @@ settings:
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
     GENERATE_INFOPLIST_FILE: YES
-    INFOPLIST_KEY_LSUIElement: YES
+    INFOPLIST_KEY_LSUIElement: NO
     INFOPLIST_KEY_NSAppleEventsUsageDescription: PulseBar reads browser and Spotify metadata to show the current status in the menu bar.
     OTHER_LDFLAGS: "$(inherited) -lsqlite3"
 targets:

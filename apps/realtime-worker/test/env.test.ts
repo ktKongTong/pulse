@@ -13,6 +13,7 @@ function env(overrides: Partial<Env> = {}): Env {
   return {
     WORKSPACE_ID: "pulse-demo",
     SITE_ID: "blog-demo",
+    DEVICE_API_KEY: "device-secret",
     ALLOWED_ORIGINS: "https://pulse.ktlab.io,http://localhost:8900",
     ROOM_SESSION_TTL_SECONDS: "45",
     WEB_HEARTBEAT_SECONDS: "30",

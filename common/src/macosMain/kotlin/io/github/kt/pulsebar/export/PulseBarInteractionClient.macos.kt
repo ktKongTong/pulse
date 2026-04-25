@@ -61,7 +61,6 @@ internal class PulseBarInteractionClient(
         ignoreUnknownKeys = true
         explicitNulls = false
     }
-    private val workspaceId = "pulse-demo"
     private val deviceId = slugify("macos-${NSUserName()}")
     private var config: PulseBarConfig = store.readConfig()
     private var connectionJob: Job? = null
@@ -72,8 +71,8 @@ internal class PulseBarInteractionClient(
     private var latestMedia: PulseBarMedia? = null
 
     fun updateConfig(newConfig: PulseBarConfig) {
-        val previousEndpoint = config.primaryInteractionEndpoint()?.endpointUrl
-        val nextEndpoint = newConfig.primaryInteractionEndpoint()?.endpointUrl
+        val previousEndpoint = config.primaryInteractionEndpoint()?.interactionFingerprint()
+        val nextEndpoint = newConfig.primaryInteractionEndpoint()?.interactionFingerprint()
         config = newConfig
         if (!newConfig.allowWebInteractions || nextEndpoint == null) {
             connectionJob?.cancel()
@@ -89,7 +88,7 @@ internal class PulseBarInteractionClient(
         if (connectionJob?.isActive == true) return
         connectionJob = scope.launch {
             while (isActive) {
-                val endpoint = config.primaryInteractionEndpoint()?.let { resolvedInteractionWsUrl(it.endpointUrl) }
+                val endpoint = config.primaryInteractionEndpoint()?.let { resolvedInteractionWsUrl(it) }
                 if (endpoint == null || !config.allowWebInteractions) {
                     delay(2000)
                     continue
@@ -322,7 +321,7 @@ internal class PulseBarInteractionClient(
         buildJsonObject {
             put("protocol", "interaction.ws.v1")
             put("type", "hello")
-            put("workspaceId", workspaceId)
+            put("workspaceId", config.primaryInteractionEndpoint()?.workspaceId.orEmpty())
             put("deviceId", deviceId)
             putJsonArray("supportedProtocols") {
                 add(JsonPrimitive("interaction.ws.v1"))
@@ -335,18 +334,21 @@ internal class PulseBarInteractionClient(
             }
         }.toString()
 
-    private fun resolvedInteractionWsUrl(rawEndpoint: String): String? {
-        val base = resolvedEndpointBase(rawEndpoint) ?: return null
+    private fun resolvedInteractionWsUrl(endpoint: PulseBarEndpointConfig): String? {
+        val base = resolvedEndpointBase(endpoint.endpointUrl) ?: return null
         val scheme = if (base.startsWith("https://")) "wss://" else "ws://"
         val hostAndPath = base.removePrefix("https://").removePrefix("http://")
         val host = hostAndPath.substringBefore("/")
-        return "${scheme}${host}/api/v1/device-interactions/ws?workspaceId=$workspaceId&deviceId=$deviceId"
+        return "${scheme}${host}/api/v1/device-interactions/ws?workspaceId=${endpoint.workspaceId}&deviceId=$deviceId"
     }
 
     private fun PulseBarConfig.primaryInteractionEndpoint(): PulseBarEndpointConfig? =
         endpoints.firstOrNull { endpoint ->
-            endpoint.enabled && resolvedInteractionWsUrl(endpoint.endpointUrl) != null
+            endpoint.enabled && endpoint.workspaceId.isNotBlank() && resolvedInteractionWsUrl(endpoint) != null
         }
+
+    private fun PulseBarEndpointConfig.interactionFingerprint(): String =
+        "${endpointUrl}::${workspaceId}::${apiKey}"
 
     private suspend fun queueOrPlayLocally(
         requestId: String,

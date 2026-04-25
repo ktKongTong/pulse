@@ -171,6 +171,8 @@ struct EndpointSettingsDraft: Identifiable, Equatable {
     var enabled: Bool
     var transport: TransportOption
     var endpointUrl: String
+    var workspaceId: String
+    var siteId: String
     var apiKey: String
     var batchWindowSeconds: Int
 
@@ -181,6 +183,8 @@ struct EndpointSettingsDraft: Identifiable, Equatable {
             enabled: false,
             transport: .websocket,
             endpointUrl: "",
+            workspaceId: "",
+            siteId: "",
             apiKey: "",
             batchWindowSeconds: 15
         )

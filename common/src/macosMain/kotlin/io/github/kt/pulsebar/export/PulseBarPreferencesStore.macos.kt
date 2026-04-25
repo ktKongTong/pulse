@@ -21,6 +21,8 @@ private const val LEGACY_ENDPOINT_NAME_KEY = "pulsebar.config.endpoint.name"
 private const val LEGACY_ENDPOINT_TRANSPORT_KEY = "pulsebar.config.endpoint.transport"
 private const val LEGACY_ENDPOINT_URL_KEY = "pulsebar.config.endpoint.url"
 private const val LEGACY_ENDPOINT_API_KEY = "pulsebar.config.endpoint.apiKey"
+private const val LEGACY_ENDPOINT_WORKSPACE_ID_KEY = "pulsebar.config.endpoint.workspaceId"
+private const val LEGACY_ENDPOINT_SITE_ID_KEY = "pulsebar.config.endpoint.siteId"
 private const val LEGACY_ENDPOINT_BATCH_WINDOW_KEY = "pulsebar.config.endpoint.batchWindowSeconds"
 private const val DEFAULT_ENDPOINT_ID = "default-endpoint"
 private const val DEFAULT_ENDPOINT_NAME = "Primary endpoint"
@@ -311,6 +313,8 @@ internal class PulseBarPreferencesStore {
         defaults.setObject(primary.name, LEGACY_ENDPOINT_NAME_KEY)
         defaults.setObject(primary.transportName, LEGACY_ENDPOINT_TRANSPORT_KEY)
         defaults.setObject(primary.endpointUrl, LEGACY_ENDPOINT_URL_KEY)
+        defaults.setObject(primary.workspaceId, LEGACY_ENDPOINT_WORKSPACE_ID_KEY)
+        defaults.setObject(primary.siteId, LEGACY_ENDPOINT_SITE_ID_KEY)
         defaults.setObject(primary.apiKey, LEGACY_ENDPOINT_API_KEY)
         defaults.setInteger(primary.batchWindowSeconds.toLong(), LEGACY_ENDPOINT_BATCH_WINDOW_KEY)
     }
@@ -326,6 +330,8 @@ internal class PulseBarPreferencesStore {
             transport = transportFromName(transportName),
             transportName = transportName,
             endpointUrl = endpointUrl,
+            workspaceId = defaults.stringForKey(LEGACY_ENDPOINT_WORKSPACE_ID_KEY) ?: "",
+            siteId = defaults.stringForKey(LEGACY_ENDPOINT_SITE_ID_KEY) ?: "",
             apiKey = defaults.stringForKey(LEGACY_ENDPOINT_API_KEY) ?: "",
             batchWindowSeconds = intForKey(LEGACY_ENDPOINT_BATCH_WINDOW_KEY, 15)
         )
@@ -342,6 +348,8 @@ internal class PulseBarPreferencesStore {
             transport = PulseBarTransport.WEBSOCKET,
             transportName = PulseBarTransport.WEBSOCKET.name,
             endpointUrl = "",
+            workspaceId = "",
+            siteId = "",
             apiKey = "",
             batchWindowSeconds = 15
         )
@@ -368,6 +376,8 @@ internal class PulseBarPreferencesStore {
                 transport = transportFromName(endpoint.transportName),
                 transportName = endpoint.transportName.ifBlank { PulseBarTransport.WEBSOCKET.name },
                 endpointUrl = endpoint.endpointUrl.trim(),
+                workspaceId = endpoint.workspaceId.trim(),
+                siteId = endpoint.siteId.trim(),
                 apiKey = endpoint.apiKey,
                 batchWindowSeconds = endpoint.batchWindowSeconds.coerceAtLeast(1)
             )
@@ -405,6 +415,8 @@ internal class PulseBarPreferencesStore {
             put("enabled", enabled)
             put("transport", transportName)
             put("url", endpointUrl)
+            put("workspaceId", workspaceId)
+            put("siteId", siteId)
             put("apiKey", apiKey)
             put("batchWindowSeconds", batchWindowSeconds)
         }
@@ -418,6 +430,8 @@ internal class PulseBarPreferencesStore {
             transport = transportFromName(transportName),
             transportName = transportName,
             endpointUrl = this["url"]?.jsonPrimitive?.content.orEmpty(),
+            workspaceId = this["workspaceId"]?.jsonPrimitive?.content.orEmpty(),
+            siteId = this["siteId"]?.jsonPrimitive?.content.orEmpty(),
             apiKey = this["apiKey"]?.jsonPrimitive?.content.orEmpty(),
             batchWindowSeconds = this["batchWindowSeconds"]?.jsonPrimitive?.content?.toIntOrNull() ?: 15
         )

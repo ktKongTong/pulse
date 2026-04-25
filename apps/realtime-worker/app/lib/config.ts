@@ -7,8 +7,6 @@ function requiredViteEnv(key: keyof ImportMetaEnv): string {
 }
 
 export const REALTIME_BASE_URL = requiredViteEnv("VITE_REALTIME_BASE_URL");
-export const BRANDFETCH_CLIENT_ID = requiredViteEnv("VITE_BRANDFETCH_CLIENT_ID");
-
 export const WORKSPACE_ID = requiredViteEnv("VITE_WORKSPACE_ID");
 export const SITE_ID = requiredViteEnv("VITE_SITE_ID");
 export const READING_HEARTBEAT_MS = 30_000;

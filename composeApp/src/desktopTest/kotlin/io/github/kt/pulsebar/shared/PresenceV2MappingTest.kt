@@ -59,12 +59,14 @@ class PresenceV2MappingTest {
 
         val request = envelope.toPresenceIngestRequest(
             workspaceId = "workspace-a",
+            siteId = "site-a",
             deviceId = "macos-kt-macbook",
             sessionId = "session-a"
         )
 
         assertEquals(PRESENCE_PROTOCOL_V2, request.protocol)
         assertEquals("workspace-a", request.workspaceId)
+        assertEquals("site-a", request.siteId)
         assertEquals("macos-kt-macbook", request.deviceId)
         assertEquals("session-a", request.sessionId)
         assertEquals(1, request.events.size)

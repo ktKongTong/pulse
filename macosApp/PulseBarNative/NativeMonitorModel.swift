@@ -321,6 +321,8 @@ final class NativeMonitorModel: ObservableObject {
         enabled: Bool,
         transport: TransportOption,
         endpointURL: String,
+        workspaceId: String,
+        siteId: String,
         apiKey: String,
         batchWindowSeconds: Int
     ) -> EndpointSettingsDraft {
@@ -330,6 +332,8 @@ final class NativeMonitorModel: ObservableObject {
             enabled: enabled,
             transport: transport,
             endpointUrl: endpointURL,
+            workspaceId: workspaceId,
+            siteId: siteId,
             apiKey: apiKey,
             batchWindowSeconds: max(batchWindowSeconds, 1)
         )
@@ -671,6 +675,8 @@ final class NativeMonitorModel: ObservableObject {
                         enabled: io_github_kt_pulsebar_export_PulseBarEndpointConfig_enabled_get(endpointRef),
                         transport: mapTransportName(io_github_kt_pulsebar_export_PulseBarEndpointConfig_transportName_get(endpointRef)),
                         endpointURL: io_github_kt_pulsebar_export_PulseBarEndpointConfig_endpointUrl_get(endpointRef),
+                        workspaceId: io_github_kt_pulsebar_export_PulseBarEndpointConfig_workspaceId_get(endpointRef),
+                        siteId: io_github_kt_pulsebar_export_PulseBarEndpointConfig_siteId_get(endpointRef),
                         apiKey: io_github_kt_pulsebar_export_PulseBarEndpointConfig_apiKey_get(endpointRef),
                         batchWindowSeconds: Int(io_github_kt_pulsebar_export_PulseBarEndpointConfig_batchWindowSeconds_get(endpointRef))
                     )
@@ -700,6 +706,8 @@ final class NativeMonitorModel: ObservableObject {
                 transport: mapTransport(endpoint.transport),
                 transportName: endpoint.transport.rawValue,
                 endpointUrl: endpoint.endpointUrl,
+                workspaceId: endpoint.workspaceId,
+                siteId: endpoint.siteId,
                 apiKey: endpoint.apiKey,
                 batchWindowSeconds: Int32(endpoint.batchWindowSeconds)
             )

@@ -43,7 +43,7 @@ export abstract class BaseRoom<
     this.flushIntervalMs = aggregateFlushMs(env);
 
     this.ctx.blockConcurrencyWhile(async () => {
-      await migrate(this.db, { migrations });
+      migrate(this.db, { migrations });
       const stored = await this.ctx.storage.get<{ w: string; r: string }>("meta");
       if (stored) {
         this.workspaceId = stored.w;
@@ -142,7 +142,7 @@ export abstract class BaseRoom<
   }
 
   protected async broadcastCurrentSnapshot() {
-    const snapshot = await this.buildRoomSnapshot();
+    const snapshot = this.buildRoomSnapshot();
     this.logger.debug("broadcast snapshot begin", {
       workspaceId: this.workspaceId,
       roomId: this.roomId,

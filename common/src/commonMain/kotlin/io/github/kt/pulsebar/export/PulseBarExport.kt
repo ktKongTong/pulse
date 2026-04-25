@@ -36,6 +36,8 @@ class PulseBarEndpointConfig(
     val transport: PulseBarTransport,
     val transportName: String,
     val endpointUrl: String,
+    val workspaceId: String,
+    val siteId: String,
     val apiKey: String,
     val batchWindowSeconds: Int
 )

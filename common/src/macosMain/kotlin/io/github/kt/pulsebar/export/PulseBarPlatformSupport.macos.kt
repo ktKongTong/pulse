@@ -60,6 +60,15 @@ internal fun resolvedEndpointIngestUrl(rawEndpoint: String): String {
     }
 }
 
+internal fun resolvedEndpointProbeUrl(resolvedIngestUrl: String): String =
+    when {
+        resolvedIngestUrl.endsWith("/api/v2/presence/ingest") ->
+            resolvedIngestUrl.replace("/api/v2/presence/ingest", "/api/v1/meta")
+        resolvedIngestUrl.endsWith("/v2/presence/ingest") ->
+            resolvedIngestUrl.replace("/v2/presence/ingest", "/v1/meta")
+        else -> resolvedIngestUrl
+    }
+
 internal fun nativeCurrentTimeMillis(): Long =
     (NSDate().timeIntervalSinceReferenceDate * 1000.0).toLong()
 

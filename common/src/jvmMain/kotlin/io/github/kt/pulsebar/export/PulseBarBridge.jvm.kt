@@ -19,6 +19,8 @@ actual class PulseBarBridge actual constructor() {
                     transport = PulseBarTransport.WEBSOCKET,
                     transportName = PulseBarTransport.WEBSOCKET.name,
                     endpointUrl = "",
+                    workspaceId = "",
+                    siteId = "",
                     apiKey = "",
                     batchWindowSeconds = 15
                 )
