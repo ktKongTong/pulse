@@ -37,3 +37,5 @@ worker-configuration.d.ts
 .wrangler
 .react-router
 .konan-local
+.env
+.env.*
