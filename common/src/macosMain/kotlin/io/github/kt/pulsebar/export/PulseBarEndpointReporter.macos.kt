@@ -15,8 +15,14 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.experimental.ExperimentalNativeApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -25,13 +31,21 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlin.native.Platform
+import platform.Foundation.NSHomeDirectory
+import platform.Foundation.NSLog
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUserName
+import platform.posix.fclose
+import platform.posix.fopen
+import platform.posix.fprintf
+import platform.posix.mkdir
 
-@OptIn(ExperimentalForeignApi::class)
+@OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
 internal class PulseBarEndpointReporter {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val client = HttpClient(Darwin) {
@@ -43,28 +57,57 @@ internal class PulseBarEndpointReporter {
         encodeDefaults = true
         explicitNulls = false
     }
-    private val workspaceId = "pulse-demo"
-    private val healthyProbeIntervalMillis = 30_000L
-    private val unhealthyProbeIntervalMillis = 5_000L
+    private val replayIntervalMillis = 30_000L
+    private val probeIntervalMillis = 4_000L
     private val sessionId = randomId()
     private val deviceId = slugify("macos-${NSUserName()}")
     private val rawJournal = PulseBarRawJournalStore()
     private val defaults = NSUserDefaults.standardUserDefaults
+    private val replayEvents = Channel<String>(capacity = Channel.UNLIMITED)
     private val replayMutexes = mutableMapOf<String, Mutex>()
-    private val probeMutexes = mutableMapOf<String, Mutex>()
-    private val lastProbeIssuedAtMillis = mutableMapOf<String, Long>()
     private val lastReplayIssuedAtMillis = mutableMapOf<String, Long>()
+    private val lastReplaySkipLogAtMillis = mutableMapOf<String, Long>()
+    private val configurationBlocks = mutableMapOf<String, String>()
     private val syncStates = mutableMapOf<String, EndpointSyncSnapshot>()
+    private var probeEndpoints: List<ReporterEndpoint> = emptyList()
     private var lastSignature: String? = null
     private var lastPublishedAtMillis: Long? = null
     private var lastMediaState: MediaReporterState? = null
     private var lastEndpointFingerprints: Set<String> = emptySet()
 
+    init {
+        writeHttpLog("logger initialized")
+        startProbeLoop()
+        startReplayLoop()
+    }
+
     fun migrateStorageIfNeeded() {
         rawJournal.migrateToRoomIfNeeded()
     }
 
-    fun sync(snapshot: PulseBarSnapshot, config: PulseBarConfig) {
+    fun updateConfig(config: PulseBarConfig) {
+        pruneRuntimeState(config.endpoints.map { it.id }.toSet())
+        val enabledEndpoints = config.enabledReporterEndpoints()
+        probeEndpoints = enabledEndpoints
+        enabledEndpoints.forEach { endpoint ->
+            if (!endpoint.isConfigured()) {
+                markConfigurationBlocked(endpoint)
+                syncStates[endpoint.id] = EndpointSyncSnapshot(
+                    status = "misconfigured",
+                    serverStatus = "unknown",
+                    clientStatus = "unavailable",
+                    lastStatus = "skip:missing_workspace_site_or_api_key",
+                    lastErrorMessage = "Workspace ID, Site ID, and API Key are required"
+                )
+            } else if (isConfigurationBlocked(endpoint)) {
+                syncStates[endpoint.id] = stateFor(endpoint.id).copy(status = "misconfigured", clientStatus = "unavailable")
+            } else {
+                recoverConfigurationState(endpoint)
+            }
+        }
+    }
+
+    fun capture(snapshot: PulseBarSnapshot, config: PulseBarConfig) {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
         val enabledEndpoints = config.enabledReporterEndpoints()
         if (enabledEndpoints.isEmpty()) {
@@ -74,6 +117,8 @@ internal class PulseBarEndpointReporter {
             config.endpoints.forEach { endpoint ->
                 syncStates[endpoint.id] = EndpointSyncSnapshot(
                     status = "disabled",
+                    serverStatus = "unknown",
+                    clientStatus = "unknown",
                     lastStatus = "skip:endpoint_disabled",
                     lastErrorMessage = null
                 )
@@ -82,8 +127,21 @@ internal class PulseBarEndpointReporter {
         }
 
         enabledEndpoints.forEach { endpoint ->
-            scheduleHealthProbe(endpoint, force = false)
-            maybeReplayPending(endpoint, force = false)
+            if (!endpoint.isConfigured()) {
+                markConfigurationBlocked(endpoint)
+                syncStates[endpoint.id] = EndpointSyncSnapshot(
+                    status = "misconfigured",
+                    serverStatus = "unknown",
+                    clientStatus = "unavailable",
+                    lastStatus = "skip:missing_workspace_site_or_api_key",
+                    lastErrorMessage = "Workspace ID, Site ID, and API Key are required"
+                )
+                return@forEach
+            }
+            if (isConfigurationBlocked(endpoint)) {
+                syncStates[endpoint.id] = stateFor(endpoint.id).copy(status = "misconfigured", clientStatus = "unavailable")
+                return@forEach
+            }
         }
 
         val signature = buildString {
@@ -117,54 +175,78 @@ internal class PulseBarEndpointReporter {
         }
 
         val eventKind = if (shouldSendSnapshot) "snapshot" else "heartbeat"
-        enabledEndpoints.forEach { endpoint ->
+        enabledEndpoints.filter { it.isConfigured() && !isConfigurationBlocked(it) }.forEach { endpoint ->
             enqueue(
                 endpoint = endpoint,
-                entry = buildJournalEntry(endpoint.id, snapshot, eventKind)
+                entry = buildJournalEntry(endpoint, snapshot, eventKind)
             )
         }
         rememberPublishedSnapshot(snapshot, signature, nowMillis)
         lastEndpointFingerprints = endpointFingerprints
     }
 
-    fun forceSync(snapshot: PulseBarSnapshot, config: PulseBarConfig) {
+    fun sync(config: PulseBarConfig, forceReplay: Boolean = false) {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
         val enabledEndpoints = config.enabledReporterEndpoints()
         if (enabledEndpoints.isEmpty()) return
-
-        val signature = buildString {
-            append(snapshot.bundleId)
-            append("::")
-            append(snapshot.pageTitle ?: "")
-            append("::")
-            append(snapshot.media?.trackId ?: snapshot.media?.title ?: "")
-            append("::")
-            append(snapshot.media?.isPlaying ?: false)
-        }
-        val nowMillis = nativeCurrentTimeMillis()
         enabledEndpoints.forEach { endpoint ->
-            scheduleHealthProbe(endpoint, force = true)
-            maybeReplayPending(endpoint, force = true)
-            enqueue(
-                endpoint = endpoint,
-                entry = buildJournalEntry(endpoint.id, snapshot, "snapshot")
-            )
+            if (!endpoint.isConfigured()) {
+                markConfigurationBlocked(endpoint)
+                syncStates[endpoint.id] = EndpointSyncSnapshot(
+                    status = "misconfigured",
+                    serverStatus = "unknown",
+                    clientStatus = "unavailable",
+                    lastStatus = "skip:missing_workspace_site_or_api_key",
+                    lastErrorMessage = "Workspace ID, Site ID, and API Key are required"
+                )
+                return@forEach
+            }
+            if (isConfigurationBlocked(endpoint)) {
+                syncStates[endpoint.id] = stateFor(endpoint.id).copy(status = "misconfigured", clientStatus = "unavailable")
+                return@forEach
+            }
+            maybeReplayPending(endpoint, force = forceReplay)
         }
-        rememberPublishedSnapshot(snapshot, signature, nowMillis)
-        lastEndpointFingerprints = enabledEndpoints.map(ReporterEndpoint::runtimeFingerprint).toSet()
+    }
+
+    fun forceSync(snapshot: PulseBarSnapshot, config: PulseBarConfig) {
+        capture(snapshot, config)
+        sync(config, forceReplay = true)
     }
 
     fun readSyncState(config: PulseBarConfig): PulseBarSyncState {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
+        config.enabledReporterEndpoints().forEach { endpoint ->
+            drainPendingForRead(endpoint)
+        }
         val endpointStates = config.endpoints.map { endpoint ->
+            val reporterEndpoint = ReporterEndpoint(
+                id = endpoint.id,
+                name = endpoint.name,
+                transportName = endpoint.transportName,
+                endpointUrl = endpoint.endpointUrl,
+                workspaceId = endpoint.workspaceId,
+                siteId = endpoint.siteId,
+                apiKey = endpoint.apiKey
+            )
             val runtimeState = stateFor(endpoint.id)
             val pendingCount = rawJournal.pendingCount(endpoint.id)
             val checkpoint = rawJournal.readCheckpoint(endpoint.id)
-            val status = when {
-                !endpoint.enabled -> "disabled"
-                runtimeState.status == "disabled" -> "idle"
-                else -> runtimeState.status
+            val serverStatus = when {
+                !endpoint.enabled -> "unknown"
+                else -> runtimeState.serverStatus
             }
+            val clientStatus = when {
+                !endpoint.enabled -> "unknown"
+                !reporterEndpoint.isConfigured() -> "unavailable"
+                isConfigurationBlocked(reporterEndpoint) -> "unavailable"
+                else -> runtimeState.clientStatus
+            }
+            val status = combinedStatus(
+                enabled = endpoint.enabled,
+                serverStatus = serverStatus,
+                clientStatus = clientStatus
+            )
             PulseBarEndpointSyncState(
                 id = endpoint.id,
                 name = endpoint.name,
@@ -175,8 +257,8 @@ internal class PulseBarEndpointReporter {
                 lastStatus = runtimeState.lastStatus,
                 pendingCount = pendingCount,
                 needsAttention = endpoint.enabled && (
-                    status == "degraded" ||
-                        status == "misconfigured" ||
+                    serverStatus == "unavailable" ||
+                        clientStatus == "unavailable" ||
                         pendingCount > 0
                     ),
                 lastAttemptAtIso8601 = runtimeState.lastAttemptAtIso8601,
@@ -189,11 +271,17 @@ internal class PulseBarEndpointReporter {
             )
         }
         val enabledStates = endpointStates.filter { it.enabled }
+        val aggregateServerStatus = aggregateServerStatusFromCombined(enabledStates)
+        val aggregateClientStatus = aggregateClientStatusFromCombined(enabledStates)
         return PulseBarSyncState(
             enabled = enabledStates.isNotEmpty(),
             enabledEndpointCount = enabledStates.size,
             totalEndpointCount = endpointStates.size,
-            status = aggregateStatus(endpointStates),
+            status = combinedStatus(
+                enabled = enabledStates.isNotEmpty(),
+                serverStatus = aggregateServerStatus,
+                clientStatus = aggregateClientStatus
+            ),
             lastStatus = enabledStates.firstOrNull { it.needsAttention }?.lastStatus
                 ?: enabledStates.firstOrNull { it.lastStatus != null }?.lastStatus,
             pendingCount = endpointStates.sumOf { it.pendingCount },
@@ -228,11 +316,13 @@ internal class PulseBarEndpointReporter {
         }
         config.endpoints.forEach { endpoint ->
             if (!endpoint.enabled) {
+                clearConfigurationBlocked(endpoint.id)
                 syncStates[endpoint.id] = EndpointSyncSnapshot(
                     status = "disabled",
+                    serverStatus = "unknown",
+                    clientStatus = "unknown",
                     lastStatus = "skip:endpoint_disabled"
                 )
-                lastProbeIssuedAtMillis.remove(endpoint.id)
                 lastReplayIssuedAtMillis.remove(endpoint.id)
             }
         }
@@ -251,6 +341,25 @@ internal class PulseBarEndpointReporter {
         }
     }
 
+    private fun recoverConfigurationState(endpoint: ReporterEndpoint) {
+        val current = stateFor(endpoint.id)
+        if (!current.isConfigurationError() && current.lastStatus != "skip:missing_workspace_site_or_api_key") {
+            return
+        }
+        val serverStatus = current.serverStatus.takeUnless { it == "checking" } ?: "unknown"
+        syncStates[endpoint.id] = current.copy(
+            status = combinedStatus(
+                enabled = true,
+                serverStatus = serverStatus,
+                clientStatus = "available"
+            ),
+            serverStatus = serverStatus,
+            clientStatus = "available",
+            lastStatus = null,
+            lastErrorMessage = null
+        )
+    }
+
     private fun hasSignificantMediaJump(snapshot: PulseBarSnapshot, nowMillis: Long): Boolean {
         val media = snapshot.media ?: return false
         val previous = lastMediaState ?: return false
@@ -266,7 +375,7 @@ internal class PulseBarEndpointReporter {
         return kotlin.math.abs(media.progressSeconds - expectedProgress) >= 2.0
     }
 
-    private fun buildJournalEntry(endpointKey: String, snapshot: PulseBarSnapshot, eventKind: String): RawJournalEntry {
+    private fun buildJournalEntry(endpoint: ReporterEndpoint, snapshot: PulseBarSnapshot, eventKind: String): RawJournalEntry {
         val sequence = rawJournal.nextSequence()
         val event = buildJsonObject {
             put("eventId", "$deviceId:$sequence")
@@ -311,8 +420,8 @@ internal class PulseBarEndpointReporter {
         }
         return RawJournalEntry(
             protocol = "presence.v2",
-            endpointKey = endpointKey,
-            workspaceId = workspaceId,
+            endpointKey = endpoint.id,
+            workspaceId = endpoint.workspaceId,
             deviceId = deviceId,
             sessionId = sessionId,
             eventId = event["eventId"]?.jsonPrimitive?.content ?: "$deviceId:$sequence",
@@ -380,91 +489,69 @@ internal class PulseBarEndpointReporter {
     }
 
     private fun enqueue(endpoint: ReporterEndpoint, entry: RawJournalEntry) {
+        if (isConfigurationBlocked(endpoint)) return
         rawJournal.append(entry)
-        maybeReplayPending(endpoint, force = true)
+        requestReplay(endpoint.id, reason = "enqueue")
     }
 
-    private fun scheduleHealthProbe(endpoint: ReporterEndpoint, force: Boolean) {
-        val nowMillis = nativeCurrentTimeMillis()
-        val currentState = stateFor(endpoint.id)
-        val intervalMillis = if (currentState.status == "healthy") healthyProbeIntervalMillis else unhealthyProbeIntervalMillis
-        if (!force) {
-            val lastIssuedAt = lastProbeIssuedAtMillis[endpoint.id]
-            if (lastIssuedAt != null && nowMillis - lastIssuedAt < intervalMillis) return
-        }
-        lastProbeIssuedAtMillis[endpoint.id] = nowMillis
-        val probeAtIso8601 = nativeIso8601Now()
-        scope.launch {
-            val probeMutex = probeMutexes.getOrPut(endpoint.id) { Mutex() }
-            if (!probeMutex.tryLock()) return@launch
-            try {
-                syncStates[endpoint.id] = stateFor(endpoint.id).copy(
-                    status = if (stateFor(endpoint.id).status == "healthy") "healthy" else "probing",
-                    lastAttemptAtIso8601 = probeAtIso8601,
-                    lastProbeAtIso8601 = probeAtIso8601,
-                    lastStatus = "probe:started"
-                )
-                val statusCode = runCatching {
-                    client.get {
-                        url(resolvedProbeUrl(endpoint.resolvedUrl))
-                        if (endpoint.apiKey.isNotBlank()) {
-                            header("Authorization", "Bearer ${endpoint.apiKey}")
-                        }
-                    }.status.value
-                }.getOrElse { error ->
-                    writeDebugStatus(endpoint.id, "probe:error:${error.message ?: error::class.simpleName ?: "unknown"}")
-                    syncStates[endpoint.id] = stateFor(endpoint.id).copy(
-                        status = "degraded",
-                        lastStatus = "probe:error",
-                        lastFailureAtIso8601 = probeAtIso8601,
-                        lastErrorMessage = error.message ?: error::class.simpleName ?: "unknown"
-                    )
-                    null
-                }
-
-                if (statusCode == null) return@launch
-
-                if (statusCode in 200..299) {
-                    writeDebugStatus(endpoint.id, "probe:ok:$statusCode")
-                    syncStates[endpoint.id] = stateFor(endpoint.id).copy(
-                        status = "healthy",
-                        lastStatus = "probe:ok:$statusCode",
-                        lastSuccessAtIso8601 = probeAtIso8601,
-                        lastErrorMessage = null
-                    )
-                    replayPending(endpoint)
-                } else {
-                    writeDebugStatus(endpoint.id, "probe:http:$statusCode")
-                    syncStates[endpoint.id] = stateFor(endpoint.id).copy(
-                        status = "degraded",
-                        lastStatus = "probe:http:$statusCode",
-                        lastFailureAtIso8601 = probeAtIso8601,
-                        lastErrorMessage = "Health probe returned HTTP $statusCode"
-                    )
-                }
-            } finally {
-                probeMutex.unlock()
+    private fun buildReplayBody(endpoint: ReporterEndpoint, entries: List<RawJournalEntry>): JsonObject {
+        val first = entries.first()
+        return buildJsonObject {
+            put("protocol", "presence.v2")
+            put("workspaceId", endpoint.workspaceId)
+            if (endpoint.siteId.isNotBlank()) {
+                put("siteId", endpoint.siteId)
+            }
+            put("deviceId", first.deviceId)
+            put("sessionId", first.sessionId)
+            putJsonArray("events") {
+                entries.forEach { add(it.event) }
             }
         }
     }
 
     private fun replayPending(endpoint: ReporterEndpoint) {
         scope.launch {
-            val replayMutex = replayMutexes.getOrPut(endpoint.id) { Mutex() }
-            if (!replayMutex.tryLock()) return@launch
-            try {
+            drainPending(endpoint)
+        }
+    }
+
+    private fun drainPendingForRead(endpoint: ReporterEndpoint) {
+        if (stateFor(endpoint.id).serverStatus == "available") {
+            runBlocking { drainPending(endpoint) }
+        }
+    }
+
+    private suspend fun drainPending(endpoint: ReporterEndpoint) {
+        val replayMutex = replayMutexes.getOrPut(endpoint.id) { Mutex() }
+        replayMutex.withLock {
                 rawJournal.prune(nativeCurrentTimeMillis())
                 while (true) {
+                    val currentState = stateFor(endpoint.id)
+                    if (currentState.serverStatus != "available") {
+                        logReplaySkip(
+                            endpoint = endpoint,
+                            reason = "replay_loop_server_not_available status=${currentState.status} serverStatus=${currentState.serverStatus} clientStatus=${currentState.clientStatus}"
+                        )
+                        break
+                    }
                     val batch = rawJournal.nextReplayBatch(endpoint.id, nativeCurrentTimeMillis())
                     if (batch.isEmpty()) break
-                    val body = buildReplayBody(batch)
+                    val body = buildReplayBody(endpoint, batch)
                     val bodyText = json.encodeToString(JsonObject.serializer(), body)
                     val attemptAtIso8601 = nativeIso8601Now()
                     syncStates[endpoint.id] = stateFor(endpoint.id).copy(
                         lastAttemptAtIso8601 = attemptAtIso8601,
                         lastStatus = "replay:attempt:${batch.size}"
                     )
-                    val ackSeq = runCatching {
+                    logHttpRequest(
+                        kind = "ingest",
+                        endpoint = endpoint,
+                        method = "POST",
+                        url = endpoint.resolvedUrl,
+                        detail = "events=${batch.size} seq=${batch.first().seq}..${batch.last().seq} bytes=${bodyText.length}"
+                    )
+                    val result = runCatching {
                         val response = client.post {
                             url(endpoint.resolvedUrl)
                             contentType(ContentType.Application.Json)
@@ -475,73 +562,260 @@ internal class PulseBarEndpointReporter {
                             setBody(TextContent(bodyText, ContentType.Application.Json))
                         }
                         val responseText = response.bodyAsText()
-                        json.parseToJsonElement(responseText)
-                            .jsonObject["acceptedSeqMax"]
-                            ?.jsonPrimitive
-                            ?.content
-                            ?.toLongOrNull()
+                        logHttpResult(
+                            kind = "ingest",
+                            endpoint = endpoint,
+                            statusCode = response.status.value,
+                            detail = responseText.take(400)
+                        )
+                        IngestAttemptResult(
+                            statusCode = response.status.value,
+                            errorCode = responseText.toJsonObjectOrNull()
+                                ?.get("error")
+                                ?.jsonPrimitive
+                                ?.contentOrNull,
+                            acceptedSeqMax = responseText.toJsonObjectOrNull()
+                                ?.get("acceptedSeqMax")
+                                ?.jsonPrimitive
+                                ?.content
+                                ?.toLongOrNull()
+                        )
                     }.getOrElse { error ->
+                        logHttpError("ingest", endpoint, error)
                         writeDebugStatus(endpoint.id, "error:${error::class.simpleName}:${error.message ?: "unknown"}")
                         defaults.setObject(bodyText, debugBodyKey(endpoint.id))
                         defaults.synchronize()
-                        syncStates[endpoint.id] = stateFor(endpoint.id).copy(
-                            status = "degraded",
-                            lastStatus = "replay:error",
-                            lastFailureAtIso8601 = attemptAtIso8601,
-                            lastErrorMessage = error.message ?: error::class.simpleName ?: "unknown"
-                        )
+                        recordTransportFailure(endpoint, attemptAtIso8601, error)
                         null
                     }
-                    if (ackSeq == null) break
+                    if (result == null) break
+                    when {
+                        result.statusCode in 200..299 && result.acceptedSeqMax != null -> {
+                            clearConfigurationBlocked(endpoint.id)
+                        }
+                        result.statusCode == 401 -> {
+                            writeDebugStatus(endpoint.id, "replay:unauthorized")
+                            markConfigurationBlocked(endpoint)
+                            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                                status = "configuration_error",
+                                serverStatus = "available",
+                                clientStatus = "unavailable",
+                                lastStatus = "replay:unauthorized",
+                                lastFailureAtIso8601 = attemptAtIso8601,
+                                lastErrorMessage = "API Key is invalid"
+                            )
+                            break
+                        }
+                        result.statusCode == 403 && result.errorCode == "workspace_mismatch" -> {
+                            writeDebugStatus(endpoint.id, "replay:workspace_mismatch")
+                            markConfigurationBlocked(endpoint)
+                            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                                status = "configuration_error",
+                                serverStatus = "available",
+                                clientStatus = "unavailable",
+                                lastStatus = "replay:workspace_mismatch",
+                                lastFailureAtIso8601 = attemptAtIso8601,
+                                lastErrorMessage = "Workspace ID does not match the server"
+                            )
+                            break
+                        }
+                        result.statusCode == 403 && result.errorCode == "site_mismatch" -> {
+                            writeDebugStatus(endpoint.id, "replay:site_mismatch")
+                            markConfigurationBlocked(endpoint)
+                            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                                status = "configuration_error",
+                                serverStatus = "available",
+                                clientStatus = "unavailable",
+                                lastStatus = "replay:site_mismatch",
+                                lastFailureAtIso8601 = attemptAtIso8601,
+                                lastErrorMessage = "Site ID does not match the server"
+                            )
+                            break
+                        }
+                        result.statusCode == 403 -> {
+                            writeDebugStatus(endpoint.id, "replay:forbidden")
+                            markConfigurationBlocked(endpoint)
+                            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                                status = "configuration_error",
+                                serverStatus = "available",
+                                clientStatus = "unavailable",
+                                lastStatus = "replay:forbidden",
+                                lastFailureAtIso8601 = attemptAtIso8601,
+                                lastErrorMessage = "Server rejected this endpoint configuration"
+                            )
+                            break
+                        }
+                        result.statusCode in 500..599 -> {
+                            writeDebugStatus(endpoint.id, "replay:http:${result.statusCode}")
+                            recordServerFailure(
+                                endpoint = endpoint,
+                                attemptAtIso8601 = attemptAtIso8601,
+                                reason = "Server returned HTTP ${result.statusCode}"
+                            )
+                            break
+                        }
+                        else -> {
+                            writeDebugStatus(endpoint.id, "replay:http:${result.statusCode}")
+                            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                                status = "degraded",
+                                serverStatus = "unavailable",
+                                lastStatus = "replay:http:${result.statusCode}",
+                                lastFailureAtIso8601 = attemptAtIso8601,
+                                lastErrorMessage = "Ingest returned HTTP ${result.statusCode}"
+                            )
+                            break
+                        }
+                    }
                     val checkpoint = rawJournal.acknowledge(
                         endpointKey = endpoint.id,
-                        acknowledgedSeqMax = ackSeq,
+                        acknowledgedSeqMax = result.acceptedSeqMax,
                         acknowledgedAtIso8601 = nativeIso8601Now()
                     )
                     writeDebugStatus(endpoint.id, "ok:${checkpoint.acknowledgedSeqMax}:${nativeIso8601Now()}")
                     syncStates[endpoint.id] = stateFor(endpoint.id).copy(
                         status = "healthy",
+                        serverStatus = "available",
+                        clientStatus = "available",
                         lastStatus = "replay:ok:${checkpoint.acknowledgedSeqMax}",
                         lastSuccessAtIso8601 = attemptAtIso8601,
                         lastErrorMessage = null
                     )
+                    requestReplay(endpoint.id, reason = "ack")
                 }
-            } finally {
-                replayMutex.unlock()
-            }
         }
     }
-
-    private fun buildReplayBody(entries: List<RawJournalEntry>): JsonObject {
-        val first = entries.first()
-        return buildJsonObject {
-            put("protocol", "presence.v2")
-            put("workspaceId", first.workspaceId)
-            put("deviceId", first.deviceId)
-            put("sessionId", first.sessionId)
-            putJsonArray("events") {
-                entries.forEach { add(it.event) }
-            }
-        }
-    }
-
-    private fun resolvedProbeUrl(endpointUrl: String): String =
-        endpointUrl.replace("/api/v2/presence/ingest", "/api/v1/meta")
 
     private fun maybeReplayPending(endpoint: ReporterEndpoint, force: Boolean) {
         val nowMillis = nativeCurrentTimeMillis()
+        if (isConfigurationBlocked(endpoint)) {
+            logReplaySkip(endpoint, "configuration_blocked")
+            return
+        }
+        val state = stateFor(endpoint.id)
+        if (state.serverStatus != "available") {
+            logReplaySkip(
+                endpoint = endpoint,
+                reason = "server_not_available status=${state.status} serverStatus=${state.serverStatus} clientStatus=${state.clientStatus}"
+            )
+            return
+        }
         if (!force) {
             val lastIssuedAt = lastReplayIssuedAtMillis[endpoint.id]
-            val replayIntervalMillis = when (stateFor(endpoint.id).status) {
-                "healthy", "idle" -> healthyProbeIntervalMillis
-                else -> unhealthyProbeIntervalMillis
-            }
             if (lastIssuedAt != null && nowMillis - lastIssuedAt < replayIntervalMillis) {
+                logReplaySkip(endpoint, "replay_interval")
                 return
             }
         }
         lastReplayIssuedAtMillis[endpoint.id] = nowMillis
-        replayPending(endpoint)
+        requestReplay(endpoint.id, reason = if (force) "force" else "interval")
+    }
+
+    private fun requestReplay(endpointId: String, reason: String) {
+        val result = replayEvents.trySend(endpointId)
+        if (result.isSuccess) {
+            writeHttpLog("event kind=replay endpoint=$endpointId reason=$reason")
+        } else {
+            writeHttpLog("event kind=replay_drop endpoint=$endpointId reason=$reason error=${result.exceptionOrNull()?.message ?: "unknown"}")
+        }
+    }
+
+    private fun startReplayLoop() {
+        scope.launch {
+            for (endpointId in replayEvents) {
+                val endpoint = probeEndpoints.firstOrNull { it.id == endpointId }
+                if (endpoint == null) {
+                    writeHttpLog("skip kind=ingest endpoint=$endpointId reason=endpoint_not_active")
+                    continue
+                }
+                replayPending(endpoint)
+            }
+        }
+    }
+
+    private fun startProbeLoop() {
+        scope.launch {
+            while (isActive) {
+                probeEndpoints.forEach { endpoint ->
+                    if (shouldProbeServer(endpoint)) {
+                        probeServer(endpoint)
+                    }
+                }
+                delay(probeIntervalMillis)
+            }
+        }
+    }
+
+    private fun shouldProbeServer(endpoint: ReporterEndpoint): Boolean {
+        if (!endpoint.isConfigured()) return false
+        if (isConfigurationBlocked(endpoint)) return false
+        val state = stateFor(endpoint.id)
+        if (state.isConfigurationError()) return false
+        if (state.status == "local_unavailable") return false
+        return state.clientStatus == "available" && (
+            state.serverStatus == "unknown" ||
+                state.status == "server_unavailable" && state.serverStatus == "unavailable"
+        )
+    }
+
+    private suspend fun probeServer(endpoint: ReporterEndpoint) {
+        if (!shouldProbeServer(endpoint)) return
+
+        val probeAtIso8601 = nativeIso8601Now()
+        syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+            status = "checking_server",
+            serverStatus = "checking",
+            clientStatus = "available",
+            lastProbeAtIso8601 = probeAtIso8601
+        )
+        logHttpRequest(
+            kind = "probe",
+            endpoint = endpoint,
+            method = "GET",
+            url = endpoint.probeUrl,
+            detail = "serverStatus=${stateFor(endpoint.id).serverStatus}"
+        )
+        val result = runCatching {
+            val response = client.get {
+                url(endpoint.probeUrl)
+            }
+            val responseText = response.bodyAsText()
+            logHttpResult(
+                kind = "probe",
+                endpoint = endpoint,
+                statusCode = response.status.value,
+                detail = responseText.take(400)
+            )
+            ProbeAttemptResult(
+                statusCode = response.status.value,
+                body = responseText
+            )
+        }
+        result.exceptionOrNull()?.let { logHttpError("probe", endpoint, it) }
+
+        val probeResult = result.getOrNull()
+        if (probeResult != null && isProbeServerAvailable(probeResult)) {
+            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                status = "healthy",
+                serverStatus = "available",
+                clientStatus = "available",
+                lastProbeAtIso8601 = probeAtIso8601
+            )
+        } else if (result.exceptionOrNull()?.let(::isLocalNetworkUnavailable) == true) {
+            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                status = "local_unavailable",
+                serverStatus = "unknown",
+                clientStatus = "available",
+                lastProbeAtIso8601 = probeAtIso8601,
+                lastErrorMessage = result.exceptionOrNull()?.message ?: result.exceptionOrNull()?.let { it::class.simpleName }
+            )
+        } else {
+            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                status = "server_unavailable",
+                serverStatus = "unavailable",
+                clientStatus = "available",
+                lastProbeAtIso8601 = probeAtIso8601
+            )
+        }
     }
 
     private fun stateFor(endpointId: String): EndpointSyncSnapshot =
@@ -550,27 +824,136 @@ internal class PulseBarEndpointReporter {
     private fun pruneRuntimeState(activeEndpointIds: Set<String>) {
         syncStates.keys.retainAll(activeEndpointIds)
         replayMutexes.keys.retainAll(activeEndpointIds)
-        probeMutexes.keys.retainAll(activeEndpointIds)
-        lastProbeIssuedAtMillis.keys.retainAll(activeEndpointIds)
         lastReplayIssuedAtMillis.keys.retainAll(activeEndpointIds)
+        lastReplaySkipLogAtMillis.keys.retainAll(activeEndpointIds)
+        configurationBlocks.keys.retainAll(activeEndpointIds)
+        probeEndpoints = probeEndpoints.filter { it.id in activeEndpointIds }
     }
 
-    private fun aggregateStatus(endpointStates: List<PulseBarEndpointSyncState>): String {
-        val enabledStates = endpointStates.filter { it.enabled }
-        if (enabledStates.isEmpty()) return "disabled"
-        return when {
-            enabledStates.any { it.status == "degraded" || it.status == "misconfigured" } -> "degraded"
-            enabledStates.any { it.status == "probing" } -> "probing"
-            enabledStates.all { it.status == "healthy" } -> "healthy"
-            enabledStates.any { it.status == "healthy" } -> "healthy"
-            else -> "idle"
+    private fun logReplaySkip(endpoint: ReporterEndpoint, reason: String) {
+        val nowMillis = nativeCurrentTimeMillis()
+        val lastLoggedAt = lastReplaySkipLogAtMillis[endpoint.id]
+        if (lastLoggedAt != null && nowMillis - lastLoggedAt < 5_000L) return
+        lastReplaySkipLogAtMillis[endpoint.id] = nowMillis
+        writeHttpLog("skip kind=ingest endpoint=${endpoint.id} reason=$reason")
+    }
+
+    private fun recordTransportFailure(endpoint: ReporterEndpoint, attemptAtIso8601: String, error: Throwable) {
+        val reason = error.message ?: error::class.simpleName ?: "unknown"
+        if (isLocalNetworkUnavailable(error)) {
+            val current = stateFor(endpoint.id)
+            syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+                status = "local_unavailable",
+                serverStatus = current.serverStatus,
+                clientStatus = "available",
+                lastStatus = "replay:local_unavailable",
+                lastFailureAtIso8601 = attemptAtIso8601,
+                lastErrorMessage = reason
+            )
+            return
         }
+        recordServerFailure(endpoint, attemptAtIso8601, reason)
+    }
+
+    private fun recordServerFailure(endpoint: ReporterEndpoint, attemptAtIso8601: String, reason: String) {
+        syncStates[endpoint.id] = stateFor(endpoint.id).copy(
+            status = "server_unavailable",
+            serverStatus = "unavailable",
+            clientStatus = "available",
+            lastStatus = "replay:error",
+            lastFailureAtIso8601 = attemptAtIso8601,
+            lastErrorMessage = reason
+        )
+    }
+
+    private fun isLocalNetworkUnavailable(error: Throwable): Boolean {
+        val text = buildString {
+            append(error::class.simpleName.orEmpty())
+            append(' ')
+            append(error.message.orEmpty())
+            error.cause?.let { cause ->
+                append(' ')
+                append(cause::class.simpleName.orEmpty())
+                append(' ')
+                append(cause.message.orEmpty())
+            }
+        }.lowercase()
+        return listOf(
+            "network is unreachable",
+            "not connected to the internet",
+            "offline",
+            "no route to host",
+            "network connection was lost",
+            "dns server not available"
+        ).any { it in text }
+    }
+
+    private fun isProbeServerAvailable(result: ProbeAttemptResult): Boolean {
+        if (result.statusCode !in 200..299) return false
+        val body = result.body.lowercase()
+        val compactBody = body.filterNot(Char::isWhitespace)
+        val explicitUnavailableMarkers = listOf(
+            "\"serverstatus\":\"unavailable\"",
+            "\"server_status\":\"unavailable\"",
+            "\"status\":\"unavailable\"",
+            "\"available\":false",
+            "\"serveravailable\":false",
+            "\"server_available\":false"
+        )
+        return explicitUnavailableMarkers.none { marker -> marker in compactBody } && "server unavailable" !in body
+    }
+
+    private fun isConfigurationBlocked(endpoint: ReporterEndpoint): Boolean {
+        val blockedFingerprint = configurationBlocks[endpoint.id] ?: return false
+        if (blockedFingerprint == endpoint.runtimeFingerprint()) {
+            return true
+        }
+        configurationBlocks.remove(endpoint.id)
+        return false
+    }
+
+    private fun markConfigurationBlocked(endpoint: ReporterEndpoint) {
+        configurationBlocks[endpoint.id] = endpoint.runtimeFingerprint()
+    }
+
+    private fun clearConfigurationBlocked(endpointId: String) {
+        configurationBlocks.remove(endpointId)
     }
 
     private fun writeDebugStatus(endpointId: String, value: String) {
         defaults.setObject(value, debugStatusKey(endpointId))
         defaults.setObject(value, "pulsebar.debug.endpoint.lastStatus")
         defaults.synchronize()
+    }
+
+    private fun logHttpRequest(kind: String, endpoint: ReporterEndpoint, method: String, url: String, detail: String) {
+        writeHttpLog("request kind=$kind endpoint=${endpoint.id} method=$method url=$url $detail")
+    }
+
+    private fun logHttpResult(kind: String, endpoint: ReporterEndpoint, statusCode: Int, detail: String?) {
+        val suffix = detail?.takeIf { it.isNotBlank() }?.let { " body=$it" }.orEmpty()
+        writeHttpLog("result kind=$kind endpoint=${endpoint.id} status=$statusCode$suffix")
+    }
+
+    private fun logHttpError(kind: String, endpoint: ReporterEndpoint, error: Throwable) {
+        writeHttpLog("error kind=$kind endpoint=${endpoint.id} type=${error::class.simpleName} message=${error.message ?: "unknown"}")
+    }
+
+    private fun writeHttpLog(message: String) {
+        val line = "${nativeIso8601Now()} [pulsebar.http] $message"
+        if (Platform.isDebugBinary) {
+            NSLog(line)
+        }
+        val home = NSHomeDirectory()
+        mkdir("$home/Library/Logs", 0x1EDu)
+        val logDirectory = "$home/Library/Logs/PulseBarNative"
+        mkdir(logDirectory, 0x1EDu)
+        val file = fopen("$logDirectory/http.log", "a") ?: return
+        try {
+            fprintf(file, "%s\n", line)
+        } finally {
+            fclose(file)
+        }
     }
 
     private fun debugStatusKey(endpointId: String): String =
@@ -585,16 +968,24 @@ private data class ReporterEndpoint(
     val name: String,
     val transportName: String,
     val endpointUrl: String,
+    val workspaceId: String,
+    val siteId: String,
     val apiKey: String
 ) {
     val resolvedUrl: String = resolvedEndpointIngestUrl(endpointUrl)
+    val probeUrl: String = resolvedEndpointProbeUrl(resolvedUrl)
 
     fun runtimeFingerprint(): String =
-        "$id::$transportName::$resolvedUrl::$apiKey"
+        "$id::$transportName::$resolvedUrl::$workspaceId::$siteId::$apiKey"
+
+    fun isConfigured(): Boolean =
+        resolvedUrl.isNotBlank() && workspaceId.isNotBlank() && siteId.isNotBlank() && apiKey.isNotBlank()
 }
 
 private data class EndpointSyncSnapshot(
     val status: String = "idle",
+    val serverStatus: String = "unknown",
+    val clientStatus: String = "available",
     val lastStatus: String? = null,
     val lastAttemptAtIso8601: String? = null,
     val lastProbeAtIso8601: String? = null,
@@ -602,6 +993,71 @@ private data class EndpointSyncSnapshot(
     val lastFailureAtIso8601: String? = null,
     val lastErrorMessage: String? = null
 )
+
+private fun EndpointSyncSnapshot.isConfigurationError(): Boolean =
+    status == "misconfigured" || status == "configuration_error" || clientStatus == "unavailable"
+
+private fun combinedStatus(enabled: Boolean, serverStatus: String, clientStatus: String): String {
+    if (!enabled) return "disabled"
+    return when {
+        clientStatus == "unavailable" && serverStatus == "available" -> "configuration_error"
+        clientStatus == "unavailable" && serverStatus == "checking" -> "configuration_error"
+        clientStatus == "unavailable" && serverStatus == "unavailable" -> "degraded"
+        clientStatus == "available" && serverStatus == "unavailable" -> "server_unavailable"
+        clientStatus == "available" && serverStatus == "checking" -> "checking_server"
+        clientStatus == "available" && serverStatus == "available" -> "healthy"
+        else -> "idle"
+    }
+}
+
+private fun aggregateServerStatusFromCombined(endpointStates: List<PulseBarEndpointSyncState>): String =
+    when {
+        endpointStates.isEmpty() -> "unknown"
+        endpointStates.any { derivedServerStatusFromCombined(it.status) == "checking" } -> "checking"
+        endpointStates.any { derivedServerStatusFromCombined(it.status) == "unavailable" } &&
+            endpointStates.any { derivedServerStatusFromCombined(it.status) == "available" } -> "unavailable"
+        endpointStates.all { derivedServerStatusFromCombined(it.status) == "available" } -> "available"
+        endpointStates.all { derivedServerStatusFromCombined(it.status) == "unavailable" } -> "unavailable"
+        else -> "unknown"
+    }
+
+private fun aggregateClientStatusFromCombined(endpointStates: List<PulseBarEndpointSyncState>): String =
+    when {
+        endpointStates.isEmpty() -> "unknown"
+        endpointStates.any { derivedClientStatusFromCombined(it.status) == "unavailable" } -> "unavailable"
+        endpointStates.all { derivedClientStatusFromCombined(it.status) == "available" } -> "available"
+        else -> "unknown"
+    }
+
+private fun derivedServerStatusFromCombined(status: String): String =
+    when (status) {
+        "healthy", "configuration_error" -> "available"
+        "server_unavailable", "degraded" -> "unavailable"
+        "checking_server" -> "checking"
+        "local_unavailable" -> "unknown"
+        else -> "unknown"
+    }
+
+private fun derivedClientStatusFromCombined(status: String): String =
+    when (status) {
+        "healthy", "server_unavailable", "checking_server", "local_unavailable" -> "available"
+        "configuration_error", "misconfigured", "degraded" -> "unavailable"
+        else -> "unknown"
+    }
+
+private data class IngestAttemptResult(
+    val statusCode: Int,
+    val errorCode: String?,
+    val acceptedSeqMax: Long?
+)
+
+private data class ProbeAttemptResult(
+    val statusCode: Int,
+    val body: String
+)
+
+private fun String.toJsonObjectOrNull(): JsonObject? =
+    runCatching { Json.parseToJsonElement(this).jsonObject }.getOrNull()
 
 private fun PulseBarConfig.enabledReporterEndpoints(): List<ReporterEndpoint> =
     endpoints
@@ -612,6 +1068,8 @@ private fun PulseBarConfig.enabledReporterEndpoints(): List<ReporterEndpoint> =
                 name = endpoint.name,
                 transportName = endpoint.transportName,
                 endpointUrl = endpoint.endpointUrl,
+                workspaceId = endpoint.workspaceId,
+                siteId = endpoint.siteId,
                 apiKey = endpoint.apiKey
             )
         }
