@@ -26,6 +26,8 @@ struct MenuBarContentView: View {
             }
 
             todayStats
+
+            footerActions
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -52,7 +54,7 @@ struct MenuBarContentView: View {
                         showDashboard(.dashboard)
                     }
                     PulseBarIconButton(
-                        systemName: monitor.isPaused ? "play.fill" : "pause.fill",
+                        systemName: monitor.isPaused || !monitor.isMonitoring ? "play.fill" : "pause.fill",
                         isPrimary: true
                     ) {
                         monitor.togglePaused()
@@ -61,6 +63,29 @@ struct MenuBarContentView: View {
                         showDashboard(.settings)
                     }
                 }
+            }
+        }
+    }
+
+    private var footerActions: some View {
+        VStack(spacing: 10) {
+            Divider()
+            HStack(spacing: 10) {
+                Button(monitor.isMonitoring ? "Stop Monitoring" : "Start Monitoring") {
+                    if monitor.isMonitoring {
+                        monitor.stop()
+                    } else {
+                        monitor.start()
+                    }
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Quit PulseBar") {
+                    NSApp.terminate(nil)
+                }
+                .buttonStyle(.bordered)
             }
         }
     }
@@ -385,7 +410,7 @@ private struct MediaSeekBar: View {
         .onAppear {
             visualProgress = progressSeconds
         }
-        .onChange(of: progressSeconds) { newValue in
+        .onChange(of: progressSeconds) { _, newValue in
             let recentlySought = lastSeekAt.map { Date().timeIntervalSince($0) < 0.8 } ?? false
             if !isDragging && !recentlySought {
                 visualProgress = newValue

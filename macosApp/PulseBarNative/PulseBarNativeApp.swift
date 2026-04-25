@@ -27,7 +27,7 @@ struct PulseBarNativeApp: App {
                 .environmentObject(appDelegate.monitor)
                 .frame(width: 380)
         } label: {
-            Label("PulseBar", systemImage: appDelegate.monitor.isPaused ? "pause.circle" : "waveform.path.ecg")
+            Label("PulseBar", systemImage: "waveform.path.ecg")
         }
         .menuBarExtraStyle(.window)
         .commands {
@@ -38,6 +38,17 @@ struct PulseBarNativeApp: App {
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
+            CommandGroup(after: .appSettings) {
+                Button(appDelegate.monitor.isMonitoring ? "Stop Monitoring" : "Start Monitoring") {
+                    if appDelegate.monitor.isMonitoring {
+                        appDelegate.monitor.stop()
+                    } else {
+                        appDelegate.monitor.start()
+                    }
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+            }
         }
     }
+
 }

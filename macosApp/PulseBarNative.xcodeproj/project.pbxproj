@@ -122,10 +122,11 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/embed-swift-export.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "cd \"$SRCROOT/..\"\nexport JAVA_HOME=\"$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home\"\nexport PATH=\"$JAVA_HOME/bin:$PATH\"\nexport GRADLE_USER_HOME=\"$SRCROOT/../.gradle-xcode\"\nexport KONAN_DATA_DIR=\"${KONAN_DATA_DIR:-$HOME/.konan}\"\n./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode\n";
+			shellScript = "cd \"$SRCROOT/..\"\nexport JAVA_HOME=\"$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home\"\nexport PATH=\"$JAVA_HOME/bin:$PATH\"\nexport GRADLE_USER_HOME=\"$SRCROOT/../.gradle-xcode\"\nexport KONAN_DATA_DIR=\"${KONAN_DATA_DIR:-$HOME/.konan}\"\n./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode\ntouch \"$DERIVED_FILE_DIR/embed-swift-export.stamp\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -203,6 +204,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "PulseBar reads browser and Spotify metadata to show the current status in the menu bar.";
+				LM_SKIP_METADATA_EXTRACTION = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -269,6 +271,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "PulseBar reads browser and Spotify metadata to show the current status in the menu bar.";
+				LM_SKIP_METADATA_EXTRACTION = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;

@@ -9,6 +9,7 @@ settings:
     PRODUCT_NAME: PulseBarNative
     SWIFT_VERSION: "6.0"
     ENABLE_DEBUG_DYLIB: NO
+    LM_SKIP_METADATA_EXTRACTION: YES
     CODE_SIGN_ENTITLEMENTS: PulseBarNative/PulseBarNative.entitlements
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
@@ -32,3 +33,6 @@ targets:
           export GRADLE_USER_HOME="$SRCROOT/../.gradle-xcode"
           export KONAN_DATA_DIR="${KONAN_DATA_DIR:-$HOME/.konan}"
           ./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode
+          touch "$DERIVED_FILE_DIR/embed-swift-export.stamp"
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/embed-swift-export.stamp

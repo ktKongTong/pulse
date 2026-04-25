@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import PulseBarShared
-@_implementationOnly import SharedBridge_PulseBarShared
+import SharedBridge_PulseBarShared
 
 @MainActor
 final class NativeMonitorModel: ObservableObject {
@@ -13,6 +13,7 @@ final class NativeMonitorModel: ObservableObject {
     @Published private(set) var interactionPendingCount: Int = 0
     @Published private(set) var interactionLastStatus: String?
     @Published private(set) var syncState: SyncStatusInfo?
+    @Published private(set) var isMonitoring = false
     @Published var settingsDraft = SettingsDraft()
     @Published var isPaused = false
     @Published var dashboardSelection: DashboardSection = .dashboard
@@ -47,8 +48,13 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     func start() {
-        guard loopTask == nil else { return }
+        if loopTask != nil {
+            isPaused = false
+            return
+        }
         settingsDraft = Self.mapConfig(bridge.readConfig())
+        isMonitoring = true
+        isPaused = false
         loopTask = Task {
             while !Task.isCancelled {
                 if !isPaused {
@@ -63,7 +69,18 @@ final class NativeMonitorModel: ObservableObject {
         loopTask?.cancel()
     }
 
+    func stop() {
+        loopTask?.cancel()
+        loopTask = nil
+        isMonitoring = false
+        isPaused = true
+    }
+
     func togglePaused() {
+        if !isMonitoring {
+            start()
+            return
+        }
         isPaused.toggle()
     }
 
@@ -71,7 +88,20 @@ final class NativeMonitorModel: ObservableObject {
         let now = Date()
         let today = Self.todayIsoString()
         let payload = autoreleasepool { () -> RefreshPayload in
-            let bridgeRef = Self.externalRCRef(of: bridge as AnyObject)
+            guard let bridgeRef = Self.externalRCRef(of: bridge as AnyObject) else {
+                return RefreshPayload(
+                    snapshot: nil,
+                    todayStats: nil,
+                    todayTotalSeconds: nil,
+                    interactionItems: nil,
+                    interactionPendingCount: nil,
+                    interactionLastStatus: nil,
+                    syncState: nil,
+                    statsRefreshedAt: nil,
+                    interactionRefreshedAt: nil,
+                    syncRefreshedAt: nil
+                )
+            }
             let snapshot = Self.readSnapshot(bridgeRef: bridgeRef)
 
             var todayStats: [UsageRow]?
