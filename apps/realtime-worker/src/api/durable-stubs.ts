@@ -57,7 +57,6 @@ export interface DeviceRpc {
 
 export interface LiveListenRpc {
   getSnapshot(workspaceId?: string, roomId?: string): Promise<LiveListenSnapshot>;
-  openEventStream(workspaceId?: string, roomId?: string): Promise<Response>;
   startHost(request: LiveListenHostStartRequest): Promise<LiveListenTokenResponse>;
   heartbeatHost(request: LiveListenHostHeartbeatRequest): Promise<LiveListenSnapshot>;
   stopHost(request: LiveListenHostStopRequest): Promise<LiveListenSnapshot>;

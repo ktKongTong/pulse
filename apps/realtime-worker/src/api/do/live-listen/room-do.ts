@@ -48,9 +48,62 @@ interface StoredLiveListenState {
   endedAtMs?: number;
 }
 
+interface LiveListenSocketAttachment {
+  workspaceId: string;
+  roomId: string;
+  connectionId: string;
+}
+
 export class LiveListenRoom extends DurableObject<Env> {
   private roomState?: StoredLiveListenState;
-  private sseClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
+
+  constructor(state: DurableObjectState, env: Env) {
+    super(state, env);
+    this.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair("ping", "pong"),
+    );
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("Expected websocket", { status: 426 });
+    }
+
+    const url = new URL(request.url);
+    const workspaceId = url.searchParams.get("workspaceId") ?? this.env.WORKSPACE_ID;
+    const roomId = url.searchParams.get("roomId") ?? "live-listen:owner";
+    const state = await this.loadState(workspaceId, roomId);
+    this.assertWorkspaceAndRoom(workspaceId, roomId, state);
+    await this.refreshExpirations(state);
+
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.serializeAttachment({
+      workspaceId,
+      roomId,
+      connectionId: crypto.randomUUID(),
+    } satisfies LiveListenSocketAttachment);
+    this.ctx.acceptWebSocket(server);
+    this.sendSocketEnvelope(server, this.snapshotEnvelope(state));
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
+    if (raw === "ping") return;
+    if (raw === "snapshot") {
+      const attachment = this.socketAttachment(socket);
+      if (!attachment) return;
+      const state = await this.loadState(attachment.workspaceId, attachment.roomId);
+      await this.refreshExpirations(state);
+      this.sendSocketEnvelope(socket, this.snapshotEnvelope(state));
+    }
+  }
+
+  async webSocketClose(_socket: WebSocket) {}
+
+  async webSocketError(_socket: WebSocket, _error: unknown) {}
 
   async getSnapshot(
     workspaceId = this.env.WORKSPACE_ID,
@@ -62,15 +115,6 @@ export class LiveListenRoom extends DurableObject<Env> {
     return this.snapshot(state);
   }
 
-  async openEventStream(
-    workspaceId = this.env.WORKSPACE_ID,
-    roomId = "live-listen:owner",
-  ): Promise<Response> {
-    const state = await this.loadState(workspaceId, roomId);
-    this.assertWorkspaceAndRoom(workspaceId, roomId, state);
-    await this.refreshExpirations(state);
-    return this.handleEvents(state);
-  }
 
   async startHost(
     request: LiveListenHostStartRequest,
@@ -230,31 +274,6 @@ export class LiveListenRoom extends DurableObject<Env> {
     await this.broadcastSnapshot(state);
   }
 
-  private handleEvents(state: StoredLiveListenState): Response {
-    const encoder = new TextEncoder();
-    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        streamController = controller;
-        this.sseClients.add(controller);
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(this.snapshotEnvelope(state))}\n\n`),
-        );
-      },
-      cancel: () => {
-        if (streamController) this.sseClients.delete(streamController);
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-      },
-    });
-  }
-
   private snapshot(state: StoredLiveListenState): LiveListenSnapshot {
     return LiveListenSnapshotSchema.parse({
       roomId: state.roomId,
@@ -396,14 +415,32 @@ export class LiveListenRoom extends DurableObject<Env> {
   }
 
   private async broadcast(envelope: LiveListenStreamEnvelope) {
-    const payload = new TextEncoder().encode(`data: ${JSON.stringify(envelope)}\n\n`);
-    for (const controller of this.sseClients) {
-      try {
-        controller.enqueue(payload);
-      } catch {
-        this.sseClients.delete(controller);
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = this.socketAttachment(socket);
+      if (
+        attachment?.workspaceId !== envelope.workspaceId ||
+        attachment?.roomId !== envelope.roomId
+      ) {
+        continue;
       }
+      this.sendSocketEnvelope(socket, envelope);
     }
+  }
+
+  private sendSocketEnvelope(socket: WebSocket, envelope: LiveListenStreamEnvelope) {
+    try {
+      socket.send(JSON.stringify(envelope));
+    } catch {
+      socket.close(1011, "live listen send failed");
+    }
+  }
+
+  private socketAttachment(socket: WebSocket): LiveListenSocketAttachment | null {
+    const attachment = socket.deserializeAttachment() as LiveListenSocketAttachment | null;
+    if (!attachment?.workspaceId || !attachment.roomId || !attachment.connectionId) {
+      return null;
+    }
+    return attachment;
   }
 
   private assertWorkspaceAndRoom(

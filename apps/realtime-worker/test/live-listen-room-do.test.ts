@@ -32,6 +32,34 @@ describe("LiveListenRoom", () => {
     expect(response.snapshot.startedAt).toBe(hostStart.requestedAt);
   });
 
+  it("opens a hibernatable websocket and sends the current snapshot", async () => {
+    const stub = liveListenStub();
+
+    const response = await stub.fetch(
+      new Request("https://pulse.test/internal/live-listen/events?workspaceId=pulse-demo&roomId=live-listen:owner", {
+        headers: { Upgrade: "websocket" },
+      }),
+    );
+
+    expect(response.status).toBe(101);
+    expect(response.webSocket).toBeDefined();
+    const socket = response.webSocket as WebSocket;
+    const firstMessage = await new Promise<string>((resolve) => {
+      socket.addEventListener("message", (event) => resolve(String(event.data)), { once: true });
+      socket.accept();
+    });
+
+    expect(JSON.parse(firstMessage)).toMatchObject({
+      protocol: "live-listen.stream.v1",
+      kind: "snapshot.updated",
+      snapshot: {
+        state: "offline",
+        listenerCount: 0,
+      },
+    });
+    socket.close();
+  });
+
   it("accepts heartbeats and updates media clock", async () => {
     const stub = liveListenStub();
 
@@ -67,6 +95,27 @@ describe("LiveListenRoom", () => {
         joinedAt: "2026-04-29T00:00:02.000Z",
       });
     })).rejects.toThrow("live_listen_not_active");
+  });
+
+  it("broadcasts snapshot updates over websocket", async () => {
+    const stub = liveListenStub();
+    const response = await stub.fetch(
+      new Request("https://pulse.test/internal/live-listen/events?workspaceId=pulse-demo&roomId=live-listen:owner", {
+        headers: { Upgrade: "websocket" },
+      }),
+    );
+    const socket = response.webSocket as WebSocket;
+    const messages: string[] = [];
+    socket.addEventListener("message", (event) => messages.push(String(event.data)));
+    socket.accept();
+
+    await runInDurableObject(stub, async (room: LiveListenRoom) => {
+      await room.startHost(hostStart);
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(messages.map((message) => JSON.parse(message).snapshot.state)).toContain("starting");
+    socket.close();
   });
 
   it("refreshes existing listeners without increasing count", async () => {

@@ -18,12 +18,6 @@ class MemoryLiveListenStub {
     return this.state;
   }
 
-  async openEventStream() {
-    return new Response(null, {
-      headers: { "content-type": "text/event-stream" },
-    });
-  }
-
   async startHost(payload: Record<string, unknown>) {
     this.state = {
       ...this.state,
@@ -119,7 +113,17 @@ function env(): Env {
     AGGREGATE_FLUSH_SECONDS: "15",
     LIVE_LISTEN_ROOM: {
       idFromName: (name: string) => name,
-      get: () => stub,
+      get: () => Object.assign(stub, {
+        fetch: (request: Request) => {
+          if (request.headers.get("Upgrade") !== "websocket") {
+            return new Response("Expected websocket", { status: 426 });
+          }
+
+          const pair = new WebSocketPair();
+          const [client] = Object.values(pair);
+          return new Response(null, { status: 101, webSocket: client });
+        },
+      }),
     },
     ASSETS: {
       fetch: () => Response.json({ fallback: true }, { status: 404 }),
@@ -181,6 +185,27 @@ describe("live listen api", () => {
 
     expect(heartbeat.status).toBe(200);
     expect((await heartbeat.json() as { state: string }).state).toBe("live");
+  });
+
+  it("requires websocket upgrade for live listen events", async () => {
+    const response = await app.fetch(
+      new Request("https://pulse.test/v1/live-listen/events"),
+      env(),
+    );
+
+    expect(response.status).toBe(426);
+  });
+
+  it("routes live listen event websockets to the room DO", async () => {
+    const response = await app.fetch(
+      new Request("https://pulse.test/v1/live-listen/events", {
+        headers: { Upgrade: "websocket" },
+      }),
+      env(),
+    );
+
+    expect(response.status).toBe(101);
+    expect(response.webSocket).toBeDefined();
   });
 
   it("requires device bearer token for host routes", async () => {

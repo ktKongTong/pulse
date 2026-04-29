@@ -32,11 +32,16 @@ liveListenRoutes.get("/state", zValidator("query", LiveListenQuerySchema), async
 });
 
 liveListenRoutes.get("/events", zValidator("query", LiveListenQuerySchema), async (c) => {
+  if (c.req.header("Upgrade") !== "websocket") {
+    return new Response("Expected websocket", { status: 426 });
+  }
+
   const query = c.req.valid("query");
   const workspaceId = query.workspaceId ?? c.env.WORKSPACE_ID;
   if (workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
   const roomId = query.roomId ?? DEFAULT_LIVE_LISTEN_ROOM_ID;
-  return liveListenStub(c.env, workspaceId, roomId).openEventStream(workspaceId, roomId);
+  const id = c.env.LIVE_LISTEN_ROOM.idFromName(`${workspaceId}:${roomId}`);
+  return c.env.LIVE_LISTEN_ROOM.get(id).fetch(c.req.raw);
 });
 
 liveListenRoutes.post(

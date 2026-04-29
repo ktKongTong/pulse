@@ -135,7 +135,7 @@ The Worker API can be thin wrappers around `LiveListenRoomDO`.
 
 ```text
 GET  /api/live-listen/state
-GET  /api/live-listen/events
+GET  /api/live-listen/events  # WebSocket upgrade
 POST /api/live-listen/host/start
 POST /api/live-listen/host/heartbeat
 POST /api/live-listen/host/stop
@@ -151,9 +151,9 @@ Used by the Web page for first paint and by Native for quick diagnostics.
 
 ### `GET /api/live-listen/events`
 
-Streams `LiveListenStreamEnvelope` updates.
+Upgrades to a hibernatable Durable Object WebSocket and sends `LiveListenStreamEnvelope` updates as JSON messages.
 
-MVP can use SSE for UI state. Audio still goes through Cloudflare Realtime.
+State sync uses DO WebSocket hibernation so idle subscribers do not keep the room object pinned in memory. Audio still goes through Cloudflare Realtime.
 
 ### `POST /api/live-listen/host/start`
 
@@ -271,6 +271,7 @@ MVP is working when:
 
 - Native can call `host/start` and receive a host Realtime token.
 - Web can call `state` and see `starting` or `live`.
+- Web can open `events` as a WebSocket and receive `LiveListenStreamEnvelope` updates.
 - Native heartbeat updates `media` and `clock`.
 - Web can call `listener/join` after a click and receive a listener token.
 - Multiple browsers can join the same Realtime session.
