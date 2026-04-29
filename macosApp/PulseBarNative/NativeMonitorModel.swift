@@ -354,6 +354,7 @@ final class NativeMonitorModel: ObservableObject {
         lastSuccessAtIso8601: String?,
         lastFailureAtIso8601: String?,
         lastErrorMessage: String?,
+        diagnosticMessage: String?,
         acknowledgedSeqMax: Int,
         acknowledgedAtIso8601: String?
     ) -> EndpointSyncStatusInfo {
@@ -372,6 +373,7 @@ final class NativeMonitorModel: ObservableObject {
             lastSuccessAt: lastSuccessAtIso8601.flatMap(iso8601Formatter.date(from:)),
             lastFailureAt: lastFailureAtIso8601.flatMap(iso8601Formatter.date(from:)),
             lastErrorMessage: lastErrorMessage,
+            diagnosticMessage: diagnosticMessage,
             acknowledgedSeqMax: acknowledgedSeqMax,
             acknowledgedAt: acknowledgedAtIso8601.flatMap(iso8601Formatter.date(from:))
         )
@@ -638,6 +640,7 @@ final class NativeMonitorModel: ObservableObject {
                         lastSuccessAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastSuccessAtIso8601_get(endpointRef),
                         lastFailureAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastFailureAtIso8601_get(endpointRef),
                         lastErrorMessage: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastErrorMessage_get(endpointRef),
+                        diagnosticMessage: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_diagnosticMessage_get(endpointRef),
                         acknowledgedSeqMax: Int(io_github_kt_pulsebar_export_PulseBarEndpointSyncState_acknowledgedSeqMax_get(endpointRef)),
                         acknowledgedAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_acknowledgedAtIso8601_get(endpointRef)
                     )

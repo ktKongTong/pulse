@@ -96,6 +96,7 @@ actual class PulseBarBridge actual constructor() {
                     lastSuccessAtIso8601 = null,
                     lastFailureAtIso8601 = null,
                     lastErrorMessage = null,
+                    diagnosticMessage = null,
                     acknowledgedSeqMax = 0,
                     acknowledgedAtIso8601 = null
                 )

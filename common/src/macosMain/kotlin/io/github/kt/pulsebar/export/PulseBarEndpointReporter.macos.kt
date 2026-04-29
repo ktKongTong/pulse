@@ -67,6 +67,8 @@ internal class PulseBarEndpointReporter {
     private val replayMutexes = mutableMapOf<String, Mutex>()
     private val lastReplayIssuedAtMillis = mutableMapOf<String, Long>()
     private val lastReplaySkipLogAtMillis = mutableMapOf<String, Long>()
+    private val replayQueuedCounts = mutableMapOf<String, Int>()
+    private val replayStartedCounts = mutableMapOf<String, Int>()
     private val configurationBlocks = mutableMapOf<String, String>()
     private val syncStates = mutableMapOf<String, EndpointSyncSnapshot>()
     private var probeEndpoints: List<ReporterEndpoint> = emptyList()
@@ -266,6 +268,7 @@ internal class PulseBarEndpointReporter {
                 lastSuccessAtIso8601 = runtimeState.lastSuccessAtIso8601 ?: checkpoint?.acknowledgedAtIso8601,
                 lastFailureAtIso8601 = runtimeState.lastFailureAtIso8601,
                 lastErrorMessage = runtimeState.lastErrorMessage,
+                diagnosticMessage = buildDiagnosticMessage(endpoint.id, runtimeState, pendingCount, checkpoint?.acknowledgedSeqMax),
                 acknowledgedSeqMax = checkpoint?.acknowledgedSeqMax ?: 0L,
                 acknowledgedAtIso8601 = checkpoint?.acknowledgedAtIso8601
             )
@@ -489,8 +492,15 @@ internal class PulseBarEndpointReporter {
     }
 
     private fun enqueue(endpoint: ReporterEndpoint, entry: RawJournalEntry) {
-        if (isConfigurationBlocked(endpoint)) return
+        if (isConfigurationBlocked(endpoint)) {
+            recordReplayDiagnostic(endpoint.id, "enqueue blocked: configuration_blocked")
+            writeHttpLog("skip kind=enqueue endpoint=${endpoint.id} reason=configuration_blocked")
+            return
+        }
         rawJournal.append(entry)
+        val pendingCount = rawJournal.pendingCount(endpoint.id)
+        recordReplayDiagnostic(endpoint.id, "enqueue seq=${entry.seq} kind=${entry.kind} pending=$pendingCount")
+        writeHttpLog("event kind=enqueue endpoint=${endpoint.id} entryKind=${entry.kind} seq=${entry.seq} pending=$pendingCount")
         requestReplay(endpoint.id, reason = "enqueue")
     }
 
@@ -519,12 +529,23 @@ internal class PulseBarEndpointReporter {
     private fun drainPendingForRead(endpoint: ReporterEndpoint) {
         if (stateFor(endpoint.id).serverStatus == "available") {
             runBlocking { drainPending(endpoint) }
+        } else {
+            val state = stateFor(endpoint.id)
+            recordReplayDiagnostic(
+                endpoint.id,
+                "read drain skipped: serverStatus=${state.serverStatus} status=${state.status} pending=${rawJournal.pendingCount(endpoint.id)}"
+            )
         }
     }
 
     private suspend fun drainPending(endpoint: ReporterEndpoint) {
         val replayMutex = replayMutexes.getOrPut(endpoint.id) { Mutex() }
         replayMutex.withLock {
+                val startedCount = (replayStartedCounts[endpoint.id] ?: 0) + 1
+                replayStartedCounts[endpoint.id] = startedCount
+                val initialPending = rawJournal.pendingCount(endpoint.id)
+                recordReplayDiagnostic(endpoint.id, "drain start #$startedCount pending=$initialPending server=${stateFor(endpoint.id).serverStatus}")
+                writeHttpLog("event kind=drain_start endpoint=${endpoint.id} attempt=$startedCount pending=$initialPending serverStatus=${stateFor(endpoint.id).serverStatus}")
                 rawJournal.prune(nativeCurrentTimeMillis())
                 while (true) {
                     val currentState = stateFor(endpoint.id)
@@ -536,13 +557,18 @@ internal class PulseBarEndpointReporter {
                         break
                     }
                     val batch = rawJournal.nextReplayBatch(endpoint.id, nativeCurrentTimeMillis())
-                    if (batch.isEmpty()) break
+                    if (batch.isEmpty()) {
+                        recordReplayDiagnostic(endpoint.id, "drain complete: no pending batch")
+                        writeHttpLog("event kind=drain_complete endpoint=${endpoint.id} pending=0")
+                        break
+                    }
                     val body = buildReplayBody(endpoint, batch)
                     val bodyText = json.encodeToString(JsonObject.serializer(), body)
                     val attemptAtIso8601 = nativeIso8601Now()
                     syncStates[endpoint.id] = stateFor(endpoint.id).copy(
                         lastAttemptAtIso8601 = attemptAtIso8601,
-                        lastStatus = "replay:attempt:${batch.size}"
+                        lastStatus = "replay:attempt:${batch.size}",
+                        diagnosticMessage = "POST ${endpoint.resolvedUrl} events=${batch.size} seq=${batch.first().seq}..${batch.last().seq} bytes=${bodyText.length}"
                     )
                     logHttpRequest(
                         kind = "ingest",
@@ -602,7 +628,8 @@ internal class PulseBarEndpointReporter {
                                 clientStatus = "unavailable",
                                 lastStatus = "replay:unauthorized",
                                 lastFailureAtIso8601 = attemptAtIso8601,
-                                lastErrorMessage = "API Key is invalid"
+                                lastErrorMessage = "API Key is invalid",
+                                diagnosticMessage = "HTTP 401 while replaying seq=${batch.first().seq}..${batch.last().seq}"
                             )
                             break
                         }
@@ -615,7 +642,8 @@ internal class PulseBarEndpointReporter {
                                 clientStatus = "unavailable",
                                 lastStatus = "replay:workspace_mismatch",
                                 lastFailureAtIso8601 = attemptAtIso8601,
-                                lastErrorMessage = "Workspace ID does not match the server"
+                                lastErrorMessage = "Workspace ID does not match the server",
+                                diagnosticMessage = "HTTP 403 workspace_mismatch while replaying seq=${batch.first().seq}..${batch.last().seq}"
                             )
                             break
                         }
@@ -628,7 +656,8 @@ internal class PulseBarEndpointReporter {
                                 clientStatus = "unavailable",
                                 lastStatus = "replay:site_mismatch",
                                 lastFailureAtIso8601 = attemptAtIso8601,
-                                lastErrorMessage = "Site ID does not match the server"
+                                lastErrorMessage = "Site ID does not match the server",
+                                diagnosticMessage = "HTTP 403 site_mismatch while replaying seq=${batch.first().seq}..${batch.last().seq}"
                             )
                             break
                         }
@@ -641,7 +670,8 @@ internal class PulseBarEndpointReporter {
                                 clientStatus = "unavailable",
                                 lastStatus = "replay:forbidden",
                                 lastFailureAtIso8601 = attemptAtIso8601,
-                                lastErrorMessage = "Server rejected this endpoint configuration"
+                                lastErrorMessage = "Server rejected this endpoint configuration",
+                                diagnosticMessage = "HTTP 403 while replaying seq=${batch.first().seq}..${batch.last().seq}"
                             )
                             break
                         }
@@ -661,7 +691,8 @@ internal class PulseBarEndpointReporter {
                                 serverStatus = "unavailable",
                                 lastStatus = "replay:http:${result.statusCode}",
                                 lastFailureAtIso8601 = attemptAtIso8601,
-                                lastErrorMessage = "Ingest returned HTTP ${result.statusCode}"
+                                lastErrorMessage = "Ingest returned HTTP ${result.statusCode}",
+                                diagnosticMessage = "HTTP ${result.statusCode} while replaying seq=${batch.first().seq}..${batch.last().seq}"
                             )
                             break
                         }
@@ -678,7 +709,8 @@ internal class PulseBarEndpointReporter {
                         clientStatus = "available",
                         lastStatus = "replay:ok:${checkpoint.acknowledgedSeqMax}",
                         lastSuccessAtIso8601 = attemptAtIso8601,
-                        lastErrorMessage = null
+                        lastErrorMessage = null,
+                        diagnosticMessage = "ack acceptedSeqMax=${checkpoint.acknowledgedSeqMax} pending=${rawJournal.pendingCount(endpoint.id)}"
                     )
                     requestReplay(endpoint.id, reason = "ack")
                 }
@@ -688,11 +720,16 @@ internal class PulseBarEndpointReporter {
     private fun maybeReplayPending(endpoint: ReporterEndpoint, force: Boolean) {
         val nowMillis = nativeCurrentTimeMillis()
         if (isConfigurationBlocked(endpoint)) {
+            recordReplayDiagnostic(endpoint.id, "replay skipped: configuration_blocked pending=${rawJournal.pendingCount(endpoint.id)}")
             logReplaySkip(endpoint, "configuration_blocked")
             return
         }
         val state = stateFor(endpoint.id)
         if (state.serverStatus != "available") {
+            recordReplayDiagnostic(
+                endpoint.id,
+                "replay skipped: server_not_available status=${state.status} server=${state.serverStatus} client=${state.clientStatus} pending=${rawJournal.pendingCount(endpoint.id)} force=$force"
+            )
             logReplaySkip(
                 endpoint = endpoint,
                 reason = "server_not_available status=${state.status} serverStatus=${state.serverStatus} clientStatus=${state.clientStatus}"
@@ -702,6 +739,7 @@ internal class PulseBarEndpointReporter {
         if (!force) {
             val lastIssuedAt = lastReplayIssuedAtMillis[endpoint.id]
             if (lastIssuedAt != null && nowMillis - lastIssuedAt < replayIntervalMillis) {
+                recordReplayDiagnostic(endpoint.id, "replay skipped: interval remaining=${replayIntervalMillis - (nowMillis - lastIssuedAt)}ms pending=${rawJournal.pendingCount(endpoint.id)}")
                 logReplaySkip(endpoint, "replay_interval")
                 return
             }
@@ -713,8 +751,12 @@ internal class PulseBarEndpointReporter {
     private fun requestReplay(endpointId: String, reason: String) {
         val result = replayEvents.trySend(endpointId)
         if (result.isSuccess) {
-            writeHttpLog("event kind=replay endpoint=$endpointId reason=$reason")
+            val queuedCount = (replayQueuedCounts[endpointId] ?: 0) + 1
+            replayQueuedCounts[endpointId] = queuedCount
+            recordReplayDiagnostic(endpointId, "replay queued #$queuedCount reason=$reason pending=${rawJournal.pendingCount(endpointId)}")
+            writeHttpLog("event kind=replay endpoint=$endpointId reason=$reason queued=$queuedCount pending=${rawJournal.pendingCount(endpointId)}")
         } else {
+            recordReplayDiagnostic(endpointId, "replay queue failed reason=$reason error=${result.exceptionOrNull()?.message ?: "unknown"}")
             writeHttpLog("event kind=replay_drop endpoint=$endpointId reason=$reason error=${result.exceptionOrNull()?.message ?: "unknown"}")
         }
     }
@@ -724,9 +766,11 @@ internal class PulseBarEndpointReporter {
             for (endpointId in replayEvents) {
                 val endpoint = probeEndpoints.firstOrNull { it.id == endpointId }
                 if (endpoint == null) {
+                    recordReplayDiagnostic(endpointId, "replay dropped by loop: endpoint_not_active active=${probeEndpoints.map { it.id }.joinToString(",")}")
                     writeHttpLog("skip kind=ingest endpoint=$endpointId reason=endpoint_not_active")
                     continue
                 }
+                recordReplayDiagnostic(endpointId, "replay loop picked endpoint pending=${rawJournal.pendingCount(endpointId)}")
                 replayPending(endpoint)
             }
         }
@@ -765,7 +809,8 @@ internal class PulseBarEndpointReporter {
             status = "checking_server",
             serverStatus = "checking",
             clientStatus = "available",
-            lastProbeAtIso8601 = probeAtIso8601
+            lastProbeAtIso8601 = probeAtIso8601,
+            diagnosticMessage = "probe start GET ${endpoint.probeUrl}"
         )
         logHttpRequest(
             kind = "probe",
@@ -798,7 +843,8 @@ internal class PulseBarEndpointReporter {
                 status = "healthy",
                 serverStatus = "available",
                 clientStatus = "available",
-                lastProbeAtIso8601 = probeAtIso8601
+                lastProbeAtIso8601 = probeAtIso8601,
+                diagnosticMessage = "probe ok HTTP ${probeResult.statusCode}"
             )
         } else if (result.exceptionOrNull()?.let(::isLocalNetworkUnavailable) == true) {
             syncStates[endpoint.id] = stateFor(endpoint.id).copy(
@@ -806,14 +852,17 @@ internal class PulseBarEndpointReporter {
                 serverStatus = "unknown",
                 clientStatus = "available",
                 lastProbeAtIso8601 = probeAtIso8601,
-                lastErrorMessage = result.exceptionOrNull()?.message ?: result.exceptionOrNull()?.let { it::class.simpleName }
+                lastErrorMessage = result.exceptionOrNull()?.message ?: result.exceptionOrNull()?.let { it::class.simpleName },
+                diagnosticMessage = "probe local unavailable: ${result.exceptionOrNull()?.message ?: "unknown"}"
             )
         } else {
             syncStates[endpoint.id] = stateFor(endpoint.id).copy(
                 status = "server_unavailable",
                 serverStatus = "unavailable",
                 clientStatus = "available",
-                lastProbeAtIso8601 = probeAtIso8601
+                lastProbeAtIso8601 = probeAtIso8601,
+                diagnosticMessage = probeResult?.let { "probe unavailable HTTP ${it.statusCode}" }
+                    ?: "probe failed: ${result.exceptionOrNull()?.message ?: "unknown"}"
             )
         }
     }
@@ -826,6 +875,8 @@ internal class PulseBarEndpointReporter {
         replayMutexes.keys.retainAll(activeEndpointIds)
         lastReplayIssuedAtMillis.keys.retainAll(activeEndpointIds)
         lastReplaySkipLogAtMillis.keys.retainAll(activeEndpointIds)
+        replayQueuedCounts.keys.retainAll(activeEndpointIds)
+        replayStartedCounts.keys.retainAll(activeEndpointIds)
         configurationBlocks.keys.retainAll(activeEndpointIds)
         probeEndpoints = probeEndpoints.filter { it.id in activeEndpointIds }
     }
@@ -838,6 +889,27 @@ internal class PulseBarEndpointReporter {
         writeHttpLog("skip kind=ingest endpoint=${endpoint.id} reason=$reason")
     }
 
+    private fun recordReplayDiagnostic(endpointId: String, message: String) {
+        syncStates[endpointId] = stateFor(endpointId).copy(diagnosticMessage = message.take(600))
+    }
+
+    private fun buildDiagnosticMessage(
+        endpointId: String,
+        runtimeState: EndpointSyncSnapshot,
+        pendingCount: Int,
+        acknowledgedSeqMax: Long?
+    ): String = buildString {
+        append(runtimeState.diagnosticMessage ?: "no diagnostic yet")
+        append(" | pending=")
+        append(pendingCount)
+        append(" ack=")
+        append(acknowledgedSeqMax ?: 0L)
+        append(" queued=")
+        append(replayQueuedCounts[endpointId] ?: 0)
+        append(" started=")
+        append(replayStartedCounts[endpointId] ?: 0)
+    }
+
     private fun recordTransportFailure(endpoint: ReporterEndpoint, attemptAtIso8601: String, error: Throwable) {
         val reason = error.message ?: error::class.simpleName ?: "unknown"
         if (isLocalNetworkUnavailable(error)) {
@@ -848,7 +920,8 @@ internal class PulseBarEndpointReporter {
                 clientStatus = "available",
                 lastStatus = "replay:local_unavailable",
                 lastFailureAtIso8601 = attemptAtIso8601,
-                lastErrorMessage = reason
+                lastErrorMessage = reason,
+                diagnosticMessage = "transport local unavailable: ${reason.take(300)}"
             )
             return
         }
@@ -862,7 +935,8 @@ internal class PulseBarEndpointReporter {
             clientStatus = "available",
             lastStatus = "replay:error",
             lastFailureAtIso8601 = attemptAtIso8601,
-            lastErrorMessage = reason
+            lastErrorMessage = reason,
+            diagnosticMessage = "transport/server failure: ${reason.take(300)}"
         )
     }
 
@@ -991,7 +1065,8 @@ private data class EndpointSyncSnapshot(
     val lastProbeAtIso8601: String? = null,
     val lastSuccessAtIso8601: String? = null,
     val lastFailureAtIso8601: String? = null,
-    val lastErrorMessage: String? = null
+    val lastErrorMessage: String? = null,
+    val diagnosticMessage: String? = null
 )
 
 private fun EndpointSyncSnapshot.isConfigurationError(): Boolean =

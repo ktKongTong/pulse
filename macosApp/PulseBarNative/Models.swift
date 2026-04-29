@@ -66,6 +66,7 @@ struct EndpointSyncStatusInfo: Identifiable, Equatable {
     let lastSuccessAt: Date?
     let lastFailureAt: Date?
     let lastErrorMessage: String?
+    let diagnosticMessage: String?
     let acknowledgedSeqMax: Int
     let acknowledgedAt: Date?
 }

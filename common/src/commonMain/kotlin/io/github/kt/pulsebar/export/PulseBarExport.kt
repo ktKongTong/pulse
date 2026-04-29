@@ -149,6 +149,7 @@ class PulseBarEndpointSyncState(
     val lastSuccessAtIso8601: String?,
     val lastFailureAtIso8601: String?,
     val lastErrorMessage: String?,
+    val diagnosticMessage: String?,
     val acknowledgedSeqMax: Long,
     val acknowledgedAtIso8601: String?
 )

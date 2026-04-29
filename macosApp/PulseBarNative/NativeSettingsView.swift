@@ -350,6 +350,9 @@ private struct EndpointSyncCard: View {
                 key: "Delivery",
                 value: syncStatusDetail(endpoint.status, endpoint.lastStatus, endpoint.lastErrorMessage)
             )
+            if let diagnostic = endpoint.diagnosticMessage, !diagnostic.isEmpty {
+                DashboardKeyValueRow(key: "Diagnostic", value: diagnostic)
+            }
             DashboardKeyValueRow(key: "Last Probe", value: formatSyncDate(endpoint.lastProbeAt))
             DashboardKeyValueRow(key: "Last Success", value: formatSyncDate(endpoint.lastSuccessAt))
             DashboardKeyValueRow(key: "Last Failure", value: formatSyncDate(endpoint.lastFailureAt))
