@@ -4,12 +4,10 @@ import { defineConfig } from "vite-plus";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
-export default defineConfig({
 
-  test: {
-    environment: "node",
-    include: ["test/**/*.test.ts"],
-  },
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+
+export default defineConfig({
   plugins: [
     cloudflare({
       viteEnvironment: { name: "ssr" },

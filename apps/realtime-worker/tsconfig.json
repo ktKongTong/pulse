@@ -7,7 +7,9 @@
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "paths": {
-      "@/*": ["./app/*"],
+      "@test/*": ["./test/*"],
+      "@/*": ["./src/*"],
+      "~/*": ["./src/api/*"],
       "*": ["./*"]
     },
     "strict": true,
@@ -25,8 +27,8 @@
     "**/.client/**/*.tsx",
     "worker-configuration.d.ts",
     "src/**/*.ts",
-    "app/**/*.ts",
-    "app/**/*.tsx",
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
     "react-router.config.ts",
     "vite.config.ts",
     "test/**/*.ts"

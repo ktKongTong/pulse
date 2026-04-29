@@ -40,6 +40,7 @@
     "@rolldown/plugin-babel": "catalog:",
     "drizzle-kit": "catalog:drizzle",
     "@cloudflare/vite-plugin": "catalog:worker",
+    "@cloudflare/vitest-pool-workers": "catalog:worker",
     "@cloudflare/workers-types": "catalog:worker",
     "@react-router/dev": "catalog:react-router",
     "@tailwindcss/vite": "catalog:tailwindcss",

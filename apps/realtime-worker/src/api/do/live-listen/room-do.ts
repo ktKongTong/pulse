@@ -57,6 +57,7 @@ export class LiveListenRoom extends DurableObject<Env> {
     roomId = "live-listen:owner",
   ): Promise<LiveListenSnapshot> {
     const state = await this.loadState(workspaceId, roomId);
+    this.assertWorkspaceAndRoom(workspaceId, roomId, state);
     await this.refreshExpirations(state);
     return this.snapshot(state);
   }
@@ -66,6 +67,7 @@ export class LiveListenRoom extends DurableObject<Env> {
     roomId = "live-listen:owner",
   ): Promise<Response> {
     const state = await this.loadState(workspaceId, roomId);
+    this.assertWorkspaceAndRoom(workspaceId, roomId, state);
     await this.refreshExpirations(state);
     return this.handleEvents(state);
   }
@@ -78,13 +80,16 @@ export class LiveListenRoom extends DurableObject<Env> {
     this.assertWorkspaceAndRoom(payload.workspaceId, payload.roomId, state);
 
     const now = Date.now();
-    const updatedAt = new Date(now).toISOString();
+    const updatedAt = payload.requestedAt;
     state.state = "starting";
     state.hostDeviceId = payload.hostDeviceId;
     state.startedAt = updatedAt;
     state.updatedAt = updatedAt;
     state.audio = payload.audio ?? this.defaultAudioSession(state);
+    state.media = undefined;
+    state.clock = undefined;
     state.error = undefined;
+    state.listeners = {};
     state.lastHostHeartbeatMs = now;
     state.endedAtMs = undefined;
     state.revision += 1;
@@ -108,6 +113,7 @@ export class LiveListenRoom extends DurableObject<Env> {
     state.hostDeviceId = payload.hostDeviceId;
     state.state = "live";
     state.updatedAt = payload.sentAt;
+    state.startedAt ??= payload.sentAt;
     state.media = payload.media ?? state.media;
     state.clock = payload.clock ?? state.clock;
     state.lastHostHeartbeatMs = Date.now();
@@ -153,7 +159,12 @@ export class LiveListenRoom extends DurableObject<Env> {
     const payload = LiveListenListenerJoinRequestSchema.parse(request);
     const state = await this.loadState(payload.workspaceId, payload.roomId);
     this.assertWorkspaceAndRoom(payload.workspaceId, payload.roomId, state);
+    await this.refreshExpirations(state);
+    if (state.state !== "starting" && state.state !== "live") {
+      throw new Error("live_listen_not_active");
+    }
 
+    const existing = state.listeners[payload.participantId];
     state.listeners[payload.participantId] = {
       participantId: payload.participantId,
       updatedAtMs: Date.parse(payload.joinedAt) || Date.now(),
@@ -164,15 +175,19 @@ export class LiveListenRoom extends DurableObject<Env> {
 
     await this.persist(state);
     await this.scheduleAlarm(state);
-    await this.broadcast({
-      protocol: LIVE_LISTEN_STREAM_PROTOCOL_V1,
-      kind: "participant.joined",
-      workspaceId: state.workspaceId,
-      roomId: state.roomId,
-      revision: state.revision,
-      participantId: payload.participantId,
-      snapshot: this.snapshot(state),
-    });
+    if (existing) {
+      await this.broadcastSnapshot(state);
+    } else {
+      await this.broadcast({
+        protocol: LIVE_LISTEN_STREAM_PROTOCOL_V1,
+        kind: "participant.joined",
+        workspaceId: state.workspaceId,
+        roomId: state.roomId,
+        revision: state.revision,
+        participantId: payload.participantId,
+        snapshot: this.snapshot(state),
+      });
+    }
     return this.tokenResponse(state, "listener", payload.participantId);
   }
 
@@ -182,6 +197,7 @@ export class LiveListenRoom extends DurableObject<Env> {
     const payload = LiveListenListenerLeaveRequestSchema.parse(request);
     const state = await this.loadState(payload.workspaceId, payload.roomId);
     this.assertWorkspaceAndRoom(payload.workspaceId, payload.roomId, state);
+    if (!state.listeners[payload.participantId]) return this.snapshot(state);
 
     delete state.listeners[payload.participantId];
     state.updatedAt = payload.leftAt;
@@ -216,14 +232,18 @@ export class LiveListenRoom extends DurableObject<Env> {
 
   private handleEvents(state: StoredLiveListenState): Response {
     const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
+        streamController = controller;
         this.sseClients.add(controller);
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(this.snapshotEnvelope(state))}\n\n`),
         );
       },
-      cancel: () => {},
+      cancel: () => {
+        if (streamController) this.sseClients.delete(streamController);
+      },
     });
 
     return new Response(stream, {
@@ -324,6 +344,8 @@ export class LiveListenRoom extends DurableObject<Env> {
       state.state = "offline";
       state.updatedAt = new Date(nowMs).toISOString();
       state.lastHostHeartbeatMs = undefined;
+      state.hostDeviceId = undefined;
+      state.audio = undefined;
       state.error = { code: "host_timeout", message: "Host heartbeat timed out." };
       changed = true;
     }
@@ -338,6 +360,8 @@ export class LiveListenRoom extends DurableObject<Env> {
       state.hostDeviceId = undefined;
       state.startedAt = undefined;
       state.audio = undefined;
+      state.media = undefined;
+      state.clock = undefined;
       state.error = undefined;
       changed = true;
     }
@@ -360,7 +384,11 @@ export class LiveListenRoom extends DurableObject<Env> {
     }
 
     const next = candidates.filter((value) => value > now).sort((a, b) => a - b)[0];
-    if (next) await this.ctx.storage.setAlarm(next);
+    if (next) {
+      await this.ctx.storage.setAlarm(next);
+    } else {
+      await this.ctx.storage.deleteAlarm();
+    }
   }
 
   private async broadcastSnapshot(state: StoredLiveListenState) {

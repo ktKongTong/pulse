@@ -78,6 +78,9 @@ catalogs:
     '@cloudflare/vite-plugin':
       specifier: ^1.34.0
       version: 1.34.0
+    '@cloudflare/vitest-pool-workers':
+      specifier: 0.15.1
+      version: 0.15.1
     '@cloudflare/workers-types':
       specifier: ^4.20260426.1
       version: 4.20260426.1
@@ -155,6 +158,9 @@ importers:
       '@cloudflare/vite-plugin':
         specifier: catalog:worker
         version: 1.34.0(@voidzero-dev/vite-plus-core@0.1.20(@types/node@24.12.2)(@typescript/native-preview@7.0.0-dev.20260423.1)(esbuild@0.27.7)(jiti@2.6.1))(workerd@1.20260426.1)(wrangler@4.86.0(@cloudflare/workers-types@4.20260426.1))
+      '@cloudflare/vitest-pool-workers':
+        specifier: catalog:worker
+        version: 0.15.1(@cloudflare/workers-types@4.20260426.1)(@vitest/runner@4.1.5)(@vitest/snapshot@4.1.5)(@voidzero-dev/vite-plus-test@0.1.20(@types/node@24.12.2)(@typescript/native-preview@7.0.0-dev.20260423.1)(@voidzero-dev/vite-plus-core@0.1.20(@types/node@24.12.2)(@typescript/native-preview@7.0.0-dev.20260423.1)(esbuild@0.27.7)(jiti@2.6.1))(esbuild@0.27.7)(jiti@2.6.1))
       '@cloudflare/workers-types':
         specifier: catalog:worker
         version: 4.20260426.1
@@ -487,6 +493,13 @@ packages:
     peerDependencies:
       vite: ^6.1.0 || ^7.0.0 || ^8.0.0
       wrangler: ^4.86.0
+
+  '@cloudflare/vitest-pool-workers@0.15.1':
+    resolution: {integrity: sha512-KNcVvzEmjkTBnymgs0EZXSLKF7bSFMFYj8DID24J4c84SxI55hRUIdq6L1PG8midv+y7ep52Tr81u9Ou0a4bSQ==}
+    peerDependencies:
+      '@vitest/runner': ^4.1.0
+      '@vitest/snapshot': ^4.1.0
+      vitest: ^4.1.0
 
   '@cloudflare/workerd-darwin-64@1.20260426.1':
     resolution: {integrity: sha512-Ch7DqsmYzSQRTY87pZpsGsFVz9VVBnLPnCBOHxKt1HH25a7oMu1w1PbPWqVmE0VerCLsj/TScX7Ob3v6E14TZw==}
@@ -2117,6 +2130,18 @@ packages:
       babel-plugin-react-compiler:
         optional: true
 
+  '@vitest/pretty-format@4.1.5':
+    resolution: {integrity: sha512-7I3q6l5qr03dVfMX2wCo9FxwSJbPdwKjy2uu/YPpU3wfHvIL4QHwVRp57OfGrDFeUJ8/8QdfBKIV12FTtLn00g==}
+
+  '@vitest/runner@4.1.5':
+    resolution: {integrity: sha512-2D+o7Pr82IEO46YPpoA/YU0neeyr6FTerQb5Ro7BUnBuv6NQtT/kmVnczngiMEBhzgqz2UZYl5gArejsyERDSQ==}
+
+  '@vitest/snapshot@4.1.5':
+    resolution: {integrity: sha512-zypXEt4KH/XgKGPUz4eC2AvErYx0My5hfL8oDb1HzGFpEk1P62bxSohdyOmvz+d9UJwanI68MKwr2EquOaOgMQ==}
+
+  '@vitest/utils@4.1.5':
+    resolution: {integrity: sha512-76wdkrmfXfqGjueGgnb45ITPyUi1ycZ4IHgC2bhPDUfWHklY/q3MdLOAB+TF1e6xfl8NxNY0ZYaPCFNWSsw3Ug==}
+
   '@voidzero-dev/vite-plus-core@0.1.20':
     resolution: {integrity: sha512-4KmzRfzwTeG3JuvDijrdqWusSgRvLMKDPrVsDdtbDVVjEMq0VnM8lSH+Nvepd6Pg+SuSVUP212OIfH/3Yn1bfA==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2390,6 +2415,9 @@ packages:
   chokidar@4.0.3:
     resolution: {integrity: sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA==}
     engines: {node: '>= 14.16.0'}
+
+  cjs-module-lexer@1.4.3:
+    resolution: {integrity: sha512-9z8TZaGM1pfswYeXrUpzPrkx8UnWYdhJclsiYMm6x/w5+nN+8Tf/LnAgfLGQCm59qAOxU8WwHEq2vNwF6i4j+Q==}
 
   class-variance-authority@0.7.1:
     resolution: {integrity: sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==}
@@ -3848,6 +3876,10 @@ packages:
     resolution: {integrity: sha512-Pugqs6M0m7Lv1I7FtxN4aoyToKg1C4tu+/381vH35y8oENM/Ai7f7C4StcoK4/+BSw9ebcS8jRiVrORFKCALLw==}
     engines: {node: ^20.0.0 || >=22.0.0}
 
+  tinyrainbow@3.1.0:
+    resolution: {integrity: sha512-Bf+ILmBgretUrdJxzXM0SgXLZ3XfiaUuOj/IKQHuTXip+05Xn+uyEYdVg0kYDipTBcLrCVyUzAPz7QmArb0mmw==}
+    engines: {node: '>=14.0.0'}
+
   tldts-core@7.0.28:
     resolution: {integrity: sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==}
 
@@ -4558,6 +4590,21 @@ snapshots:
       - bufferutil
       - utf-8-validate
       - workerd
+
+  '@cloudflare/vitest-pool-workers@0.15.1(@cloudflare/workers-types@4.20260426.1)(@vitest/runner@4.1.5)(@vitest/snapshot@4.1.5)(@voidzero-dev/vite-plus-test@0.1.20(@types/node@24.12.2)(@typescript/native-preview@7.0.0-dev.20260423.1)(@voidzero-dev/vite-plus-core@0.1.20(@types/node@24.12.2)(@typescript/native-preview@7.0.0-dev.20260423.1)(esbuild@0.27.7)(jiti@2.6.1))(esbuild@0.27.7)(jiti@2.6.1))':
+    dependencies:
+      '@vitest/runner': 4.1.5
+      '@vitest/snapshot': 4.1.5
+      cjs-module-lexer: 1.4.3
+      esbuild: 0.27.3
+      miniflare: 4.20260426.0
+      vitest: '@voidzero-dev/vite-plus-test@0.1.20(@types/node@24.12.2)(@typescript/native-preview@7.0.0-dev.20260423.1)(esbuild@0.27.7)(jiti@2.6.1)(vite@8.0.10(@types/node@24.12.2)(esbuild@0.27.7)(jiti@2.6.1))'
+      wrangler: 4.86.0(@cloudflare/workers-types@4.20260426.1)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@cloudflare/workers-types'
+      - bufferutil
+      - utf-8-validate
 
   '@cloudflare/workerd-darwin-64@1.20260426.1':
     optional: true
@@ -5627,6 +5674,28 @@ snapshots:
       '@rolldown/plugin-babel': 0.2.3(@babel/core@7.29.0)(@babel/runtime@7.29.2)(@voidzero-dev/vite-plus-core@0.1.20(@types/node@24.12.2)(@typescript/native-preview@7.0.0-dev.20260423.1)(esbuild@0.27.7)(jiti@2.6.1))(rolldown@1.0.0-rc.17)
       babel-plugin-react-compiler: 1.0.0
 
+  '@vitest/pretty-format@4.1.5':
+    dependencies:
+      tinyrainbow: 3.1.0
+
+  '@vitest/runner@4.1.5':
+    dependencies:
+      '@vitest/utils': 4.1.5
+      pathe: 2.0.3
+
+  '@vitest/snapshot@4.1.5':
+    dependencies:
+      '@vitest/pretty-format': 4.1.5
+      '@vitest/utils': 4.1.5
+      magic-string: 0.30.21
+      pathe: 2.0.3
+
+  '@vitest/utils@4.1.5':
+    dependencies:
+      '@vitest/pretty-format': 4.1.5
+      convert-source-map: 2.0.0
+      tinyrainbow: 3.1.0
+
   '@voidzero-dev/vite-plus-core@0.1.20(@types/node@24.12.2)(@typescript/native-preview@7.0.0-dev.20260423.1)(esbuild@0.27.7)(jiti@2.6.1)':
     dependencies:
       '@oxc-project/runtime': 0.127.0
@@ -5840,6 +5909,8 @@ snapshots:
   chokidar@4.0.3:
     dependencies:
       readdirp: 4.1.2
+
+  cjs-module-lexer@1.4.3: {}
 
   class-variance-authority@0.7.1:
     dependencies:
@@ -7316,6 +7387,8 @@ snapshots:
       picomatch: 4.0.4
 
   tinypool@2.1.0: {}
+
+  tinyrainbow@3.1.0: {}
 
   tldts-core@7.0.28: {}
 

@@ -1,11 +1,5 @@
+import { dedupeReadersBySession, mapReaderToSessionPreview, mapReaderToPageSessionPreview, buildActivePages } from "@/api/runtime/room-view-helpers";
 import { describe, expect, it } from "vitest";
-
-import {
-  buildActivePages,
-  dedupeReadersBySession,
-  mapReaderToPageSessionPreview,
-  mapReaderToSessionPreview,
-} from "../src/room-view-helpers";
 
 describe("room view helpers", () => {
   const readers = [

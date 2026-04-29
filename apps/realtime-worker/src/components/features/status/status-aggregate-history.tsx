@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { StatsPeriod } from "@pulse/realtime-protocol";
 
-import { DeviceFocusChart } from "@/components/features/status/hero/focus/device-focus-chart";
+import { DeviceFocusChart } from "./hero/focus/device-focus-chart";
 import { useOwnerStats, useSiteStats } from "@pulse/realtime-react";
 
 const PERIODS: StatsPeriod[] = ["day", "month", "year"];

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import {
@@ -46,7 +46,9 @@ liveListenRoutes.post(
   async (c) => {
     const payload = c.req.valid("json");
     if (payload.workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-    return c.json(await liveListenStub(c.env, payload.workspaceId, payload.roomId).startHost(payload));
+    return sendLiveListenResult(c, () =>
+      liveListenStub(c.env, payload.workspaceId, payload.roomId).startHost(payload),
+    );
   },
 );
 
@@ -57,7 +59,9 @@ liveListenRoutes.post(
   async (c) => {
     const payload = c.req.valid("json");
     if (payload.workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-    return c.json(await liveListenStub(c.env, payload.workspaceId, payload.roomId).heartbeatHost(payload));
+    return sendLiveListenResult(c, () =>
+      liveListenStub(c.env, payload.workspaceId, payload.roomId).heartbeatHost(payload),
+    );
   },
 );
 
@@ -68,7 +72,9 @@ liveListenRoutes.post(
   async (c) => {
     const payload = c.req.valid("json");
     if (payload.workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-    return c.json(await liveListenStub(c.env, payload.workspaceId, payload.roomId).stopHost(payload));
+    return sendLiveListenResult(c, () =>
+      liveListenStub(c.env, payload.workspaceId, payload.roomId).stopHost(payload),
+    );
   },
 );
 
@@ -79,7 +85,9 @@ liveListenRoutes.post(
   async (c) => {
     const payload = c.req.valid("json");
     if (payload.workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-    return c.json(await liveListenStub(c.env, payload.workspaceId, payload.roomId).joinListener(payload));
+    return sendLiveListenResult(c, () =>
+      liveListenStub(c.env, payload.workspaceId, payload.roomId).joinListener(payload),
+    );
   },
 );
 
@@ -90,6 +98,24 @@ liveListenRoutes.post(
   async (c) => {
     const payload = c.req.valid("json");
     if (payload.workspaceId !== c.env.WORKSPACE_ID) return c.json({ error: "workspace_mismatch" }, 403);
-    return c.json(await liveListenStub(c.env, payload.workspaceId, payload.roomId).leaveListener(payload));
+    return sendLiveListenResult(c, () =>
+      liveListenStub(c.env, payload.workspaceId, payload.roomId).leaveListener(payload),
+    );
   },
 );
+
+async function sendLiveListenResult<T>(
+  c: Context<AppEnv>,
+  action: () => Promise<T>,
+): Promise<Response> {
+  try {
+    return c.json(await action());
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "live_listen_error";
+    if (code === "workspace_mismatch") return c.json({ error: code }, 403);
+    if (code === "room_mismatch") return c.json({ error: code }, 409);
+    if (code === "host_device_mismatch") return c.json({ error: code }, 409);
+    if (code === "live_listen_not_active") return c.json({ error: code }, 409);
+    throw error;
+  }
+}

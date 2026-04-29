@@ -1,12 +1,6 @@
+import { type RoomNamespaceLike, realtimeRoomId, roomStub, roomBindingName, roomNamespace } from "@/api/rpc/room-stub";
 import { describe, expect, it } from "vitest";
 
-import {
-  roomBindingName,
-  roomNamespace,
-  realtimeRoomId,
-  roomStub,
-  type RoomNamespaceLike,
-} from "../src/room-stub";
 
 describe("room websocket routing", () => {
   it("routes workspace and room to the same durable object name", () => {

@@ -10,7 +10,7 @@ import {
   buildContentHistory,
   buildOwnerHistory,
   buildSiteHistory,
-} from "../src/stats-query";
+} from "@/api/stats/query";
 
 describe("metrics api shapes", () => {
   it("produces protocol-compatible site history payloads", () => {

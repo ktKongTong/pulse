@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveAppIconAssetUrl } from "../app/lib/app-icon";
+import { resolveAppIconAssetUrl } from "@/lib/app-icon";
 
 describe("resolveAppIconAssetUrl", () => {
   it("reads macOS app mappings from app-icon.json", () => {

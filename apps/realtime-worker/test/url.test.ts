@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canonicalizeUrl, pageRoomId } from "../src/lib/url";
+import { canonicalizeUrl, pageRoomId } from "@/api/lib/url";
 
 describe("canonicalizeUrl", () => {
   it("removes hash and tracking query params", () => {

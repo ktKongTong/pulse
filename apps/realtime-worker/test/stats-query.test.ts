@@ -6,7 +6,7 @@ import {
   buildOwnerHistory,
   buildOwnerLifetime,
   buildSiteHistory,
-} from "../src/stats-query";
+} from "@/api/stats/query";
 
 describe("stats-query", () => {
   it("groups site daily rows into monthly history buckets", () => {

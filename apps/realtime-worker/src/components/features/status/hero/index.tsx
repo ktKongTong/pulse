@@ -1,4 +1,4 @@
-import { FocusSwitcher } from "@/components/features/status/hero/focus/focus-switcher";
+import { FocusSwitcher } from "./focus/focus-switcher";
 import { MediaState } from "./media/media-v2";
 import { useOwnerStatus } from "@pulse/realtime-react";
 

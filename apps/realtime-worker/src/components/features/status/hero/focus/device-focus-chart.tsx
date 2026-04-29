@@ -1,6 +1,6 @@
 import type { OwnerStats } from "@pulse/realtime-react";
 
-import { AggregateBarRow } from "@/components/features/status/hero/focus/aggregate-bar-row";
+import { AggregateBarRow } from "./aggregate-bar-row";
 
 export function DeviceFocusChart(props: { aggregate: OwnerStats | null }) {
   const aggregate = props.aggregate;

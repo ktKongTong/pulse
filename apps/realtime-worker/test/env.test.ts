@@ -7,7 +7,7 @@ import {
   webHeartbeatSeconds,
   webSessionTtlMs,
   type Env,
-} from "../src/env";
+} from "@/api/config/env";
 
 function env(overrides: Partial<Env> = {}): Env {
   return {

@@ -180,23 +180,23 @@ export type LiveListenAudioSession = z.infer<
 >;
 export type LiveListenError = z.infer<typeof LiveListenErrorSchema>;
 export type LiveListenSnapshot = z.infer<typeof LiveListenSnapshotSchema>;
-export type LiveListenHostStartRequest = z.infer<
+export type LiveListenHostStartRequest = z.input<
   typeof LiveListenHostStartRequestSchema
 >;
-export type LiveListenHostHeartbeatRequest = z.infer<
+export type LiveListenHostHeartbeatRequest = z.input<
   typeof LiveListenHostHeartbeatRequestSchema
 >;
-export type LiveListenHostStopRequest = z.infer<
+export type LiveListenHostStopRequest = z.input<
   typeof LiveListenHostStopRequestSchema
 >;
 export type LiveListenToken = z.infer<typeof LiveListenTokenSchema>;
 export type LiveListenTokenResponse = z.infer<
   typeof LiveListenTokenResponseSchema
 >;
-export type LiveListenListenerJoinRequest = z.infer<
+export type LiveListenListenerJoinRequest = z.input<
   typeof LiveListenListenerJoinRequestSchema
 >;
-export type LiveListenListenerLeaveRequest = z.infer<
+export type LiveListenListenerLeaveRequest = z.input<
   typeof LiveListenListenerLeaveRequestSchema
 >;
 export type LiveListenStreamEnvelope = z.infer<

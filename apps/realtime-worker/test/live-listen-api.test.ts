@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import app from "../src/index";
-import type { Env } from "../src/config/env";
+import app from "@/api/index";
+import type { Env } from "@/api/config/env";
 
 type StoredState = Record<string, unknown>;
 
@@ -74,6 +74,9 @@ class MemoryLiveListenStub {
   }
 
   async joinListener(payload: Record<string, unknown>) {
+    if (this.state.state !== "starting" && this.state.state !== "live") {
+      throw new Error("live_listen_not_active");
+    }
     this.state = {
       ...this.state,
       listenerCount: Number(this.state.listenerCount ?? 0) + 1,
@@ -195,6 +198,38 @@ describe("live listen api", () => {
   });
 
   it("allows same-origin listener joins and returns listener token", async () => {
+    const testEnv = env();
+    await app.fetch(
+      jsonRequest(
+        "/v1/live-listen/host/start",
+        {
+          workspaceId: "pulse-demo",
+          roomId: "live-listen:owner",
+          hostDeviceId: "macbook",
+          requestedAt: "2026-04-29T00:00:00.000Z",
+        },
+        { headers: { authorization: "Bearer device-secret" } },
+      ),
+      testEnv,
+    );
+
+    const response = await app.fetch(
+      jsonRequest("/v1/live-listen/listener/join", {
+        workspaceId: "pulse-demo",
+        roomId: "live-listen:owner",
+        participantId: "visitor-1",
+        joinedAt: "2026-04-29T00:00:02.000Z",
+      }),
+      testEnv,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { token: { role: string }; snapshot: { listenerCount: number } };
+    expect(body.token.role).toBe("listener");
+    expect(body.snapshot.listenerCount).toBe(1);
+  });
+
+  it("returns conflict when listener joins inactive room", async () => {
     const response = await app.fetch(
       jsonRequest("/v1/live-listen/listener/join", {
         workspaceId: "pulse-demo",
@@ -205,9 +240,7 @@ describe("live listen api", () => {
       env(),
     );
 
-    expect(response.status).toBe(200);
-    const body = await response.json() as { token: { role: string }; snapshot: { listenerCount: number } };
-    expect(body.token.role).toBe("listener");
-    expect(body.snapshot.listenerCount).toBe(1);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "live_listen_not_active" });
   });
 });

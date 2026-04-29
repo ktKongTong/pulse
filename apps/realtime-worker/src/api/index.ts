@@ -1,13 +1,7 @@
 import { Hono } from "hono";
-
-import { DeviceDO } from "./do/device/device-do";
 import type { Env } from "./config/env";
 import { applyCorsHeaders, handleOptions } from "./http/cors";
-import { InteractionHub } from "./do/interaction/hub-do";
-import { InteractionInbox } from "./do/interaction/inbox-do";
-import { LiveListenRoom } from "./do/live-listen/room-do";
 import { createWorkerLogger } from "./observability/logger";
-import { ChatRoom, GlobalStatusRoom, PageStatusRoom } from "./do/room";
 import { ingestRoutes } from "./routes/ingest";
 import { liveListenRoutes } from "./routes/live-listen";
 import { metaRoutes } from "./routes/meta";
@@ -44,12 +38,3 @@ app.onError((err, c) => {
 app.notFound((c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default app;
-export {
-  ChatRoom,
-  DeviceDO,
-  GlobalStatusRoom,
-  InteractionHub,
-  InteractionInbox,
-  LiveListenRoom,
-  PageStatusRoom,
-};
