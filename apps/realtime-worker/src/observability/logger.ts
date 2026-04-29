@@ -1,5 +1,5 @@
-import type { Env } from "./env";
-import { debugLoggingEnabled } from "./env";
+import type { Env } from "../config/env";
+import { debugLoggingEnabled } from "../config/env";
 
 type LogPayload = Error | Record<string, unknown> | string | number | boolean | null | undefined;
 

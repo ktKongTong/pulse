@@ -3,16 +3,16 @@ import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type {
   RoomSnapshot,
 } from "@pulse/realtime-protocol";
-import * as schema from "./db/schema";
-import { loadDrizzleMigrations } from "./db/migrations";
-import type { Env } from "./env";
-import { aggregateFlushMs } from "./env";
-import { createWorkerLogger } from "./logger";
+import * as schema from "../../db/schema";
+import { loadDrizzleMigrations } from "../../db/migrations";
+import type { Env } from "../../config/env";
+import { aggregateFlushMs } from "../../config/env";
+import { createWorkerLogger } from "../../observability/logger";
 import {
   SessionDO,
   type RoomSessionConnectionRecord,
   type RoomSessionConnectionState,
-} from "./session-do";
+} from "../session";
 
 const migrations = loadDrizzleMigrations();
 

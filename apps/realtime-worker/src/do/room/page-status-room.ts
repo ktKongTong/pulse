@@ -12,9 +12,9 @@ import { BaseRoom, type WebIngestEvent } from "./base-room";
 import type {
   RoomSessionConnectionRecord,
   RoomSessionConnectionState,
-} from "./session-do";
-import { dedupeReadersBySession, mapReaderToPageSessionPreview, SESSION_PREVIEW_LIMIT } from "./room-view-helpers";
-import type { ActiveReaderState } from "./runtime-models";
+} from "../session";
+import { dedupeReadersBySession, mapReaderToPageSessionPreview, SESSION_PREVIEW_LIMIT } from "../../runtime/room-view-helpers";
+import type { ActiveReaderState } from "../../runtime/models";
 
 interface PageStatusConnectionState extends RoomSessionConnectionState {
   presenceContext?: {

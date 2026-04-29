@@ -201,6 +201,7 @@ export const RealtimeCapabilitiesSchema = z.object({
   chat: z.boolean(),
   richMedia: z.boolean(),
   interaction: z.boolean(),
+  liveListen: z.boolean().optional(),
 });
 
 export const RealtimeMetaResponseSchema = z.object({
@@ -213,6 +214,7 @@ export const RealtimeMetaResponseSchema = z.object({
   capabilities: RealtimeCapabilitiesSchema,
   interactionProtocols: z.array(z.string()).default([]),
   supportedInteractionCommands: z.array(z.string()).default([]),
+  liveListenProtocols: z.array(z.string()).default([]),
 });
 
 export const RealtimeHelloSchema = z.object({

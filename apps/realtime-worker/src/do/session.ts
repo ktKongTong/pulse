@@ -9,8 +9,8 @@ import {
   type RealtimeClientMessage,
   type RoomSnapshot,
 } from "@pulse/realtime-protocol";
-import type { Env } from "./env";
-import { createWorkerLogger } from "./logger";
+import type { Env } from "../config/env";
+import { createWorkerLogger } from "../observability/logger";
 
 export interface RoomSessionConnectionState {
   workspaceId: string;

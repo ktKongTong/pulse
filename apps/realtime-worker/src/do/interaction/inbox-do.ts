@@ -7,7 +7,7 @@ import {
   type InteractionState
 } from "@pulse/realtime-protocol";
 
-import type { Env } from "./env";
+import type { Env } from "../../config/env";
 
 interface StoredInboxState {
   workspaceId: string;

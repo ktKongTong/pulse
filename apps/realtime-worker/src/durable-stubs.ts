@@ -1,16 +1,23 @@
 import type {
   ContentHistoryPoint,
   ContentLifetime,
+  LiveListenHostHeartbeatRequest,
+  LiveListenHostStartRequest,
+  LiveListenHostStopRequest,
+  LiveListenListenerJoinRequest,
+  LiveListenListenerLeaveRequest,
   OwnerHistoryPoint,
   OwnerLifetime,
   PresenceIngestAck,
+  LiveListenSnapshot,
+  LiveListenTokenResponse,
   RoomSnapshot,
   SiteHistoryPoint,
   SiteLifetime,
   StatsPeriod,
 } from "@pulse/realtime-protocol";
 
-import type { DevicePresenceState } from "./runtime-models";
+import type { DevicePresenceState } from "./runtime/models";
 
 export interface RoomRpc {
   getSiteHistory(
@@ -47,3 +54,16 @@ export interface DeviceRpc {
   handleHistoryIngest(payload: unknown): Promise<unknown>;
   getDeviceSnapshot(): Promise<unknown>;
 }
+
+export interface LiveListenRpc {
+  getSnapshot(workspaceId?: string, roomId?: string): Promise<LiveListenSnapshot>;
+  openEventStream(workspaceId?: string, roomId?: string): Promise<Response>;
+  startHost(request: LiveListenHostStartRequest): Promise<LiveListenTokenResponse>;
+  heartbeatHost(request: LiveListenHostHeartbeatRequest): Promise<LiveListenSnapshot>;
+  stopHost(request: LiveListenHostStopRequest): Promise<LiveListenSnapshot>;
+  joinListener(request: LiveListenListenerJoinRequest): Promise<LiveListenTokenResponse>;
+  leaveListener(request: LiveListenListenerLeaveRequest): Promise<LiveListenSnapshot>;
+}
+
+export type LiveListenStateResponse = LiveListenSnapshot;
+export type LiveListenJoinResponse = LiveListenTokenResponse;

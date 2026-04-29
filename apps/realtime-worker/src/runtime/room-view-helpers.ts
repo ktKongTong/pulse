@@ -3,7 +3,7 @@ import type {
   PageSession,
   SessionUser,
 } from "@pulse/realtime-protocol";
-import type { ActiveReaderState, DevicePresenceState } from "./runtime-models";
+import type { ActiveReaderState, DevicePresenceState } from "./models";
 
 export const SESSION_PREVIEW_LIMIT = 3;
 

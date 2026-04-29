@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createRequestHandler } from "react-router";
 
 import api from '../src/index'
-export { GlobalStatusRoom, PageStatusRoom, ChatRoom, InteractionHub, InteractionInbox, DeviceDO } from '../src/index'
+export { GlobalStatusRoom, PageStatusRoom, ChatRoom, InteractionHub, InteractionInbox, LiveListenRoom, DeviceDO } from '../src/index'
 const requestHandler = createRequestHandler(
   () => import("virtual:react-router/server-build"),
   import.meta.env.MODE

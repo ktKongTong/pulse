@@ -2,27 +2,35 @@ import { DurableObject } from "cloudflare:workers";
 import { drizzle } from 'drizzle-orm/durable-sqlite';
 import { migrate } from 'drizzle-orm/durable-sqlite/migrator';
 import { eq } from 'drizzle-orm';
-import * as schema from './db/schema';
-import { loadDrizzleMigrations } from "./db/migrations";
+import * as schema from '../../db/schema';
+import { loadDrizzleMigrations } from "../../db/migrations";
 
 import {
   PresenceIngestAckSchema,
   type PresenceIngestRequest,
 } from "@pulse/realtime-protocol";
 
-import type { RoomRpc } from "./durable-stubs";
-import type { Env } from "./env";
-import { createWorkerLogger } from "./logger";
-import type { DevicePresenceState } from "./runtime-models";
-import { realtimeRoomId } from "./room-stub";
-import { coerceNonNegativeInt, dayKeyFromIso } from "./stats-utils";
+import type { RoomRpc } from "../../durable-stubs";
+import type { Env } from "../../config/env";
+import { createWorkerLogger } from "../../observability/logger";
+import type { DevicePresenceState } from "../../runtime/models";
+import { realtimeRoomId } from "../../rpc/room-stub";
+import { coerceNonNegativeInt, dayKeyFromIso } from "../../stats/utils";
 
 const migrations = loadDrizzleMigrations();
+
+
+export function deviceStub(env: Env, workspaceId: string, deviceId: string) {
+  const id = env.DEVICE_DO.idFromName(`${workspaceId}:${deviceId}`);
+  return env.DEVICE_DO.get(id)
+}
+
+
 export class DeviceDO extends DurableObject<Env> {
   private db: ReturnType<typeof drizzle>;
   private workspaceId: string = "unknown";
   private deviceId: string = "unknown";
-  
+
   private currentState: DevicePresenceState | null = null;
   private readonly logger;
 
@@ -59,7 +67,7 @@ export class DeviceDO extends DurableObject<Env> {
   // High-performance hot state update
   async handlePresenceIngest(request: PresenceIngestRequest, ttlMs: number) {
     await this.initMetadata(request.workspaceId, request.deviceId);
-    
+
     const latestEvent = request.events[request.events.length - 1];
     if (latestEvent) {
       const previousState = this.currentState;
@@ -75,7 +83,7 @@ export class DeviceDO extends DurableObject<Env> {
           lastCountedAtMs: Date.parse(latestEvent.observedAt) || Date.now(),
         };
       }
-      
+
       if (this.currentState) {
         await this.ctx.storage.put("currentState", this.currentState);
       } else {
@@ -143,7 +151,7 @@ export class DeviceDO extends DurableObject<Env> {
         availability: latestEvent.state?.availability?.state ?? null,
         focus: latestEvent.state?.focus?.state ?? null,
       });
-      
+
       // Push state into RoomDO ('global'); websocket fan-out now stays inside each room-scoped RoomDO session layer.
       this.ctx.waitUntil(this.notifyRoomDO());
     }
@@ -200,7 +208,7 @@ export class DeviceDO extends DurableObject<Env> {
       const roomStub = this.env.GLOBAL_STATUS_ROOM.get(
         realtimeRoomId(this.env.GLOBAL_STATUS_ROOM, this.workspaceId, "global")
       ) as unknown as RoomRpc;
-      
+
       await roomStub.pushDeviceUpdate(this.workspaceId, "global", this.deviceId, this.currentState);
       this.logger.debug("notify room success", {
         workspaceId: this.workspaceId,

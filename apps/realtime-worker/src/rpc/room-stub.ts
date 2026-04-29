@@ -1,4 +1,4 @@
-import type { RoomRpc } from "./durable-stubs";
+import type { RoomRpc } from "../durable-stubs";
 
 export interface RoomNamespaceLike<TId = DurableObjectId, TStub = DurableObjectStub> {
   idFromName(name: string): TId;

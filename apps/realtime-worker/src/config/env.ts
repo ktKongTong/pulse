@@ -1,7 +1,8 @@
-import type { DeviceDO } from "./device-do";
-import type { InteractionHub } from "./interaction-hub-do";
-import type { InteractionInbox } from "./interaction-inbox-do";
-import type { ChatRoom, GlobalStatusRoom, PageStatusRoom } from "./room-do";
+import type { DeviceDO } from "../do/device/device-do";
+import type { InteractionHub } from "../do/interaction/hub-do";
+import type { InteractionInbox } from "../do/interaction/inbox-do";
+import type { LiveListenRoom } from "../do/live-listen/room-do";
+import type { ChatRoom, GlobalStatusRoom, PageStatusRoom } from "../do/room";
 
 export type Env = Cloudflare.Env & {
   GLOBAL_STATUS_ROOM: DurableObjectNamespace<GlobalStatusRoom>;
@@ -9,6 +10,7 @@ export type Env = Cloudflare.Env & {
   CHAT_ROOM: DurableObjectNamespace<ChatRoom>;
   INTERACTION_HUB: DurableObjectNamespace<InteractionHub>;
   INTERACTION_INBOX: DurableObjectNamespace<InteractionInbox>;
+  LIVE_LISTEN_ROOM: DurableObjectNamespace<LiveListenRoom>;
   DEVICE_DO: DurableObjectNamespace<DeviceDO>;
   ASSETS: Fetcher;
   WORKSPACE_ID: string;

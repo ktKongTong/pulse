@@ -22,6 +22,9 @@
   - [web-v1.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-protocol/src/web-v1.ts)
 - 统一房间流协议
   - [realtime-v2.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-protocol/src/realtime-v2.ts)
+- Live Listen audio-only 房间协议
+  - [live-listen-v1.ts](/Users/kt/Documents/Playground/pulse/packages/realtime-protocol/src/live-listen-v1.ts)
+  - [Live Listen MVP](/Users/kt/Documents/Playground/pulse/docs/live-listen-mvp.md)
 - Worker 路由
   - [index.ts](/Users/kt/Documents/Playground/pulse/apps/realtime-worker/src/index.ts)
 - Worker 房间聚合

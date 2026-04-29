@@ -6,7 +6,7 @@ import {
   type DeviceInteractionHello
 } from "@pulse/realtime-protocol";
 
-import type { Env } from "./env";
+import type { Env } from "../../config/env";
 
 interface RegisteredDevice {
   deviceId: string;

@@ -10,9 +10,9 @@ import { BaseRoom } from "./base-room";
 import type {
   RoomSessionConnectionRecord,
   RoomSessionConnectionState,
-} from "./session-do";
-import type { ChatMessageState, ChatParticipantState } from "./runtime-models";
-import * as schema from "./db/schema";
+} from "../session";
+import type { ChatMessageState, ChatParticipantState } from "../../runtime/models";
+import * as schema from "../../db/schema";
 
 interface ChatConnectionState extends RoomSessionConnectionState {
   chatMembership?: {

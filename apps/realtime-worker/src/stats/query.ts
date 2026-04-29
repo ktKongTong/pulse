@@ -8,12 +8,12 @@ import type {
   StatsPeriod,
 } from "@pulse/realtime-protocol";
 
-import * as schema from "./db/schema";
+import * as schema from "../db/schema";
 import {
   bucketForDay,
   coerceNonNegativeInt,
   compareBucketsDesc,
-} from "./stats-utils";
+} from "./utils";
 
 type GlobalDailyStatsRow = typeof schema.globalDailyStats.$inferSelect;
 type GlobalAppDailyStatsRow = typeof schema.globalAppDailyStats.$inferSelect;
