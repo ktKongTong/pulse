@@ -13,6 +13,7 @@ import type {
 } from "../session";
 import type { ChatMessageState, ChatParticipantState } from "../../runtime/models";
 import * as schema from "../../db/schema";
+import { desc } from "drizzle-orm";
 
 interface ChatConnectionState extends RoomSessionConnectionState {
   chatMembership?: {
@@ -52,9 +53,10 @@ export class ChatRoom extends BaseRoom<ChatConnectionState> {
     const chatRows = this.db
       .select()
       .from(schema.chatMessages)
+      .orderBy(desc(schema.chatMessages.createdAt))
+      .limit(50)
       .all()
-      .sort((left, right) => left.createdAt - right.createdAt)
-      .slice(-50);
+      .reverse();
     this.chatMessages = chatRows.map((row) => ({
       msgId: row.msgId,
       senderId: row.senderId,
