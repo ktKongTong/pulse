@@ -26,10 +26,10 @@
     "zod": "catalog:"
   },
   "peerDependencies": {
-    "react": "^19.0.0"
+    "react": "^19"
   },
   "devDependencies": {
-    "@types/react": "catalog:",
+    "@types/react": "catalog:react",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
