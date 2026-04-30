@@ -99,6 +99,29 @@ describe("partytracks api", () => {
     fetchMock.mockRestore();
   });
 
+
+  it("does not require PartyTracks session cookies for device CLI requests", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      Response.json({ tracks: [{ trackName: "host-audio", sessionId: "session-1" }] }),
+    );
+
+    const response = await app.fetch(
+      new Request("https://pulse.test/v1/live-listen/partytracks/sessions/session-1/tracks/new", {
+        method: "POST",
+        headers: { authorization: "Bearer device-secret" },
+        body: JSON.stringify({ tracks: [{ location: "local", trackName: "host-audio" }] }),
+      }),
+      env(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("https://rtc.live.cloudflare.com/v1/apps/sfu-app/sessions/session-1/tracks/new"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    fetchMock.mockRestore();
+  });
+
   it("rejects disallowed origins before proxying", async () => {
     const response = await app.fetch(
       new Request("https://pulse.test/v1/live-listen/partytracks/generate-ice-servers", {

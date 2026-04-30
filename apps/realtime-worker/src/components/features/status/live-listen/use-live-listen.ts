@@ -16,10 +16,11 @@ import {
   startPartyTracksAudioStats,
   type LiveListenAudioStats,
 } from "@/lib/webrtc-audio-stats";
+import { LIVE_LISTEN_RECEIVER_JITTER_BUFFER_MS } from "@/lib/config";
 
 type LiveListenConnectionState = "idle" | "joining" | "connected" | "listening" | "error";
 
-const LIVE_LISTEN_JITTER_BUFFER_MS = 1_500;
+const LIVE_LISTEN_JITTER_BUFFER_MS = LIVE_LISTEN_RECEIVER_JITTER_BUFFER_MS ?? 200;
 
 export function useLiveListen() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -27,10 +28,12 @@ export function useLiveListen() {
   const sinkSubscriptionRef = useRef<Subscription | null>(null);
   const statsSubscriptionRef = useRef<Subscription | null>(null);
   const transceiverSubscriptionRef = useRef<Subscription | null>(null);
+  const remoteTrackSubscriptionRef = useRef<Subscription | null>(null);
   const [snapshot, setSnapshot] = useState<LiveListenSnapshot | null>(null);
   const [connectionState, setConnectionState] = useState<LiveListenConnectionState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [audioStats, setAudioStats] = useState<LiveListenAudioStats>(() => emptyAudioStats("inbound"));
+  const [remoteAudioTrack, setRemoteAudioTrack] = useState<MediaStreamTrack | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -74,6 +77,7 @@ export function useLiveListen() {
       if (!audioElement) return;
       sinkSubscriptionRef.current?.unsubscribe();
       statsSubscriptionRef.current?.unsubscribe();
+      remoteTrackSubscriptionRef.current?.unsubscribe();
       const partyTracks = new PartyTracks({ prefix: partyTracksPrefix });
       partyTracksRef.current = partyTracks;
       statsSubscriptionRef.current = startPartyTracksAudioStats(partyTracks, "inbound", setAudioStats);
@@ -85,9 +89,11 @@ export function useLiveListen() {
         location: "remote",
         sessionId: track.sessionId,
         trackName: track.trackName,
-        mid: track.mid ?? undefined,
       };
       const remoteTrack$ = partyTracks.pull(of(metadata));
+      remoteTrackSubscriptionRef.current = remoteTrack$.subscribe({
+        next: (remoteTrack) => setRemoteAudioTrack(remoteTrack),
+      });
       const audioSink = createAudioSink({ audioElement });
       sinkSubscriptionRef.current = audioSink.attach(remoteTrack$);
       setConnectionState("connected");
@@ -95,7 +101,7 @@ export function useLiveListen() {
       setConnectionState("error");
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [canJoin, partyTracksPrefix, snapshot, track?.mid, track?.sessionId, track?.trackName]);
+  }, [canJoin, partyTracksPrefix, snapshot, track?.sessionId, track?.trackName]);
 
   useEffect(() => {
     const audioElement = audioRef.current;
@@ -116,10 +122,13 @@ export function useLiveListen() {
       audioElement.removeEventListener("playing", handlePlaying);
       audioElement.removeEventListener("pause", handlePause);
       transceiverSubscriptionRef.current?.unsubscribe();
+      remoteTrackSubscriptionRef.current?.unsubscribe();
+      remoteTrackSubscriptionRef.current = null;
       statsSubscriptionRef.current?.unsubscribe();
       statsSubscriptionRef.current = null;
       setAudioStats(emptyAudioStats("inbound"));
       sinkSubscriptionRef.current?.unsubscribe();
+      setRemoteAudioTrack(null);
       partyTracksRef.current = null;
     };
   }, []);
@@ -131,8 +140,9 @@ export function useLiveListen() {
     connectionState,
     error,
     join,
+    remoteAudioTrack,
     snapshot,
-  }), [audioStats, canJoin, connectionState, error, join, snapshot]);
+  }), [audioStats, canJoin, connectionState, error, join, remoteAudioTrack, snapshot]);
 }
 
 function configureReceiverJitterBuffer(receiver: RTCRtpReceiver, targetMs: number) {

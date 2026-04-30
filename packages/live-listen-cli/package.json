@@ -1,0 +1,24 @@
+{
+  "name": "@pulse/live-listen-cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pulse-live-listen": "./src/push-system-audio.ts"
+  },
+  "scripts": {
+    "push": "node src/push-system-audio.ts",
+    "typecheck": "tsgo -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@roamhq/wrtc": "^0.10.0",
+    "partytracks": "^0.0.56",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
