@@ -70,6 +70,13 @@ describe("LiveListenRoom", () => {
         roomId: "live-listen:owner",
         hostDeviceId: "macbook",
         sentAt: "2026-04-29T00:00:01.000Z",
+        audio: {
+          transport: "cloudflare-realtime",
+          sessionId: "real-session",
+          partyTracksPrefix: "/api/v1/live-listen/partytracks",
+          publishTrackName: "host-audio",
+          track: { location: "remote", sessionId: "real-session", trackName: "real-audio" },
+        },
         media: { title: "Track", playbackState: "playing" },
         clock: {
           mediaProgressSeconds: 1,
@@ -80,6 +87,8 @@ describe("LiveListenRoom", () => {
     });
 
     expect(snapshot.state).toBe("live");
+    expect(snapshot.audio?.sessionId).toBe("real-session");
+    expect(snapshot.audio?.track?.trackName).toBe("real-audio");
     expect(snapshot.media?.title).toBe("Track");
     expect(snapshot.clock?.sequence).toBe(1);
   });

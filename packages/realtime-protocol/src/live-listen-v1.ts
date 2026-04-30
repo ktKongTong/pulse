@@ -61,6 +61,13 @@ export const LiveListenAudioSessionSchema = z.object({
   sessionId: z.string().min(1),
   roomName: z.string().min(1).optional(),
   publishTrackName: z.string().min(1).optional(),
+  partyTracksPrefix: z.string().min(1).optional(),
+  track: z.object({
+    location: z.enum(["local", "remote"]).optional(),
+    trackName: z.string().min(1).optional(),
+    sessionId: z.string().min(1).optional(),
+    mid: z.string().nullable().optional(),
+  }).optional(),
   mockToken: z.boolean().optional(),
 });
 
@@ -99,6 +106,7 @@ export const LiveListenHostHeartbeatRequestSchema = z.object({
   roomId: z.string().min(1),
   hostDeviceId: z.string().min(1),
   sentAt: z.string(),
+  audio: LiveListenAudioSessionSchema.optional(),
   media: LiveListenMediaSchema.optional(),
   clock: LiveListenClockSchema.optional(),
 });

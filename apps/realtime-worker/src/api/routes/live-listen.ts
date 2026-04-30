@@ -35,6 +35,10 @@ liveListenRoutes.get("/events", zValidator("query", LiveListenQuerySchema), asyn
   if (c.req.header("Upgrade") !== "websocket") {
     return new Response("Expected websocket", { status: 426 });
   }
+  const origin = c.req.header("Origin") ?? null;
+  if (origin && !isAllowedLiveListenEventOrigin(origin, c.req.url, c.env.ALLOWED_ORIGINS)) {
+    return c.json({ error: "origin_not_allowed" }, 403);
+  }
 
   const query = c.req.valid("query");
   const workspaceId = query.workspaceId ?? c.env.WORKSPACE_ID;
@@ -43,6 +47,15 @@ liveListenRoutes.get("/events", zValidator("query", LiveListenQuerySchema), asyn
   const id = c.env.LIVE_LISTEN_ROOM.idFromName(`${workspaceId}:${roomId}`);
   return c.env.LIVE_LISTEN_ROOM.get(id).fetch(c.req.raw);
 });
+
+function isAllowedLiveListenEventOrigin(origin: string, requestUrl: string, allowedOrigins: string) {
+  if (origin === new URL(requestUrl).origin) return true;
+  return allowedOrigins
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .includes(origin);
+}
 
 liveListenRoutes.post(
   "/host/start",

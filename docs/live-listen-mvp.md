@@ -141,6 +141,7 @@ POST /api/live-listen/host/heartbeat
 POST /api/live-listen/host/stop
 POST /api/live-listen/listener/join
 POST /api/live-listen/listener/leave
+ANY  /api/live-listen/partytracks/*  # PartyTracks SDK proxy
 ```
 
 ### `GET /api/live-listen/state`
@@ -159,7 +160,7 @@ State sync uses DO WebSocket hibernation so idle subscribers do not keep the roo
 
 Payload: `LiveListenHostStartRequest`.
 
-The DO moves to `starting`, creates or binds a Cloudflare Realtime audio session, records `hostDeviceId`, and returns a `LiveListenTokenResponse` for the host.
+The DO moves to `starting`, records `hostDeviceId`, and returns the current Live Listen snapshot/token envelope. Audio session negotiation is performed by the PartyTracks client SDK through the Worker proxy.
 
 ### `POST /api/live-listen/host/heartbeat`
 
@@ -179,7 +180,7 @@ The DO transitions to `ended`, clears host liveness, and broadcasts an updated s
 
 Payload: `LiveListenListenerJoinRequest`.
 
-The DO registers or refreshes the listener, increments business listener count, and returns a `LiveListenTokenResponse` for the listener.
+The DO registers or refreshes the listener, increments business listener count, and returns a `LiveListenTokenResponse` for the listener. The browser pulls the host track with PartyTracks metadata from the snapshot.
 
 The response can still be returned when state is `starting`; Web can join early and wait for the host audio track.
 
@@ -233,11 +234,16 @@ Native does not own:
 
 ### Worker / DO
 
-Worker and DO own:
+Worker owns:
+
+- PartyTracks SDK proxy under `/api/live-listen/partytracks/*`
+- Realtime SFU app credential injection
+- HTTP auth, origin checks, and request validation
+
+DO owns:
 
 - room state machine
 - Realtime session reference
-- token issuance flow
 - host liveness timeout
 - listener registry
 - snapshot broadcast
@@ -264,6 +270,34 @@ Web does not own:
 - creating host sessions
 - deciding whether Native is alive
 - deriving listener count from local component state
+
+## Host publisher MVP
+
+Current implementation includes a browser host publisher at `/live-listen/host`. It is a practical MVP for the push side before native system-audio capture lands:
+
+1. Enter the device API key.
+2. Click `Start host`.
+3. The page asks for a local audio input, creates `PartyTracks({ prefix: "/api/v1/live-listen/partytracks" })`, and calls `push(audioTrack$)`.
+4. When PartyTracks emits `TrackMetadata`, the host sends `host/heartbeat` with `audio.track`.
+5. Web listeners pull that track from the Live Listen snapshot.
+
+Native still needs a real system-audio capture bridge. Once Native can produce an audio `MediaStreamTrack` or equivalent PartyTracks-compatible source, it should follow the same `host/start -> PartyTracks.push -> host/heartbeat(audio.track) -> host/stop` lifecycle.
+
+## PartyTracks / Realtime SDK configuration
+
+Live Listen uses Cloudflare Realtime through the `partytracks` SDK. The Worker exposes a proxy route at `/api/live-listen/partytracks/*` via `routePartyTracksRequest`; Native and Web clients configure `PartyTracks` with that prefix.
+
+Required Worker vars for real SFU traffic:
+
+- `REALTIME_SFU_APP_ID`
+- `REALTIME_SFU_APP_TOKEN`
+
+Optional TURN vars:
+
+- `REALTIME_TURN_APP_ID`
+- `REALTIME_TURN_APP_TOKEN`
+
+The DO does not call Realtime directly and does not proxy audio frames.
 
 ## 9. MVP verification
 

@@ -158,12 +158,12 @@ export class LiveListenRoom extends DurableObject<Env> {
     state.state = "live";
     state.updatedAt = payload.sentAt;
     state.startedAt ??= payload.sentAt;
+    state.audio = payload.audio ?? state.audio ?? this.defaultAudioSession(state);
     state.media = payload.media ?? state.media;
     state.clock = payload.clock ?? state.clock;
     state.lastHostHeartbeatMs = Date.now();
     state.endedAtMs = undefined;
     state.error = undefined;
-    state.audio ??= this.defaultAudioSession(state);
     state.revision += 1;
 
     await this.persist(state);
@@ -327,9 +327,15 @@ export class LiveListenRoom extends DurableObject<Env> {
   private defaultAudioSession(state: StoredLiveListenState): LiveListenAudioSession {
     return {
       transport: "cloudflare-realtime",
+      partyTracksPrefix: "/api/v1/live-listen/partytracks",
       sessionId: `pulse:${state.workspaceId}:${state.roomId}`,
       roomName: state.roomId,
       publishTrackName: "host-audio",
+      track: {
+        location: "remote",
+        trackName: "host-audio",
+        sessionId: `pulse:${state.workspaceId}:${state.roomId}`,
+      },
       mockToken: true,
     };
   }

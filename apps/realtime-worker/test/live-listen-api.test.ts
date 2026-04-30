@@ -107,7 +107,7 @@ function env(): Env {
     WORKSPACE_ID: "pulse-demo",
     SITE_ID: "blog-demo",
     DEVICE_API_KEY: "device-secret",
-    ALLOWED_ORIGINS: "https://pulse.ktlab.io,http://localhost:8900",
+    ALLOWED_ORIGINS: "https://pulse.ktlab.io,https://pulse.koft.space,http://localhost:8900",
     ROOM_SESSION_TTL_SECONDS: "45",
     WEB_HEARTBEAT_SECONDS: "30",
     AGGREGATE_FLUSH_SECONDS: "15",
@@ -199,13 +199,37 @@ describe("live listen api", () => {
   it("routes live listen event websockets to the room DO", async () => {
     const response = await app.fetch(
       new Request("https://pulse.test/v1/live-listen/events", {
-        headers: { Upgrade: "websocket" },
+        headers: { Upgrade: "websocket", Origin: "https://pulse.ktlab.io" },
       }),
       env(),
     );
 
     expect(response.status).toBe(101);
     expect(response.webSocket).toBeDefined();
+  });
+
+  it("allows live listen event websockets from configured secondary origins", async () => {
+    const response = await app.fetch(
+      new Request("https://pulse.test/v1/live-listen/events", {
+        headers: { Upgrade: "websocket", Origin: "https://pulse.koft.space" },
+      }),
+      env(),
+    );
+
+    expect(response.status).toBe(101);
+    expect(response.webSocket).toBeDefined();
+  });
+
+  it("rejects live listen event websockets from unconfigured origins", async () => {
+    const response = await app.fetch(
+      new Request("https://pulse.test/v1/live-listen/events", {
+        headers: { Upgrade: "websocket", Origin: "https://evil.test" },
+      }),
+      env(),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "origin_not_allowed" });
   });
 
   it("requires device bearer token for host routes", async () => {

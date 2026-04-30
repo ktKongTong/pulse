@@ -20,6 +20,10 @@ export type Env = Cloudflare.Env & {
   ROOM_SESSION_TTL_SECONDS: string;
   WEB_HEARTBEAT_SECONDS: string;
   AGGREGATE_FLUSH_SECONDS: string;
+  REALTIME_SFU_APP_ID?: string;
+  REALTIME_SFU_APP_TOKEN?: string;
+  REALTIME_TURN_APP_ID?: string;
+  REALTIME_TURN_APP_TOKEN?: string;
   DEBUG_LOGS?: string;
   LOG_LEVEL?: string;
 }
@@ -104,4 +108,22 @@ export function debugLoggingEnabled(env: Env): boolean {
 
   if (["1", "true", "yes", "on"].includes(debugFlag)) return true;
   return ["debug", "trace", "verbose"].includes(logLevel);
+}
+
+export function requiredRealtimeSfuConfig(env: Env) {
+  const appId = optionalEnvValue(env, "REALTIME_SFU_APP_ID");
+  const token = optionalEnvValue(env, "REALTIME_SFU_APP_TOKEN");
+  if (!appId || !token) throw new Error("missing_realtime_sfu_config");
+  return {
+    appId,
+    token,
+    turnServerAppId: optionalEnvValue(env, "REALTIME_TURN_APP_ID") ?? undefined,
+    turnServerAppToken: optionalEnvValue(env, "REALTIME_TURN_APP_TOKEN") ?? undefined,
+  };
+}
+
+export function optionalEnvValue(env: Env, key: keyof Env): string | null {
+  const value = env[key];
+  if (typeof value !== "string" || value.trim() === "") return null;
+  return value.trim();
 }

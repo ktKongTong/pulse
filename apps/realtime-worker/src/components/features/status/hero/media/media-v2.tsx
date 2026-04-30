@@ -11,6 +11,7 @@ import {
 } from "@pulse/realtime-react";
 import { AnimatedLyricStack } from "./animated-lyric";
 import { ProviderBadge } from "./provider-badge";
+import { LiveListenControl } from "../../live-listen/live-listen-control";
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +55,7 @@ export function MediaState({ className }: MediaStateProps) {
         {media?.title ?? "Unknown track"}
       </h2>
       <Lyric media={media} />
+      <LiveListenControl className="mt-1" />
       {/*<Progress media={media} className="mt-auto hidden md:block"/>*/}
     </div>
       </div>

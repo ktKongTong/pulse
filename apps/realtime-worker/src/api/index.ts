@@ -5,6 +5,7 @@ import { createWorkerLogger } from "./observability/logger";
 import { ingestRoutes } from "./routes/ingest";
 import { liveListenRoutes } from "./routes/live-listen";
 import { metaRoutes } from "./routes/meta";
+import { partyTracksRoutes } from "./routes/partytracks";
 import { realtimeRoutes } from "./routes/realtime";
 import { statsRoutes } from "./routes/stats";
 
@@ -18,6 +19,7 @@ app.route("/", statsRoutes);
 app.route("/", ingestRoutes);
 app.route("/", realtimeRoutes);
 app.route("/v1/live-listen", liveListenRoutes);
+app.route("/v1/live-listen", partyTracksRoutes);
 
 app.all("/v1/device-interactions/*", (c) =>
   c.json({ error: "endpoint_disabled" }, 410),
