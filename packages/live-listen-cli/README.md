@@ -5,7 +5,7 @@ Experimental native-side pusher for Live Listen. It is intentionally outside Pul
 The CLI uses the same PartyTracks/Cloudflare Realtime SDK path as the web host, but feeds it a native WebRTC audio track:
 
 ```text
-ffmpeg system audio capture
+Core Audio system tap or device capture
   -> signed 16-bit PCM, 48 kHz, stereo, 10 ms frames
   -> @roamhq/wrtc RTCAudioSource MediaStreamTrack
   -> PartyTracks.push()
@@ -17,8 +17,9 @@ ffmpeg system audio capture
 ## Requirements
 
 - Node.js with this workspace's `pnpm` install.
-- `ffmpeg` on PATH.
-- A macOS system-audio capture device if you want app/system audio, for example BlackHole, Loopback, or a virtual aggregate device.
+- macOS 14.2+ for `system-tap` mode.
+- `ffmpeg` on PATH for `device` fallback, file mode, and MP3 sample output.
+- A macOS system-audio capture device such as BlackHole/Loopback only if you use legacy `device` mode for app/system audio.
 
 ## Environment
 
@@ -35,7 +36,7 @@ export PULSE_BASE_URL="https://pulse.koft.space"
 export PULSE_WORKSPACE_ID="koft"
 export PULSE_LIVE_LISTEN_ROOM_ID="live-listen:owner"
 export PULSE_FORCE_TURN_RELAY="1"
-export PULSE_AUDIO_SOURCE="device"
+export PULSE_AUDIO_SOURCE="system-tap"
 export PULSE_AUDIO_MAX_BITRATE_BPS="320000"
 export PULSE_AUDIO_FRAME_MS="10"
 export PULSE_AUDIO_STARTUP_BUFFER_MS="200"
@@ -59,7 +60,7 @@ pnpm --filter @pulse/live-listen-cli push
 
 If `PULSE_DEBUG_WAVEFORM_PORT` is set to a positive port, the CLI exposes sender waveform telemetry at `http://127.0.0.1:<port>/waveform` for the browser debug page.
 
-List macOS capture devices:
+`system-tap` mode does not require selecting a BlackHole input device. List macOS capture devices only when using legacy `device` mode:
 
 ```bash
 ffmpeg -f avfoundation -list_devices true -i ""
@@ -69,15 +70,43 @@ Then set `PULSE_FFMPEG_INPUT` to the audio device. For avfoundation, audio-only 
 
 ## Source modes
 
-Device capture mode is the default and reads from a live ffmpeg input:
+System tap mode is the preferred macOS path. It uses a private Core Audio process tap and does not change the default output device, so AirPods/speaker volume keys keep controlling the real output device:
+
+```bash
+export PULSE_AUDIO_SOURCE="system-tap"
+pnpm --filter @pulse/live-listen-cli push
+```
+
+To verify capture quality without WebRTC:
+
+```bash
+export PULSE_AUDIO_SOURCE="system-tap"
+export PULSE_CAPTURE_ONLY="1"
+export PULSE_AUDIO_SAMPLE_WAV_PATH="./system-tap.wav"
+export PULSE_AUDIO_SAMPLE_SECONDS="30"
+pnpm --filter @pulse/live-listen-cli push
+```
+
+If this prints `System audio capture permission was not granted`, open `System Settings > Privacy & Security > Screen & System Audio Recording` and enable `Pulse Live Listen Capture` if it appears. If it does not appear, run the capture command once from Terminal, then reopen that settings pane. The previous all-zero WAV symptom means the Core Audio tap was created but macOS had not granted `kTCCServiceAudioCapture`.
+
+You can also trigger only the permission request through LaunchServices:
+
+```bash
+export PULSE_REQUEST_AUDIO_CAPTURE_PERMISSION="1"
+pnpm --filter @pulse/live-listen-cli push
+```
+
+This builds `/tmp/pulse-coreaudio-capture.app` and opens it as `Pulse Live Listen Capture`, which gives macOS a stable app identity for the system audio recording prompt.
+
+Capture-only `system-tap` also runs through that `.app` identity. A valid capture prints no permission error and the WAV should contain non-zero PCM data. Live streaming still needs the same app identity plus a pipe back to Node, so validate capture-only first before testing PartyTracks push.
+
+Device capture mode reads from a live input device. On macOS it uses the same CoreAudio-native helper for PCM capture and falls back to `ffmpeg avfoundation` only if the helper cannot start:
 
 ```bash
 export PULSE_AUDIO_SOURCE="device"
 export PULSE_FFMPEG_INPUT_FORMAT="avfoundation"
 export PULSE_FFMPEG_INPUT=":1"
 ```
-
-On macOS, the live device push path now prefers a CoreAudio-native helper for PCM capture and falls back to `ffmpeg avfoundation` only if the helper cannot start.
 
 To isolate device/ffmpeg capture from WebRTC entirely, use capture-only mode:
 
@@ -89,9 +118,9 @@ export PULSE_AUDIO_SAMPLE_TAP="source"
 pnpm --filter @pulse/live-listen-cli push
 ```
 
-In capture-only mode the CLI does not start PartyTracks or WebRTC. On macOS it prefers the CoreAudio-native helper; elsewhere it falls back to `ffmpeg`. If that WAV still stutters, the problem is definitively in the device route / capture path. If that WAV is clean, the remaining problem is the shared realtime push graph.
+In capture-only mode the CLI does not start PartyTracks or WebRTC. On macOS, `system-tap` and `device` both prefer the CoreAudio-native helper. If that WAV still stutters, the problem is definitively in the native capture path. If that WAV is clean, the remaining problem is the shared realtime push graph.
 
-On macOS, capture-only now prefers a CoreAudio-native helper over `ffmpeg avfoundation` so you can isolate the device input path without the `avfoundation` demuxer in the middle. The current helper writes `WAV` output.
+On macOS, capture-only prefers the CoreAudio-native helper over `ffmpeg avfoundation` so you can isolate capture without the `avfoundation` demuxer in the middle. The helper writes `WAV` output.
 
 File mode reads an audio file through ffmpeg, decodes it to the same PCM path, and loops it forever for repeatable quality tests:
 
@@ -121,16 +150,16 @@ export PULSE_AUDIO_SAMPLE_TAP="auto"
 
 `PULSE_AUDIO_SAMPLE_TAP` controls where the sample is taken from:
 
-- `auto`: in `device` mode, capture the raw `ffmpeg` device PCM before the sender queue; in `file` mode, capture the paced sender feed.
-- `source`: capture the raw `ffmpeg` device PCM before pacing/drop decisions.
+- `auto`: in `system-tap`/`device` mode, capture the raw native/ffmpeg source PCM before the sender queue; in `file` mode, capture the paced sender feed.
+- `source`: capture the raw native/ffmpeg source PCM before pacing/drop decisions.
 - `sender`: capture the exact PCM frames fed into `RTCAudioSource`.
 
 This matters for diagnosis:
 
-- If `source` sounds bad, the problem is already in the device capture / `ffmpeg` input.
+- If `source` sounds bad, the problem is already in the system tap, device capture, or `ffmpeg` fallback input.
 - If `source` sounds clean but `sender` or remote playback sounds bad, the remaining suspect is the Node `RTCAudioSource -> WebRTC sender -> Cloudflare Realtime` path.
 
-For device debugging, prefer `PULSE_AUDIO_SAMPLE_WAV_PATH` with `PULSE_AUDIO_SAMPLE_TAP="source"` so you are listening to the raw avfoundation capture path without MP3 artifacts.
+For capture debugging, prefer `PULSE_AUDIO_SAMPLE_WAV_PATH` with `PULSE_AUDIO_SAMPLE_TAP="source"` so you are listening to the raw capture path without MP3 artifacts.
 
 ## Buffer tuning
 
@@ -174,10 +203,13 @@ If the web host still sounds better after this alignment and a clean `sample-cap
 
 ## Volume behavior
 
+`system-tap` keeps the user's real output device selected. This avoids the BlackHole aggregate-device problem where macOS volume keys stop controlling AirPods because the default output is no longer AirPods.
+
 The CLI can only be independent of the user's output volume if the capture source is independent of the output device volume.
 
 - Capturing a virtual loopback device such as BlackHole/Loopback usually captures the app/system mix before speaker output volume, but exact behavior depends on the routing graph.
 - Capturing from a physical microphone or monitor path can be affected by gain/volume and can include room noise.
+- Prefer `PULSE_AUDIO_SOURCE="system-tap"` before BlackHole/aggregate-device routing. Use BlackHole only as a fallback/debug mode.
 - For a future Pulse Native implementation, prefer a dedicated system-audio capture path or virtual device route that taps PCM before final speaker attenuation.
 
 Practical test:

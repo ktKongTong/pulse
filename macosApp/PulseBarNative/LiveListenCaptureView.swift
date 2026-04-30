@@ -1,0 +1,214 @@
+import SwiftUI
+
+struct LiveListenCapturePane: View {
+    @StateObject private var model = LiveListenCaptureModel()
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header
+                sourcePicker
+                meterCard
+                actionRow
+                diagnosticsCard
+            }
+            .padding(28)
+            .frame(maxWidth: 760, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear { model.refreshSources() }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Live Listen Capture")
+                .font(.largeTitle.weight(.semibold))
+            Text("Capture system or app audio without changing the current output device. This panel only validates capture; Cloudflare publishing is wired in the next stage.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var sourcePicker: some View {
+        LiveListenCaptureSurface {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("Capture Source", systemImage: "speaker.wave.2.fill")
+                        .font(.headline)
+                    Spacer()
+                    Button("Refresh") { model.refreshSources() }
+                        .disabled(model.isCapturing)
+                }
+
+                Picker("Source", selection: $model.selectedSourceId) {
+                    ForEach(model.sources) { source in
+                        Text(sourceLabel(source)).tag(source.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(model.isCapturing)
+
+                if let selected = model.selectedSource {
+                    HStack(spacing: 8) {
+                        Text(selected.kind.rawValue.uppercased())
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                        Text(selected.bundleId ?? "All app audio routed to the default output")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+    }
+
+    private var meterCard: some View {
+        LiveListenCaptureSurface {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("Capture Meter", systemImage: "waveform.path")
+                        .font(.headline)
+                    Spacer()
+                    Text(model.statusText)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(model.isCapturing ? .green : .secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    MeterRow(title: "Peak", value: model.meter.peak)
+                    MeterRow(title: "RMS", value: model.meter.rms)
+                }
+
+                HStack(spacing: 18) {
+                    StatPill(title: "frames", value: "\(model.meter.capturedFrames)")
+                    StatPill(title: "non-silent", value: "\(model.meter.nonSilentSamples)")
+                }
+            }
+        }
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 12) {
+            Button {
+                model.startCaptureOnly(seconds: 10)
+            } label: {
+                Label("Capture 10s Sample", systemImage: "record.circle")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(model.isCapturing)
+
+            Button {
+                model.stopCapture()
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .disabled(!model.isCapturing)
+
+            if let url = model.lastSampleURL {
+                Button("Reveal Sample") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
+        }
+    }
+
+    private var diagnosticsCard: some View {
+        LiveListenCaptureSurface {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Diagnostics", systemImage: "stethoscope")
+                    .font(.headline)
+                Text("If capture fails, grant PulseBarNative access in System Settings > Privacy & Security > Screen & System Audio Recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let error = model.errorMessage {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+                if let url = model.lastSampleURL {
+                    Text(url.path)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func sourceLabel(_ source: LiveListenCaptureSource) -> String {
+        switch source.kind {
+        case .system:
+            return source.name
+        case .application:
+            return "\(source.name) — app"
+        }
+    }
+}
+
+private struct MeterRow: View {
+    let title: String
+    let value: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.medium))
+                Spacer()
+                Text(value.formatted(.number.precision(.fractionLength(4))))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.16))
+                    Capsule().fill(Color.accentColor.opacity(0.82))
+                        .frame(width: max(4, proxy.size.width * min(1, value)))
+                }
+            }
+            .frame(height: 8)
+        }
+    }
+}
+
+private struct StatPill: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.callout.monospacedDigit())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.10)))
+    }
+}
+
+
+private struct LiveListenCaptureSurface<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.secondary.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+            )
+    }
+}

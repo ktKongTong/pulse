@@ -41,6 +41,10 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>PulseBar reads browser and Spotify metadata to show the current status in the menu bar.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>PulseBar captures system audio for Live Listen streams after you start capture.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>PulseBar may need screen and system audio recording permission to capture Live Listen audio.</string>
 </dict>
 </plist>
 EOF
@@ -58,6 +62,8 @@ swiftc \
   -g \
   -DDEBUG \
   -framework AppKit \
+  -framework AudioToolbox \
+  -framework CoreAudio \
   -framework SwiftUI \
   -framework Combine \
   -Xlinker -force_load \

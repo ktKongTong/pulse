@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		22181D1AA68444621D3E2B82 /* LiveListenCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C154336396DDCF2281A4E67 /* LiveListenCaptureView.swift */; };
+		514D42612DF60FF7D3FE0D36 /* LiveListenCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7AFBA87065182118D5780C5 /* LiveListenCaptureService.swift */; };
 		85AA2D70D709F28BAE296198 /* NativeMonitorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F734477819B3CB78AB99D5 /* NativeMonitorModel.swift */; };
 		937AAA32E1758CD15F85D3E6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC60E77E8032C84E8799FBB3 /* Models.swift */; };
 		BBED925F0EF5B8A6DB4CE32E /* PulseBarNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7842B00C463037D00FC517F /* PulseBarNativeApp.swift */; };
@@ -17,11 +19,13 @@
 /* Begin PBXFileReference section */
 		13647FF6B43B48C18C587B08 /* MenuBarContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContentView.swift; sourceTree = "<group>"; };
 		50F734477819B3CB78AB99D5 /* NativeMonitorModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMonitorModel.swift; sourceTree = "<group>"; };
+		5C154336396DDCF2281A4E67 /* LiveListenCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureView.swift; sourceTree = "<group>"; };
 		902FE641F33901EE027B942D /* PulseBarNative.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PulseBarNative.entitlements; sourceTree = "<group>"; };
 		948E7D74E792918846385A86 /* NativeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSettingsView.swift; sourceTree = "<group>"; };
 		A7842B00C463037D00FC517F /* PulseBarNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseBarNativeApp.swift; sourceTree = "<group>"; };
 		EC60E77E8032C84E8799FBB3 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		F0D77DB5CC212B4742562DA9 /* PulseBarNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseBarNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F7AFBA87065182118D5780C5 /* LiveListenCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -36,6 +40,8 @@
 		727DCB65FF97C7E1AD3CEA3C /* PulseBarNative */ = {
 			isa = PBXGroup;
 			children = (
+				F7AFBA87065182118D5780C5 /* LiveListenCaptureService.swift */,
+				5C154336396DDCF2281A4E67 /* LiveListenCaptureView.swift */,
 				13647FF6B43B48C18C587B08 /* MenuBarContentView.swift */,
 				EC60E77E8032C84E8799FBB3 /* Models.swift */,
 				50F734477819B3CB78AB99D5 /* NativeMonitorModel.swift */,
@@ -135,6 +141,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				514D42612DF60FF7D3FE0D36 /* LiveListenCaptureService.swift in Sources */,
+				22181D1AA68444621D3E2B82 /* LiveListenCaptureView.swift in Sources */,
 				F72802E924FF77ACD4ACD799 /* MenuBarContentView.swift in Sources */,
 				937AAA32E1758CD15F85D3E6 /* Models.swift in Sources */,
 				85AA2D70D709F28BAE296198 /* NativeMonitorModel.swift in Sources */,
@@ -204,6 +212,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "PulseBar reads browser and Spotify metadata to show the current status in the menu bar.";
+				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "PulseBar captures system audio for Live Listen streams after you start capture.";
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "PulseBar may need screen and system audio recording permission to capture Live Listen audio.";
 				LM_SKIP_METADATA_EXTRACTION = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
@@ -271,6 +281,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "PulseBar reads browser and Spotify metadata to show the current status in the menu bar.";
+				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "PulseBar captures system audio for Live Listen streams after you start capture.";
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "PulseBar may need screen and system audio recording permission to capture Live Listen audio.";
 				LM_SKIP_METADATA_EXTRACTION = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;

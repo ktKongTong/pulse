@@ -16,6 +16,8 @@ settings:
     GENERATE_INFOPLIST_FILE: YES
     INFOPLIST_KEY_LSUIElement: NO
     INFOPLIST_KEY_NSAppleEventsUsageDescription: PulseBar reads browser and Spotify metadata to show the current status in the menu bar.
+    INFOPLIST_KEY_NSAudioCaptureUsageDescription: PulseBar captures system audio for Live Listen streams after you start capture.
+    INFOPLIST_KEY_NSScreenCaptureUsageDescription: PulseBar may need screen and system audio recording permission to capture Live Listen audio.
     OTHER_LDFLAGS: "$(inherited) -lsqlite3"
 targets:
   PulseBarNative:

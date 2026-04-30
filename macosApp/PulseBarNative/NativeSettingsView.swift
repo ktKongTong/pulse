@@ -42,6 +42,8 @@ struct PulseBarDashboardView: View {
                     DashboardActivityPane()
                 case .sync:
                     DashboardSyncPane()
+                case .liveListen:
+                    LiveListenCapturePane()
                 case .settings:
                     SettingsEditorContent(showTitle: false)
                 }

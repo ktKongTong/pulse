@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
-import { closeSync, existsSync, openSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import process, { loadEnvFile } from "node:process";
 import path from "node:path";
@@ -24,8 +24,6 @@ if (existsSync(".env")) {
 }
 
 const DEFAULTS = {
-  pulseBaseUrl: "https://pulse.koft.space",
-  workspaceId: "koft",
   roomId: "live-listen:owner",
   hostDeviceId: `native-cli-${randomUUID()}`,
   sampleRate: 48_000,
@@ -42,11 +40,13 @@ const DEFAULTS = {
   forceTurnRelay: true,
 };
 
-type AudioSourceMode = "device" | "file";
+type AudioSourceMode = "device" | "file" | "system-tap";
 type SampleCaptureTap = "source" | "sender";
 type SampleCaptureTapMode = SampleCaptureTap | "auto";
 
 type Config = typeof DEFAULTS & {
+  pulseBaseUrl: string;
+  workspaceId: string;
   audioSource: AudioSourceMode;
   deviceApiKey: string;
   ffmpegInput: string;
@@ -64,6 +64,11 @@ type Config = typeof DEFAULTS & {
   ffmpegQueueSizeBytes?: number;
 };
 
+type CoreAudioCaptureTarget = {
+  appPath: string;
+  binaryPath: string;
+};
+
 type WrtcGlobals = typeof globalThis & {
   RTCPeerConnection: typeof RTCPeerConnection;
   RTCSessionDescription: typeof RTCSessionDescription;
@@ -79,8 +84,8 @@ function envValue(name: string, fallback?: string): string {
 function config(): Config {
   return {
     ...DEFAULTS,
-    pulseBaseUrl: process.env.PULSE_BASE_URL ?? DEFAULTS.pulseBaseUrl,
-    workspaceId: process.env.PULSE_WORKSPACE_ID ?? DEFAULTS.workspaceId,
+    pulseBaseUrl: process.env.PULSE_BASE_URL!,
+    workspaceId: process.env.PULSE_WORKSPACE_ID!,
     roomId: process.env.PULSE_LIVE_LISTEN_ROOM_ID ?? DEFAULTS.roomId,
     hostDeviceId: process.env.PULSE_HOST_DEVICE_ID ?? DEFAULTS.hostDeviceId,
     sampleRate: Number(process.env.PULSE_AUDIO_SAMPLE_RATE ?? DEFAULTS.sampleRate),
@@ -132,6 +137,10 @@ async function main() {
     ffmpegAudioDepth: cfg.ffmpegAudioDepth,
     ffmpegQueueSizeBytes: cfg.ffmpegQueueSizeBytes,
   });
+  if (parseBoolean(process.env.PULSE_REQUEST_AUDIO_CAPTURE_PERMISSION, false)) {
+    await requestCoreAudioCapturePermission();
+    return;
+  }
   if (cfg.captureOnly) {
     await runCaptureOnly(cfg);
     return;
@@ -165,7 +174,9 @@ async function main() {
     void heartbeatHost(cfg, latestMetadata).catch((error) => console.error("heartbeat failed", error));
   }, 1_000);
 
-  const captureProcess = cfg.audioSource === "device" ? spawnDeviceCaptureProcess(cfg) : null;
+  const captureProcess = cfg.audioSource === "device" || cfg.audioSource === "system-tap"
+    ? spawnDeviceCaptureProcess(cfg)
+    : null;
   if (captureProcess) {
     streamPcmFrames({ cfg, ffmpeg: captureProcess, source, sampleCapture, waveformDebug });
   } else {
@@ -341,8 +352,8 @@ function ffmpegAudioDepth(value: string): 16 | 32 {
 
 function resolveSampleCaptureTap(cfg: Config): SampleCaptureTap {
   if (cfg.sampleTapMode === "sender") return "sender";
-  if (cfg.sampleTapMode === "source" && cfg.audioSource === "device") return "source";
-  if (cfg.audioSource === "device") return "source";
+  if (cfg.sampleTapMode === "source" && cfg.audioSource !== "file") return "source";
+  if (cfg.audioSource !== "file") return "source";
   return "sender";
 }
 
@@ -353,14 +364,14 @@ function useDirectSourceSampleCapture(cfg: Config) {
 }
 
 function audioSourceMode(value: string): AudioSourceMode {
-  if (value === "device" || value === "file") return value;
-  throw new Error(`Invalid PULSE_AUDIO_SOURCE: ${value}. Expected device or file.`);
+  if (value === "device" || value === "file" || value === "system-tap") return value;
+  throw new Error(`Invalid PULSE_AUDIO_SOURCE: ${value}. Expected device, system-tap, or file.`);
 }
 
 function validateConfig(cfg: Config) {
   if (cfg.captureOnly) {
-    if (cfg.audioSource !== "device") {
-      throw new Error("PULSE_CAPTURE_ONLY currently only supports PULSE_AUDIO_SOURCE=device");
+    if (cfg.audioSource !== "device" && cfg.audioSource !== "system-tap") {
+      throw new Error("PULSE_CAPTURE_ONLY currently only supports PULSE_AUDIO_SOURCE=device or system-tap");
     }
     if (!cfg.sampleMp3Path && !cfg.sampleWavPath) {
       throw new Error("PULSE_CAPTURE_ONLY requires PULSE_AUDIO_SAMPLE_WAV_PATH or PULSE_AUDIO_SAMPLE_MP3_PATH");
@@ -660,8 +671,11 @@ function spawnDeviceCaptureProcess(cfg: Config): ChildProcessByStdio<null, Reada
     try {
       return spawnCoreAudioStream(cfg);
     } catch (error) {
-      console.error("coreaudio device capture failed, falling back to ffmpeg", error);
+      console.error("coreaudio capture failed, falling back to ffmpeg", error);
     }
+  }
+  if (cfg.audioSource === "system-tap") {
+    throw new Error("system_tap_capture_failed");
   }
   return spawnFfmpeg(cfg);
 }
@@ -741,6 +755,7 @@ async function runCaptureOnly(cfg: Config) {
       return;
     } catch (error) {
       console.error("coreaudio capture-only failed, falling back to ffmpeg", error);
+      if (cfg.audioSource === "system-tap") throw error;
     }
   }
   const args = deviceCaptureOnlyArgs(cfg);
@@ -761,26 +776,28 @@ async function runCaptureOnly(cfg: Config) {
 }
 
 async function runCoreAudioCaptureOnly(cfg: Config) {
-  const deviceName = resolveCoreAudioDeviceName(cfg);
   if (!cfg.sampleWavPath) {
     throw new Error("coreaudio capture-only currently requires PULSE_AUDIO_SAMPLE_WAV_PATH");
   }
-  const binaryPath = buildCoreAudioCaptureBinary();
+  const target = buildCoreAudioCaptureBinary();
   const args = [
-    "--device-name", deviceName,
-    "--output", cfg.sampleWavPath,
+    "--mode", cfg.audioSource === "system-tap" ? "system-tap" : "device",
+    "--output", resolveUserPath(cfg.sampleWavPath),
     "--sample-rate", String(cfg.sampleRate),
     "--channels", String(cfg.channels),
     "--seconds", String(cfg.sampleSeconds),
     "--stdout-pcm", "0",
   ];
-  console.log("capture-only coreaudio", binaryPath, args.join(" "));
-  const child = spawn(binaryPath, args, { stdio: ["ignore", "ignore", "pipe"] });
+  if (cfg.audioSource === "device") {
+    args.splice(2, 0, "--device-name", resolveCoreAudioDeviceName(cfg));
+  }
+  console.log("capture-only coreaudio", target.appPath, args.join(" "));
+  const child = spawnCoreAudioCaptureApp(target.appPath, args, "capture-only");
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
   await new Promise<void>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => {
-      console.log("capture-only coreaudio exited", { code, signal, deviceName });
+      console.log("capture-only coreaudio exited", { code, signal, audioSource: cfg.audioSource });
       if (code === 0) {
         resolve();
         return;
@@ -791,30 +808,43 @@ async function runCoreAudioCaptureOnly(cfg: Config) {
 }
 
 function spawnCoreAudioStream(cfg: Config): ChildProcessByStdio<null, Readable, Readable> {
-  const deviceName = resolveCoreAudioDeviceName(cfg);
-  const binaryPath = buildCoreAudioCaptureBinary();
+  const target = buildCoreAudioCaptureBinary();
   const args = [
-    "--device-name", deviceName,
+    "--mode", cfg.audioSource === "system-tap" ? "system-tap" : "device",
     "--sample-rate", String(cfg.sampleRate),
     "--channels", String(cfg.channels),
     "--stdout-pcm", "1",
   ];
-  console.log("coreaudio device capture", binaryPath, args.join(" "));
-  const child = spawn(binaryPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+  if (cfg.audioSource === "device") {
+    args.splice(2, 0, "--device-name", resolveCoreAudioDeviceName(cfg));
+  }
+  console.log("coreaudio capture", target.appPath, args.join(" "));
+  const child = spawn(target.binaryPath, args, { stdio: ["ignore", "pipe", "pipe"] });
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
   child.on("exit", (code, signal) => {
-    console.log("coreaudio device capture exited", { code, signal, deviceName });
+    console.log("coreaudio capture exited", { code, signal, audioSource: cfg.audioSource });
     if (code !== 0 && signal === null) process.exitCode = code ?? 1;
   });
   return child;
 }
 
-function buildCoreAudioCaptureBinary() {
+function buildCoreAudioCaptureBinary(): CoreAudioCaptureTarget {
   const sourcePath = path.join(import.meta.dirname, "coreaudio-capture.swift");
-  const binaryPath = path.join("/tmp", "pulse-coreaudio-capture");
+  const appPath = path.join("/tmp", "pulse-coreaudio-capture.app");
+  const contentsPath = path.join(appPath, "Contents");
+  const macosPath = path.join(contentsPath, "MacOS");
+  const binaryPath = path.join(macosPath, "pulse-coreaudio-capture");
+  const infoPlistPath = path.join(contentsPath, "Info.plist");
+  rmSync(appPath, { recursive: true, force: true });
+  mkdirSync(macosPath, { recursive: true });
+  writeFileSync(infoPlistPath, coreAudioCaptureInfoPlist());
   const build = spawnSync("xcrun", [
     "swiftc",
     "-O",
+    "-Xlinker", "-sectcreate",
+    "-Xlinker", "__TEXT",
+    "-Xlinker", "__info_plist",
+    "-Xlinker", infoPlistPath,
     "-framework", "AudioToolbox",
     "-framework", "CoreAudio",
     sourcePath,
@@ -827,7 +857,80 @@ function buildCoreAudioCaptureBinary() {
   if (build.status !== 0) {
     throw new Error(`coreaudio_capture_build_failed:${build.status}:${build.stderr}`);
   }
-  return binaryPath;
+  return { appPath, binaryPath };
+}
+
+function spawnCoreAudioCaptureApp(
+  appPath: string,
+  helperArgs: string[],
+  mode: "capture-only" | "stream",
+): ChildProcessByStdio<null, Readable, Readable> {
+  const stdoutPath = mode === "stream" ? path.join("/tmp", `pulse-coreaudio-capture-${process.pid}.pcm`) : "/dev/null";
+  const openArgs = [
+    "-n",
+    "-W",
+    appPath,
+    "--args",
+    ...helperArgs,
+    "--stdout-path", stdoutPath,
+  ];
+  const child = spawn("open", openArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  return child as ChildProcessByStdio<null, Readable, Readable>;
+}
+
+function resolveUserPath(filePath: string) {
+  if (path.isAbsolute(filePath)) return filePath;
+  return path.resolve(process.env.INIT_CWD ?? process.cwd(), filePath);
+}
+
+async function requestCoreAudioCapturePermission() {
+  const { appPath } = buildCoreAudioCaptureBinary();
+  const args = [
+    "-W",
+    appPath,
+    "--args",
+    "--mode", "system-tap",
+    "--sample-rate", String(DEFAULTS.sampleRate),
+    "--channels", String(DEFAULTS.channels),
+    "--stdout-pcm", "0",
+    "--permission-only", "1",
+  ];
+  console.log("requesting system audio capture permission", { appPath });
+  console.log("If no prompt appears, open System Settings > Privacy & Security > Screen & System Audio Recording and enable Pulse Live Listen Capture.");
+  const child = spawn("open", args, { stdio: ["ignore", "ignore", "pipe"] });
+  child.stderr.on("data", (chunk) => process.stderr.write(chunk));
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      console.log("permission request helper exited", { code, signal });
+      if (code === 0) resolve();
+      else reject(new Error(`permission_request_failed:${code ?? "null"}:${signal ?? "none"}`));
+    });
+  });
+}
+
+function coreAudioCaptureInfoPlist() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>pulse-coreaudio-capture</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.github.kt.pulse.live-listen.coreaudio-capture</string>
+  <key>CFBundleName</key>
+  <string>Pulse Live Listen Capture</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSBackgroundOnly</key>
+  <true/>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Pulse captures system audio so web listeners can hear the Live Listen stream.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Pulse may need screen and system audio recording permission to capture system audio.</string>
+</dict>
+</plist>
+`;
 }
 
 function resolveCoreAudioDeviceName(cfg: Config) {

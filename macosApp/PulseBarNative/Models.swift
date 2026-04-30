@@ -86,6 +86,7 @@ enum DashboardSection: String, CaseIterable, Identifiable {
     case dashboard
     case activity
     case sync
+    case liveListen
     case settings
 
     var id: String { rawValue }
@@ -95,6 +96,7 @@ enum DashboardSection: String, CaseIterable, Identifiable {
         case .dashboard: return "Dashboard"
         case .activity: return "Activity"
         case .sync: return "Sync"
+        case .liveListen: return "Live Listen"
         case .settings: return "Settings"
         }
     }
@@ -104,6 +106,7 @@ enum DashboardSection: String, CaseIterable, Identifiable {
         case .dashboard: return "square.grid.2x2.fill"
         case .activity: return "chart.bar.doc.horizontal.fill"
         case .sync: return "antenna.radiowaves.left.and.right"
+        case .liveListen: return "waveform"
         case .settings: return "slider.horizontal.3"
         }
     }
