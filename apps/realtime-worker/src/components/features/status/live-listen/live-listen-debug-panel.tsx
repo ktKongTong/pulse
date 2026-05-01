@@ -68,12 +68,19 @@ export function LiveListenDebugPanel() {
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-400">
               <span>bitrate: {formatNullable(liveListen.audioStats.bitrateKbps, "kbps")}</span>
               <span>bytesΔ/s: {formatRate(liveListen.audioStats.bytesDeltaPerSecond, "B/s")}</span>
+              <span>codec: {liveListen.audioStats.codec ?? "-"}</span>
               <span>jitter: {formatNullable(liveListen.audioStats.jitterMs, "ms")}</span>
+              <span>audioLevel: {formatNullable(liveListen.audioStats.audioLevel, "")}</span>
+              <span>pkts: {liveListen.audioStats.packets ?? "-"}</span>
+              <span>discarded: {liveListen.audioStats.packetsDiscarded ?? "-"}</span>
               <span>lostΔ/s: {formatRate(liveListen.audioStats.packetsLostDeltaPerSecond, "pkts")}</span>
               <span>concealΔ/s: {formatRate(liveListen.audioStats.concealmentEventsDeltaPerSecond, "evt")}</span>
               <span>concealedΔ/s: {formatRate(liveListen.audioStats.concealedSamplesDeltaPerSecond, "samples")}</span>
               <span>jbDelay: {formatNullable(liveListen.audioStats.jitterBufferDelayMs, "ms")}</span>
+              <span>jbTarget: {formatNullable(liveListen.audioStats.jitterBufferTargetDelayMs, "ms")}</span>
+              <span>jbMin: {formatNullable(liveListen.audioStats.jitterBufferMinimumDelayMs, "ms")}</span>
               <span>rtt: {formatNullable(liveListen.audioStats.roundTripTimeMs, "ms")}</span>
+              <span>energy: {formatNullable(liveListen.audioStats.totalAudioEnergy, "")}</span>
             </div>
             {liveListen.error ? <div className="mt-2 text-xs text-red-300">{liveListen.error}</div> : null}
           </div>

@@ -4,6 +4,33 @@ import CoreAudio
 import Darwin
 import Foundation
 
+private typealias LiveListenTCCPreflightFunc = @convention(c) (CFString, CFDictionary?) -> Int32
+private typealias LiveListenTCCRequestFunc = @convention(c) (CFString, CFDictionary?, @escaping (Bool) -> Void) -> Void
+
+private enum LiveListenAudioCapturePermissionStatus: String {
+    case authorized
+    case denied
+    case unknown
+}
+
+private final class LiveListenPermissionContinuationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+    private let continuation: CheckedContinuation<Bool?, Never>
+
+    init(_ continuation: CheckedContinuation<Bool?, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: Bool?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !didResume else { return }
+        didResume = true
+        continuation.resume(returning: value)
+    }
+}
+
 struct LiveListenCaptureSource: Identifiable, Equatable {
     enum Kind: String {
         case system
@@ -24,6 +51,20 @@ struct LiveListenCaptureMeter: Equatable {
     var capturedFrames: UInt64 = 0
 }
 
+struct LiveListenPCMFrame: Sendable {
+    let pcm16Data: Data
+    let sampleRate: UInt32
+    let channels: UInt32
+    let frameCount: UInt32
+    let sequence: UInt64
+    let capturedFrames: UInt64
+    let capturedAt: Date
+}
+
+protocol LiveListenPCMConsumer: AnyObject, Sendable {
+    func consume(_ frame: LiveListenPCMFrame)
+}
+
 @MainActor
 final class LiveListenCaptureModel: ObservableObject {
     @Published private(set) var sources: [LiveListenCaptureSource] = []
@@ -33,8 +74,12 @@ final class LiveListenCaptureModel: ObservableObject {
     @Published private(set) var meter = LiveListenCaptureMeter()
     @Published private(set) var lastSampleURL: URL?
     @Published private(set) var errorMessage: String?
+    @Published private(set) var publisherStatusText = "Publisher idle"
+    @Published private(set) var publisherStats = LiveListenPublisherStats()
 
+    private var endpoint: LiveListenEndpointConfig?
     private let service = LiveListenCaptureService()
+    private let publisher: LiveListenPublisher = NativeLiveListenPublisher()
     private var meterTask: Task<Void, Never>?
 
     var selectedSource: LiveListenCaptureSource? {
@@ -47,6 +92,15 @@ final class LiveListenCaptureModel: ObservableObject {
 
     deinit {
         meterTask?.cancel()
+    }
+
+    func updateEndpoint(_ endpoint: LiveListenEndpointConfig?) {
+        self.endpoint = endpoint
+        if endpoint == nil && !isCapturing {
+            publisherStatusText = "Configure a Live Listen endpoint in Settings"
+        } else if !isCapturing {
+            publisherStatusText = "Publisher idle"
+        }
     }
 
     func refreshSources() {
@@ -91,12 +145,91 @@ final class LiveListenCaptureModel: ObservableObject {
         }
     }
 
+    func startNativeStream() {
+        appendLiveListenCaptureDebugLog("startNativeStream called isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoint=\(endpoint?.baseURL.absoluteString ?? "nil")")
+        guard !isCapturing, let selectedSource else {
+            appendLiveListenCaptureDebugLog("startNativeStream ignored isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil")")
+            return
+        }
+        guard let endpoint else {
+            errorMessage = "Configure an endpoint URL, Workspace ID, and API Key in Settings > Endpoints before starting a native stream."
+            publisherStatusText = "Missing Native endpoint config"
+            appendLiveListenCaptureDebugLog("startNativeStream missing endpoint")
+            return
+        }
+        errorMessage = nil
+        statusText = "Starting stream…"
+        publisherStatusText = "Starting native publisher…"
+        publisherStats = LiveListenPublisherStats()
+        isCapturing = true
+        meter = LiveListenCaptureMeter()
+
+        meterTask?.cancel()
+        meterTask = Task { [weak self] in
+            guard let self else { return }
+            var publisherStarted = false
+            do {
+                let publisherConfig = LiveListenPublisherConfig(
+                    roomId: "room-test-1",
+                    deviceId: Host.current().localizedName ?? "macos-host",
+                    baseURL: endpoint.baseURL,
+                    workspaceId: endpoint.workspaceId,
+                    apiKey: endpoint.apiKey
+                )
+                appendLiveListenCaptureDebugLog("audio permission check begin")
+                try await service.ensureAudioCapturePermissionForUI()
+                appendLiveListenCaptureDebugLog("audio permission check ok")
+                appendLiveListenCaptureDebugLog("capture begin before publisher source=\(selectedSource.name)")
+                let stream = try await service.capture(source: selectedSource, pcmConsumer: publisher)
+                appendLiveListenCaptureDebugLog("capture stream returned")
+                statusText = "Opening \(selectedSource.name)…"
+                publisherStatusText = publisher.statusText
+                for try await update in stream {
+                    if !publisherStarted {
+                        appendLiveListenCaptureDebugLog("first capture update frames=\(update.meter.capturedFrames) nonSilent=\(update.meter.nonSilentSamples); publisher.start begin base=\(endpoint.baseURL.absoluteString) workspace=\(endpoint.workspaceId)")
+                        try await publisher.start(config: publisherConfig)
+                        appendLiveListenCaptureDebugLog("publisher.start ok after capture")
+                        publisherStarted = true
+                    }
+                    meter = update.meter
+                    statusText = publisherStarted ? "Streaming \(selectedSource.name)…" : update.statusText
+                    publisherStats = publisher.stats
+                    publisherStatusText = publisher.statusText
+                }
+                publisherStatusText = publisher.statusText
+            } catch {
+                appendLiveListenCaptureDebugLog("stream failed error=\(error.localizedDescription)")
+                errorMessage = error.localizedDescription
+                statusText = "Stream failed"
+                publisherStatusText = "Publisher failed"
+            }
+            await publisher.stop()
+            isCapturing = false
+        }
+    }
+
+
+    private func appendLiveListenCaptureDebugLog(_ message: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) capture \(message)\n"
+        let url = URL(fileURLWithPath: "/tmp/pulse-live-listen-native-debug.log")
+        guard let data = line.data(using: .utf8) else { return }
+        if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
+            _ = try? handle.seekToEnd()
+            _ = try? handle.write(contentsOf: data)
+            try? handle.close()
+        } else {
+            try? data.write(to: url)
+        }
+    }
+
     func stopCapture() {
         service.stop()
         meterTask?.cancel()
         meterTask = nil
+        Task { await publisher.stop() }
         isCapturing = false
         statusText = "Stopped"
+        publisherStatusText = publisher.statusText
     }
 }
 
@@ -106,7 +239,7 @@ struct LiveListenCaptureUpdate: Sendable {
 }
 
 final class LiveListenCaptureService: @unchecked Sendable {
-    fileprivate final class CaptureContext {
+    fileprivate final class CaptureContext: @unchecked Sendable {
         let channels: UInt32
         let writer: LiveListenWavWriter?
         let targetFrames: UInt64?
@@ -121,21 +254,44 @@ final class LiveListenCaptureService: @unchecked Sendable {
         var ioProcID: AudioDeviceIOProcID?
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
         var tapID = AudioObjectID(kAudioObjectUnknown)
+        var pcmConsumer: LiveListenPCMConsumer?
+        var pcmSequence: UInt64 = 0
+        let sampleRate: UInt32 = 48_000
 
         init(
             channels: UInt32,
             writer: LiveListenWavWriter?,
             targetFrames: UInt64?,
+            pcmConsumer: LiveListenPCMConsumer?,
             continuation: AsyncThrowingStream<LiveListenCaptureUpdate, Error>.Continuation
         ) {
             self.channels = channels
             self.writer = writer
             self.targetFrames = targetFrames
+            self.pcmConsumer = pcmConsumer
             self.continuation = continuation
         }
     }
 
     private var context: CaptureContext?
+
+    @MainActor
+    func ensureAudioCapturePermissionForUI() async throws {
+        NSApp.activate(ignoringOtherApps: true)
+        let status = Self.preflightAudioCapturePermission()
+        appendLiveListenCaptureServiceLog("audio-capture ui permission=\(status.rawValue)")
+        if status == .authorized { return }
+        if status == .denied {
+            throw LiveListenCaptureError.audioCapturePermissionDenied
+        }
+        if let granted = await Self.requestAudioCapturePermissionWithTimeout(seconds: 15) {
+            appendLiveListenCaptureServiceLog("audio-capture ui permission requested granted=\(granted)")
+            if granted { return }
+            throw LiveListenCaptureError.audioCapturePermissionNotGranted
+        }
+        appendLiveListenCaptureServiceLog("audio-capture ui permission request timed out")
+        throw LiveListenCaptureError.audioCapturePermissionNotGranted
+    }
 
     func availableSources() -> [LiveListenCaptureSource] {
         let applications = NSWorkspace.shared.runningApplications
@@ -172,20 +328,55 @@ final class LiveListenCaptureService: @unchecked Sendable {
         outputURL: URL,
         seconds: Double
     ) async throws -> AsyncThrowingStream<LiveListenCaptureUpdate, Error> {
+        try await capture(
+            source: source,
+            outputURL: outputURL,
+            seconds: seconds,
+            pcmConsumer: nil
+        )
+    }
+
+    func capture(
+        source: LiveListenCaptureSource,
+        pcmConsumer: LiveListenPCMConsumer
+    ) async throws -> AsyncThrowingStream<LiveListenCaptureUpdate, Error> {
+        try await capture(
+            source: source,
+            outputURL: nil,
+            seconds: nil,
+            pcmConsumer: pcmConsumer
+        )
+    }
+
+    private func capture(
+        source: LiveListenCaptureSource,
+        outputURL: URL?,
+        seconds: Double?,
+        pcmConsumer: LiveListenPCMConsumer?
+    ) async throws -> AsyncThrowingStream<LiveListenCaptureUpdate, Error> {
         stop()
         let stream = AsyncThrowingStream<LiveListenCaptureUpdate, Error> { continuation in
             do {
-                let writer = try LiveListenWavWriter(path: outputURL.path, sampleRate: 48_000, channels: 2)
+                let writer = try outputURL.map { try LiveListenWavWriter(path: $0.path, sampleRate: 48_000, channels: 2) }
                 let context = CaptureContext(
                     channels: 2,
                     writer: writer,
-                    targetFrames: UInt64(48_000 * seconds),
+                    targetFrames: seconds.map { UInt64(48_000 * $0) },
+                    pcmConsumer: pcmConsumer,
                     continuation: continuation
                 )
-                self.context = context
-                try self.startSystemTap(source: source, context: context)
                 continuation.onTermination = { [weak self] _ in
                     self?.stop()
+                }
+                self.context = context
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try self.startSystemTap(source: source, context: context)
+                    } catch {
+                        appendLiveListenCaptureServiceLog("startSystemTap failed error=\(error.localizedDescription)")
+                        continuation.finish(throwing: error)
+                    }
                 }
             } catch {
                 continuation.finish(throwing: error)
@@ -218,12 +409,17 @@ final class LiveListenCaptureService: @unchecked Sendable {
             throw LiveListenCaptureError.unsupportedOS
         }
 
+        appendLiveListenCaptureServiceLog("startSystemTap begin source=\(source.name) kind=\(source.kind.rawValue) pid=\(source.processIdentifier.map(String.init) ?? "nil")")
+        try Self.ensureAudioCapturePermissionWithoutRequest()
         let outputDeviceID = try Self.defaultOutputDeviceID()
         let outputUID = try Self.deviceUID(deviceID: outputDeviceID)
+        appendLiveListenCaptureServiceLog("default output id=\(outputDeviceID) uid=\(outputUID)")
         let tapUUID = UUID()
         let description: CATapDescription
         if source.kind == .application, let processIdentifier = source.processIdentifier {
+            appendLiveListenCaptureServiceLog("resolve process object pid=\(processIdentifier)")
             let processObjectID = try Self.processObjectID(processIdentifier: processIdentifier)
+            appendLiveListenCaptureServiceLog("resolved process object id=\(processObjectID)")
             description = CATapDescription(stereoMixdownOfProcesses: [processObjectID])
             description.isExclusive = false
             description.isMixdown = true
@@ -238,7 +434,9 @@ final class LiveListenCaptureService: @unchecked Sendable {
         description.muteBehavior = .unmuted
 
         var tapID = AudioObjectID(kAudioObjectUnknown)
+        appendLiveListenCaptureServiceLog("create process tap begin")
         let tapStatus = AudioHardwareCreateProcessTap(description, &tapID)
+        appendLiveListenCaptureServiceLog("create process tap status=\(tapStatus) tap=\(tapID)")
         guard tapStatus == noErr else {
             throw LiveListenCaptureError.coreAudio("AudioHardwareCreateProcessTap", tapStatus)
         }
@@ -259,7 +457,9 @@ final class LiveListenCaptureService: @unchecked Sendable {
         ]
 
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
+        appendLiveListenCaptureServiceLog("create aggregate begin")
         let aggregateStatus = AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &aggregateID)
+        appendLiveListenCaptureServiceLog("create aggregate status=\(aggregateStatus) aggregate=\(aggregateID)")
         guard aggregateStatus == noErr else {
             throw LiveListenCaptureError.coreAudio("AudioHardwareCreateAggregateDevice", aggregateStatus)
         }
@@ -267,15 +467,92 @@ final class LiveListenCaptureService: @unchecked Sendable {
 
         let contextPointer = Unmanaged.passUnretained(context).toOpaque()
         var ioProcID: AudioDeviceIOProcID?
+        appendLiveListenCaptureServiceLog("create ioproc begin")
         let createStatus = AudioDeviceCreateIOProcID(aggregateID, liveListenCaptureIOProc, contextPointer, &ioProcID)
+        appendLiveListenCaptureServiceLog("create ioproc status=\(createStatus) hasIO=\(ioProcID != nil)")
         guard createStatus == noErr, let ioProcID else {
             throw LiveListenCaptureError.coreAudio("AudioDeviceCreateIOProcID", createStatus)
         }
         context.ioProcID = ioProcID
 
+        appendLiveListenCaptureServiceLog("device start begin")
         let startStatus = AudioDeviceStart(aggregateID, ioProcID)
+        appendLiveListenCaptureServiceLog("device start status=\(startStatus)")
         guard startStatus == noErr else {
             throw LiveListenCaptureError.coreAudio("AudioDeviceStart", startStatus)
+        }
+        appendLiveListenCaptureServiceLog("tap started source=\(source.name) kind=\(source.kind.rawValue) aggregate=\(aggregateID) tap=\(tapID) output=\(outputUID) consumer=\(context.pcmConsumer != nil)")
+    }
+
+    private static func tccSymbol<T>(_ name: String, as type: T.Type) -> T? {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC", RTLD_NOW) else {
+            return nil
+        }
+        guard let symbol = dlsym(handle, name) else { return nil }
+        return unsafeBitCast(symbol, to: type)
+    }
+
+    private static func preflightAudioCapturePermission() -> LiveListenAudioCapturePermissionStatus {
+        guard let preflight = tccSymbol("TCCAccessPreflight", as: LiveListenTCCPreflightFunc.self) else {
+            return .unknown
+        }
+        let result = preflight("kTCCServiceAudioCapture" as CFString, nil)
+        if result == 0 { return .authorized }
+        if result == 1 { return .denied }
+        return .unknown
+    }
+
+    private static func requestAudioCapturePermissionAsync() async -> Bool? {
+        guard let request = tccSymbol("TCCAccessRequest", as: LiveListenTCCRequestFunc.self) else {
+            return nil
+        }
+        return await withCheckedContinuation { continuation in
+            request("kTCCServiceAudioCapture" as CFString, nil) { allowed in
+                continuation.resume(returning: allowed)
+            }
+        }
+    }
+
+    private static func requestAudioCapturePermissionWithTimeout(seconds: UInt64) async -> Bool? {
+        guard let request = tccSymbol("TCCAccessRequest", as: LiveListenTCCRequestFunc.self) else {
+            return nil
+        }
+        return await withCheckedContinuation { continuation in
+            let box = LiveListenPermissionContinuationBox(continuation)
+            request("kTCCServiceAudioCapture" as CFString, nil) { allowed in
+                box.resume(allowed)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Int(seconds))) {
+                box.resume(nil)
+            }
+        }
+    }
+
+    private static func requestAudioCapturePermissionBlocking() -> Bool? {
+        guard let request = tccSymbol("TCCAccessRequest", as: LiveListenTCCRequestFunc.self) else {
+            return nil
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        var granted = false
+        request("kTCCServiceAudioCapture" as CFString, nil) { allowed in
+            granted = allowed
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 60)
+        return granted
+    }
+
+    private static func ensureAudioCapturePermissionWithoutRequest() throws {
+        let status = preflightAudioCapturePermission()
+        appendLiveListenCaptureServiceLog("audio-capture permission=\(status.rawValue)")
+        if status == .authorized { return }
+        if status == .denied {
+            throw LiveListenCaptureError.audioCapturePermissionDenied
+        }
+        if let granted = requestAudioCapturePermissionBlocking() {
+            appendLiveListenCaptureServiceLog("audio-capture permission requested granted=\(granted)")
+            if granted { return }
+            throw LiveListenCaptureError.audioCapturePermissionNotGranted
         }
     }
 
@@ -342,17 +619,45 @@ private let liveListenCaptureIOProc: AudioDeviceIOProc = { _, _, inputData, _, o
     if context.done { return noErr }
 
     let sourceList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
-    guard let firstBuffer = sourceList.first, let sourceData = firstBuffer.mData else { return noErr }
-    let sourceChannels = max(1, Int(firstBuffer.mNumberChannels))
+    if context.pcmSequence < 3 {
+        let layout = (0..<sourceList.count).map { index -> String in
+            let buffer = sourceList[index]
+            return "#\(index):ch=\(buffer.mNumberChannels):bytes=\(buffer.mDataByteSize):data=\(buffer.mData != nil)"
+        }.joined(separator: ",")
+        appendLiveListenCaptureServiceLog("ioproc seq=\(context.pcmSequence) buffers=\(sourceList.count) layout=\(layout)")
+    }
+    guard let firstBuffer = sourceList.first, firstBuffer.mData != nil else { return noErr }
     let targetChannels = Int(context.channels)
-    let frameCount = Int(firstBuffer.mDataByteSize) / (sourceChannels * MemoryLayout<Float32>.size)
-    let floatSamples = sourceData.bindMemory(to: Float32.self, capacity: frameCount * sourceChannels)
+    let firstBufferChannels = max(1, Int(firstBuffer.mNumberChannels))
+    let isPlanarFloat32 = sourceList.count > 1 && sourceList.allSatisfy { buffer in
+        buffer.mData != nil && max(1, Int(buffer.mNumberChannels)) == 1
+    }
+    let frameCount: Int
+    if isPlanarFloat32 {
+        frameCount = sourceList.reduce(Int.max) { partial, buffer in
+            min(partial, Int(buffer.mDataByteSize) / MemoryLayout<Float32>.size)
+        }
+    } else {
+        frameCount = Int(firstBuffer.mDataByteSize) / (firstBufferChannels * MemoryLayout<Float32>.size)
+    }
+    guard frameCount > 0 else { return noErr }
     var int16 = [Int16](repeating: 0, count: frameCount * targetChannels)
 
     for frame in 0..<frameCount {
         for channel in 0..<targetChannels {
-            let sourceChannel = min(channel, sourceChannels - 1)
-            let sample = max(-1.0, min(1.0, floatSamples[frame * sourceChannels + sourceChannel]))
+            let rawSample: Float
+            if isPlanarFloat32 {
+                let sourceBufferIndex = min(channel, sourceList.count - 1)
+                guard let sourceData = sourceList[sourceBufferIndex].mData else { continue }
+                let floatSamples = sourceData.bindMemory(to: Float32.self, capacity: frameCount)
+                rawSample = floatSamples[frame]
+            } else {
+                guard let sourceData = firstBuffer.mData else { continue }
+                let sourceChannel = min(channel, firstBufferChannels - 1)
+                let floatSamples = sourceData.bindMemory(to: Float32.self, capacity: frameCount * firstBufferChannels)
+                rawSample = floatSamples[frame * firstBufferChannels + sourceChannel]
+            }
+            let sample = max(-1.0, min(1.0, rawSample))
             let absSample = abs(sample)
             if absSample > 0.000_01 {
                 context.nonSilentSamples += 1
@@ -373,6 +678,21 @@ private let liveListenCaptureIOProc: AudioDeviceIOProc = { _, _, inputData, _, o
         return noErr
     }
 
+    if let pcmConsumer = context.pcmConsumer {
+        context.pcmSequence += 1
+        pcmConsumer.consume(
+            LiveListenPCMFrame(
+                pcm16Data: data,
+                sampleRate: context.sampleRate,
+                channels: context.channels,
+                frameCount: UInt32(frameCount),
+                sequence: context.pcmSequence,
+                capturedFrames: context.capturedFrames,
+                capturedAt: Date()
+            )
+        )
+    }
+
     for bufferIndex in 0..<Int(outputData.pointee.mNumberBuffers) {
         let buffer = UnsafeMutableAudioBufferListPointer(outputData)[bufferIndex]
         if let outputBuffer = buffer.mData {
@@ -387,6 +707,19 @@ private let liveListenCaptureIOProc: AudioDeviceIOProc = { _, _, inputData, _, o
         context.continuation.finish()
     }
     return noErr
+}
+
+private func appendLiveListenCaptureServiceLog(_ message: String) {
+    let line = "\(ISO8601DateFormatter().string(from: Date())) capture-service \(message)\n"
+    let url = URL(fileURLWithPath: "/tmp/pulse-live-listen-native-debug.log")
+    guard let data = line.data(using: .utf8) else { return }
+    if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
+        _ = try? handle.seekToEnd()
+        _ = try? handle.write(contentsOf: data)
+        try? handle.close()
+    } else {
+        try? data.write(to: url)
+    }
 }
 
 private func liveListenEmitCaptureUpdateIfNeeded(context: LiveListenCaptureService.CaptureContext) {
@@ -405,12 +738,18 @@ private func liveListenEmitCaptureUpdateIfNeeded(context: LiveListenCaptureServi
 
 enum LiveListenCaptureError: LocalizedError {
     case unsupportedOS
+    case audioCapturePermissionDenied
+    case audioCapturePermissionNotGranted
     case coreAudio(String, OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .unsupportedOS:
             return "System audio capture requires macOS 14.2 or later."
+        case .audioCapturePermissionDenied:
+            return "System audio capture permission is denied. Enable PulseBarNative in System Settings > Privacy & Security > Screen & System Audio Recording."
+        case .audioCapturePermissionNotGranted:
+            return "System audio capture permission was not granted."
         case let .coreAudio(operation, status):
             return "\(operation) failed with status \(status)."
         }

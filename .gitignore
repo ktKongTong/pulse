@@ -39,3 +39,4 @@ worker-configuration.d.ts
 .konan-local
 .env
 .env.*
+*.mp3

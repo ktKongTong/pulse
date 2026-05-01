@@ -1,4 +1,4 @@
-import type { Subscription } from "rxjs";
+import { Subscription } from "rxjs";
 import { PartyTracks } from "partytracks/client";
 
 export type LiveListenAudioStats = {
@@ -7,6 +7,7 @@ export type LiveListenAudioStats = {
   bytes: number | null;
   bytesDeltaPerSecond: number | null;
   codec: string | null;
+  audioLevel: number | null;
   concealedSamples: number | null;
   concealedSamplesDeltaPerSecond: number | null;
   concealmentEvents: number | null;
@@ -15,8 +16,13 @@ export type LiveListenAudioStats = {
   jitterBufferDelayMs: number | null;
   jitterBufferEmittedCount: number | null;
   jitterBufferTargetDelayMs: number | null;
+  jitterBufferMinimumDelayMs: number | null;
   jitterMs: number | null;
   packets: number | null;
+  packetsDiscarded: number | null;
+  packetsReceived: number | null;
+  totalAudioEnergy: number | null;
+  totalSamplesDuration: number | null;
   packetsDeltaPerSecond: number | null;
   packetsLost: number | null;
   packetsLostDeltaPerSecond: number | null;
@@ -31,6 +37,8 @@ type PreviousSample = {
   concealedSamples: number | null;
   concealmentEvents: number | null;
   jitterBufferDelay: number | null;
+  jitterBufferTargetDelay: number | null;
+  jitterBufferMinimumDelay: number | null;
   jitterBufferEmittedCount: number | null;
   packets: number | null;
   packetsLost: number | null;
@@ -44,6 +52,7 @@ export function emptyAudioStats(direction: LiveListenAudioStats["direction"]): L
     bytes: null,
     bytesDeltaPerSecond: null,
     codec: null,
+    audioLevel: null,
     concealedSamples: null,
     concealedSamplesDeltaPerSecond: null,
     concealmentEvents: null,
@@ -52,9 +61,14 @@ export function emptyAudioStats(direction: LiveListenAudioStats["direction"]): L
     jitterBufferDelayMs: null,
     jitterBufferEmittedCount: null,
     jitterBufferTargetDelayMs: null,
+    jitterBufferMinimumDelayMs: null,
     jitterMs: null,
     packets: null,
     packetsDeltaPerSecond: null,
+    packetsDiscarded: null,
+    packetsReceived: null,
+    totalAudioEnergy: null,
+    totalSamplesDuration: null,
     packetsLost: null,
     packetsLostDeltaPerSecond: null,
     roundTripTimeMs: null,
@@ -99,33 +113,71 @@ export function startPartyTracksAudioStats(
         ? numberValue(media.packetsSent)
         : numberValue(media.packetsReceived);
       const packetsLost = numberValue(media.packetsLost);
+      const packetsDiscarded = numberValue(media.packetsDiscarded);
+      const packetsReceived = numberValue(media.packetsReceived);
+      const audioLevel = numberValue(media.audioLevel);
+      const totalAudioEnergy = numberValue(media.totalAudioEnergy);
+      const totalSamplesDuration = numberValue(media.totalSamplesDuration);
       const concealmentEvents = numberValue(media.concealmentEvents);
       const concealedSamples = numberValue(media.concealedSamples);
       const jitterBufferDelay = numberValue(media.jitterBufferDelay);
+      const jitterBufferTargetDelay = numberValue(media.jitterBufferTargetDelay);
+      const jitterBufferMinimumDelay = numberValue(media.jitterBufferMinimumDelay);
       const jitterBufferEmittedCount = numberValue(media.jitterBufferEmittedCount);
       const timestamp = numberValue(media.timestamp) ?? Date.now();
-      const bitrateKbps = bytes !== null && previous
-        ? Math.max(0, ((bytes - previous.bytes) * 8) / Math.max(1, timestamp - previous.timestamp))
-        : null;
-      const elapsedSeconds = previous ? Math.max(0.001, (timestamp - previous.timestamp) / 1000) : null;
-      const bytesDeltaPerSecond = bytes !== null && previous && elapsedSeconds !== null
-        ? Math.max(0, (bytes - previous.bytes) / elapsedSeconds)
-        : null;
-      const packetsDeltaPerSecond = packets !== null && previous?.packets !== null && elapsedSeconds !== null
-        ? Math.max(0, (packets - previous.packets) / elapsedSeconds)
-        : null;
-      const packetsLostDeltaPerSecond = packetsLost !== null && previous?.packetsLost !== null && elapsedSeconds !== null
-        ? Math.max(0, (packetsLost - previous.packetsLost) / elapsedSeconds)
-        : null;
-      const concealmentEventsDeltaPerSecond = concealmentEvents !== null && previous?.concealmentEvents !== null && elapsedSeconds !== null
-        ? Math.max(0, (concealmentEvents - previous.concealmentEvents) / elapsedSeconds)
-        : null;
-      const concealedSamplesDeltaPerSecond = concealedSamples !== null && previous?.concealedSamples !== null && elapsedSeconds !== null
-        ? Math.max(0, (concealedSamples - previous.concealedSamples) / elapsedSeconds)
-        : null;
-      const jitterBufferDelayMs = jitterBufferDelay !== null && previous?.jitterBufferDelay !== null && previous?.jitterBufferEmittedCount !== null && jitterBufferEmittedCount !== null
-        ? secondsToMs((jitterBufferDelay - previous.jitterBufferDelay) / Math.max(1, jitterBufferEmittedCount - previous.jitterBufferEmittedCount))
-        : secondsToMs(jitterBufferDelay);
+      const previousSample = previous;
+      let bitrateKbps: number | null = null;
+      let bytesDeltaPerSecond: number | null = null;
+      let packetsDeltaPerSecond: number | null = null;
+      let packetsLostDeltaPerSecond: number | null = null;
+      let concealmentEventsDeltaPerSecond: number | null = null;
+      let concealedSamplesDeltaPerSecond: number | null = null;
+      let jitterBufferDelayMs = secondsToMs(jitterBufferDelay);
+      let jitterBufferTargetDelayMs = secondsToMs(jitterBufferTargetDelay);
+      let jitterBufferMinimumDelayMs = secondsToMs(jitterBufferMinimumDelay);
+
+      if (previousSample) {
+        const elapsedSeconds = Math.max(0.001, (timestamp - previousSample.timestamp) / 1000);
+        const elapsedMs = Math.max(1, timestamp - previousSample.timestamp);
+
+        if (bytes !== null) {
+          bitrateKbps = Math.max(0, ((bytes - previousSample.bytes) * 8) / elapsedMs);
+          bytesDeltaPerSecond = Math.max(0, (bytes - previousSample.bytes) / elapsedSeconds);
+        }
+        if (packets !== null && previousSample.packets !== null) {
+          packetsDeltaPerSecond = Math.max(0, (packets - previousSample.packets) / elapsedSeconds);
+        }
+        if (packetsLost !== null && previousSample.packetsLost !== null) {
+          packetsLostDeltaPerSecond = Math.max(0, (packetsLost - previousSample.packetsLost) / elapsedSeconds);
+        }
+        if (concealmentEvents !== null && previousSample.concealmentEvents !== null) {
+          concealmentEventsDeltaPerSecond = Math.max(0, (concealmentEvents - previousSample.concealmentEvents) / elapsedSeconds);
+        }
+        if (concealedSamples !== null && previousSample.concealedSamples !== null) {
+          concealedSamplesDeltaPerSecond = Math.max(0, (concealedSamples - previousSample.concealedSamples) / elapsedSeconds);
+        }
+        if (
+          jitterBufferDelay !== null
+          && previousSample.jitterBufferDelay !== null
+          && jitterBufferEmittedCount !== null
+          && previousSample.jitterBufferEmittedCount !== null
+        ) {
+          const emittedDelta = Math.max(1, jitterBufferEmittedCount - previousSample.jitterBufferEmittedCount);
+          jitterBufferDelayMs = secondsToMs(
+            (jitterBufferDelay - previousSample.jitterBufferDelay) / emittedDelta,
+          );
+          if (jitterBufferTargetDelay !== null && previousSample.jitterBufferTargetDelay !== null) {
+            jitterBufferTargetDelayMs = secondsToMs(
+              (jitterBufferTargetDelay - previousSample.jitterBufferTargetDelay) / emittedDelta,
+            );
+          }
+          if (jitterBufferMinimumDelay !== null && previousSample.jitterBufferMinimumDelay !== null) {
+            jitterBufferMinimumDelayMs = secondsToMs(
+              (jitterBufferMinimumDelay - previousSample.jitterBufferMinimumDelay) / emittedDelta,
+            );
+          }
+        }
+      }
       if (bytes !== null) {
         previous = {
           bytes,
@@ -133,6 +185,8 @@ export function startPartyTracksAudioStats(
           concealmentEvents,
           jitterBufferDelay,
           jitterBufferEmittedCount,
+          jitterBufferTargetDelay,
+          jitterBufferMinimumDelay,
           packets,
           packetsLost,
           timestamp,
@@ -145,6 +199,7 @@ export function startPartyTracksAudioStats(
         bytes,
         bytesDeltaPerSecond,
         codec: codecName(report, media),
+        audioLevel,
         concealedSamples,
         concealedSamplesDeltaPerSecond,
         concealmentEvents,
@@ -152,13 +207,18 @@ export function startPartyTracksAudioStats(
         connectionState: peerConnection.connectionState,
         jitterBufferDelayMs,
         jitterBufferEmittedCount,
-        jitterBufferTargetDelayMs: secondsToMs(numberValue(media.jitterBufferTargetDelay)),
+        jitterBufferTargetDelayMs,
+        jitterBufferMinimumDelayMs,
         jitterMs: secondsToMs(numberValue(media.jitter)),
         packets,
         packetsDeltaPerSecond,
+        packetsDiscarded,
+        packetsReceived,
         packetsLost,
         packetsLostDeltaPerSecond,
         roundTripTimeMs: secondsToMs(numberValue(media.roundTripTime)),
+        totalAudioEnergy,
+        totalSamplesDuration,
         timestamp,
       });
     };
@@ -167,12 +227,10 @@ export function startPartyTracksAudioStats(
     timer = window.setInterval(() => void collect(), 1_000);
   });
 
-  return {
-    unsubscribe() {
-      stopTimer();
-      subscription.unsubscribe();
-    },
-  };
+  return new Subscription(() => {
+    stopTimer();
+    subscription.unsubscribe();
+  });
 }
 
 function findAudioRtpStats(

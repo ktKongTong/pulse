@@ -2,6 +2,7 @@ import type { DeviceDO } from "../do/device/device-do";
 import type { InteractionHub } from "../do/interaction/hub-do";
 import type { InteractionInbox } from "../do/interaction/inbox-do";
 import type { LiveListenRoom } from "../do/live-listen/room-do";
+import type { MediaRoomDO } from "../do/media-room/media-room-do";
 import type { ChatRoom, GlobalStatusRoom, PageStatusRoom } from "../do/room";
 
 export type Env = Cloudflare.Env & {
@@ -11,6 +12,7 @@ export type Env = Cloudflare.Env & {
   INTERACTION_HUB: DurableObjectNamespace<InteractionHub>;
   INTERACTION_INBOX: DurableObjectNamespace<InteractionInbox>;
   LIVE_LISTEN_ROOM: DurableObjectNamespace<LiveListenRoom>;
+  MEDIA_ROOM: DurableObjectNamespace<MediaRoomDO>;
   DEVICE_DO: DurableObjectNamespace<DeviceDO>;
   ASSETS: Fetcher;
   WORKSPACE_ID: string;

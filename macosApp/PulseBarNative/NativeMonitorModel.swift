@@ -19,7 +19,12 @@ final class NativeMonitorModel: ObservableObject {
     @Published var dashboardSelection: DashboardSection = .dashboard
 
     private var loopTask: Task<Void, Never>?
+    private var liveListenDebugTriggerTask: Task<Void, Never>?
     private let bridge = PulseBarBridge()
+    private let liveListenDebugCaptureModel = LiveListenCaptureModel()
+    private var liveListenDebugStartObserver: NSObjectProtocol?
+    private var liveListenDebugStopObserver: NSObjectProtocol?
+    private var liveListenDebugStartInProgress = false
     private var lastStatsRefreshAt: Date = .distantPast
     private var lastInteractionRefreshAt: Date = .distantPast
     private var lastSyncRefreshAt: Date = .distantPast
@@ -33,6 +38,10 @@ final class NativeMonitorModel: ObservableObject {
 
     @_silgen_name("Kotlin_native_internal_ref_disposeExternalRCRef")
     private static func disposeExternalRCRef(_ ref: UnsafeMutableRawPointer?)
+
+    init() {
+        installLiveListenDebugTriggerLoopIfNeeded()
+    }
 
     private struct RefreshPayload {
         let snapshot: LiveSnapshot?
@@ -48,6 +57,9 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     func start() {
+        appendLiveListenDebugLog("monitor.start")
+        installLiveListenDebugObserversIfNeeded()
+        installLiveListenDebugTriggerLoopIfNeeded()
         if loopTask != nil {
             isPaused = false
             return
@@ -55,6 +67,7 @@ final class NativeMonitorModel: ObservableObject {
         settingsDraft = Self.mapConfig(bridge.readConfig())
         isMonitoring = true
         isPaused = false
+        refresh()
         loopTask = Task {
             while !Task.isCancelled {
                 if !isPaused {
@@ -67,6 +80,96 @@ final class NativeMonitorModel: ObservableObject {
 
     deinit {
         loopTask?.cancel()
+        liveListenDebugTriggerTask?.cancel()
+    }
+
+
+    private func installLiveListenDebugTriggerLoopIfNeeded() {
+        if liveListenDebugTriggerTask != nil { return }
+        appendLiveListenDebugLog("debug trigger loop installed")
+        liveListenDebugTriggerTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.pollLiveListenDebugTriggerFiles()
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+
+    private func pollLiveListenDebugTriggerFiles() {
+        let fileManager = FileManager.default
+        let startURL = URL(fileURLWithPath: "/tmp/pulse-live-listen-start")
+        let stopURL = URL(fileURLWithPath: "/tmp/pulse-live-listen-stop")
+
+        if fileManager.fileExists(atPath: stopURL.path) {
+            appendLiveListenDebugLog("stop trigger seen")
+            try? fileManager.removeItem(at: stopURL)
+            stopDebugNativeLiveListenStream()
+        }
+
+        if fileManager.fileExists(atPath: startURL.path), !liveListenDebugStartInProgress {
+            appendLiveListenDebugLog("start trigger seen")
+            try? fileManager.removeItem(at: startURL)
+            liveListenDebugStartInProgress = true
+            startDebugNativeLiveListenStream()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                self?.liveListenDebugStartInProgress = false
+            }
+        }
+    }
+
+    func startDebugNativeLiveListenStream() {
+        liveListenDebugCaptureModel.refreshSources()
+        let endpoint = liveListenEndpoint
+        appendLiveListenDebugLog("start debug stream endpoint=\(endpoint?.baseURL.absoluteString ?? "nil") workspace=\(endpoint?.workspaceId ?? "nil") source=\(liveListenDebugCaptureModel.selectedSource?.name ?? "nil")")
+        liveListenDebugCaptureModel.updateEndpoint(endpoint)
+        dashboardSelection = .liveListen
+        liveListenDebugCaptureModel.startNativeStream()
+    }
+
+    func stopDebugNativeLiveListenStream() {
+        appendLiveListenDebugLog("stop debug stream")
+        liveListenDebugCaptureModel.stopCapture()
+    }
+
+    private func appendLiveListenDebugLog(_ message: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
+        let url = URL(fileURLWithPath: "/tmp/pulse-live-listen-native-debug.log")
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
+                try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+                try? handle.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
+    }
+
+    private func installLiveListenDebugObserversIfNeeded() {
+        if liveListenDebugStartObserver == nil {
+            liveListenDebugStartObserver = DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("PulseLiveListenDebugStartNativeStream"),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.startDebugNativeLiveListenStream()
+                }
+            }
+        }
+        if liveListenDebugStopObserver == nil {
+            liveListenDebugStopObserver = DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("PulseLiveListenDebugStopNativeStream"),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.stopDebugNativeLiveListenStream()
+                }
+            }
+        }
     }
 
     func stop() {
@@ -82,6 +185,18 @@ final class NativeMonitorModel: ObservableObject {
             return
         }
         isPaused.toggle()
+        if !isPaused {
+            refresh()
+        }
+    }
+
+    func resumeAndRefresh() {
+        if !isMonitoring {
+            start()
+            return
+        }
+        isPaused = false
+        refresh()
     }
 
     func refresh() {
@@ -191,6 +306,21 @@ final class NativeMonitorModel: ObservableObject {
 
     func saveConfig() {
         bridge.updateConfig(config: Self.makeConfig(from: settingsDraft))
+    }
+
+    var liveListenEndpoint: LiveListenEndpointConfig? {
+        let endpoint = settingsDraft.endpoints.first { endpoint in
+            endpoint.enabled &&
+                !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !endpoint.apiKey.isEmpty
+        } ?? settingsDraft.endpoints.first { endpoint in
+            !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !endpoint.apiKey.isEmpty
+        }
+        guard let endpoint else { return nil }
+        return LiveListenEndpointConfig.fromEndpointDraft(endpoint)
     }
 
     func addEndpoint() {

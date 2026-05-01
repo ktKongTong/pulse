@@ -25,9 +25,14 @@ export function MediaState({ className }: MediaStateProps) {
 
   return (
     <div className={className}>
-      <div className="font-medium text-start py-2 line-clamp-1 uppercase text-sm opacity-70 leading-tight tracking-widest">
-        正在聆听
+      <div className="flex gap-2 items-center">
+        <div className="font-medium text-start py-2 line-clamp-1 uppercase text-sm opacity-70 leading-tight tracking-widest">
+          正在聆听
+        </div>
+         <LiveListenControl className="mt-1" />
       </div>
+
+
     <div className={cn(
       "flex flex-row gap-2 md:gap-4 w-full items-start",
       // className
@@ -50,12 +55,10 @@ export function MediaState({ className }: MediaStateProps) {
 
     </div>
       <div className="flex flex-col w-full items-start gap-3">
-
       <h2 className="font-medium line-clamp-1 text-start leading-tight tracking-tight text-stone-950">
         {media?.title ?? "Unknown track"}
       </h2>
-      <Lyric media={media} />
-      <LiveListenControl className="mt-1" />
+          <Lyric media={media} />
       {/*<Progress media={media} className="mt-auto hidden md:block"/>*/}
     </div>
       </div>

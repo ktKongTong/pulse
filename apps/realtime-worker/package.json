@@ -9,6 +9,7 @@
     "start": "wrangler dev",
     "deploy": "react-router build && wrangler deploy",
     "test": "vp test",
+    "push": "node scripts/media-room-producer.mjs --file sample.mp3 --url ws://localhost:8900/api/v1/media-room/room-test-1?role=producer",
     "typecheck": "tsgo -p tsconfig.json --noEmit",
     "type": "wrangler types worker-configuration.d.ts"
   },

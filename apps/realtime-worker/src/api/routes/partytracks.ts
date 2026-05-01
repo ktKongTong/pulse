@@ -13,10 +13,11 @@ partyTracksRoutes.all("/partytracks/*", async (c) => {
   }
 
   const config = requiredRealtimeSfuConfig(c.env);
+  const request = await requestWithForwardableBody(c.req.raw);
   return routePartyTracksRequest({
     ...config,
-    prefix: resolvePartyTracksPrefix(c.req.raw),
-    request: c.req.raw,
+    prefix: resolvePartyTracksPrefix(request),
+    request,
     lockSessionToInitiator: !isDeviceBearer(c.req.header("Authorization") ?? null, requiredDeviceApiKey(c.env)),
   });
 });
@@ -32,4 +33,19 @@ function resolvePartyTracksPrefix(request: Request) {
 function isDeviceBearer(header: string | null, expectedToken: string): boolean {
   const match = header?.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim() === expectedToken;
+}
+
+
+async function requestWithForwardableBody(request: Request): Promise<Request> {
+  if (request.method === "GET" || request.method === "HEAD") return request;
+  if (request.headers.has("Content-Length")) return request;
+  const body = await request.arrayBuffer();
+  const headers = new Headers(request.headers);
+  headers.set("Content-Length", String(body.byteLength));
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body: body.byteLength > 0 ? body : undefined,
+    redirect: request.redirect,
+  });
 }

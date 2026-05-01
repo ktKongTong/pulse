@@ -200,3 +200,43 @@ struct EndpointSettingsDraft: Identifiable, Equatable {
         return draft
     }
 }
+
+
+struct LiveListenEndpointConfig: Equatable {
+    let baseURL: URL
+    let workspaceId: String
+    let apiKey: String
+}
+
+
+extension LiveListenEndpointConfig {
+    static func fromEndpointDraft(_ endpoint: EndpointSettingsDraft) -> LiveListenEndpointConfig? {
+        let workspaceId = endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = endpoint.apiKey
+        guard !workspaceId.isEmpty, !apiKey.isEmpty else { return nil }
+        guard let baseURL = normalizedLiveListenBaseURL(endpoint.endpointUrl) else { return nil }
+        return LiveListenEndpointConfig(baseURL: baseURL, workspaceId: workspaceId, apiKey: apiKey)
+    }
+
+    private static func normalizedLiveListenBaseURL(_ raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var components = URLComponents(string: trimmed) else { return nil }
+        let path = components.path
+        let suffixes = [
+            "/api/v2/presence/ingest",
+            "/v2/presence/ingest",
+            "/api/v1/meta",
+            "/v1/meta",
+            "/api/v1/live-listen",
+            "/v1/live-listen",
+        ]
+        for suffix in suffixes where path.hasSuffix(suffix) {
+            components.path = String(path.dropLast(suffix.count))
+            break
+        }
+        if components.path == "/" { components.path = "" }
+        components.query = nil
+        components.fragment = nil
+        return components.url
+    }
+}

@@ -1,12 +1,14 @@
 import SwiftUI
 
 struct LiveListenCapturePane: View {
+    @EnvironmentObject private var monitor: NativeMonitorModel
     @StateObject private var model = LiveListenCaptureModel()
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                endpointCard
                 sourcePicker
                 meterCard
                 actionRow
@@ -16,17 +18,46 @@ struct LiveListenCapturePane: View {
             .frame(maxWidth: 760, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear { model.refreshSources() }
+        .onAppear {
+            model.refreshSources()
+            model.updateEndpoint(monitor.liveListenEndpoint)
+        }
+        .onChange(of: monitor.liveListenEndpoint) { _, endpoint in
+            model.updateEndpoint(endpoint)
+        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Live Listen Capture")
                 .font(.largeTitle.weight(.semibold))
-            Text("Capture system or app audio without changing the current output device. This panel only validates capture; Cloudflare publishing is wired in the next stage.")
+            Text("Capture Spotify, Apple Music, or app audio without changing the current output device. Native stream mode sends 1-second WAV chunks to the MediaRoom WebSocket relay; WebRTC is not used.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+
+    private var endpointCard: some View {
+        LiveListenCaptureSurface {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Live Listen Endpoint", systemImage: "network")
+                    .font(.headline)
+                if let endpoint = monitor.liveListenEndpoint {
+                    Text(endpoint.baseURL.absoluteString)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Text("Workspace: \(endpoint.workspaceId)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Configure an endpoint URL, Workspace ID, and API Key in Settings > Endpoints before starting a native stream.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
         }
     }
 
@@ -86,7 +117,26 @@ struct LiveListenCapturePane: View {
                 HStack(spacing: 18) {
                     StatPill(title: "frames", value: "\(model.meter.capturedFrames)")
                     StatPill(title: "non-silent", value: "\(model.meter.nonSilentSamples)")
+                    StatPill(title: "pushed", value: "\(model.publisherStats.acceptedFrames)")
                 }
+
+                HStack(spacing: 18) {
+                    StatPill(title: "ws kbps", value: formatOptional(model.publisherStats.sendBitrateKbps))
+                    StatPill(title: "chunks", value: "\(model.publisherStats.chunksSent)")
+                    StatPill(title: "bytes", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.bytesSent), countStyle: .binary))
+                    StatPill(title: "queued", value: "\(model.publisherStats.bufferedFrames)")
+                }
+
+                HStack(spacing: 18) {
+                    StatPill(title: "last chunk", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.lastChunkBytes), countStyle: .binary))
+                    StatPill(title: "accepted", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.acceptedBytes), countStyle: .binary))
+                    StatPill(title: "dropped", value: "\(model.publisherStats.droppedFrames)")
+                    StatPill(title: "transport", value: "WebSocket")
+                }
+
+                Text(model.publisherStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -94,11 +144,18 @@ struct LiveListenCapturePane: View {
     private var actionRow: some View {
         HStack(spacing: 12) {
             Button {
+                model.startNativeStream()
+            } label: {
+                Label("Start WS Stream", systemImage: "antenna.radiowaves.left.and.right")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(model.isCapturing)
+
+            Button {
                 model.startCaptureOnly(seconds: 10)
             } label: {
                 Label("Capture 10s Sample", systemImage: "record.circle")
             }
-            .buttonStyle(.borderedProminent)
             .disabled(model.isCapturing)
 
             Button {
@@ -138,6 +195,11 @@ struct LiveListenCapturePane: View {
                 }
             }
         }
+    }
+
+    private func formatOptional(_ value: Double?) -> String {
+        guard let value else { return "-" }
+        return value.formatted(.number.precision(.fractionLength(1)))
     }
 
     private func sourceLabel(_ source: LiveListenCaptureSource) -> String {

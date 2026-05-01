@@ -15,6 +15,8 @@ if [[ ! -f "$SHARED_LIB" ]]; then
 fi
 
 mkdir -p "$APP/Contents/MacOS"
+rm -rf "$APP/Contents/Frameworks/WebRTC.framework"
+rm -f "$PRODUCTS/LiveListenObjCAudioDevice.o"
 
 cat > "$APP/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -66,13 +68,20 @@ swiftc \
   -framework CoreAudio \
   -framework SwiftUI \
   -framework Combine \
+  -Xlinker -rpath \
+  -Xlinker @executable_path/../Frameworks \
   -Xlinker -force_load \
   -Xlinker "$SHARED_LIB" \
   -Xlinker -undefined \
   -Xlinker dynamic_lookup \
   -o "$EXECUTABLE"
 
-codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP"
+if [[ -d "$APP/Contents/Frameworks" ]]; then
+  find "$APP/Contents/Frameworks" -type d -name '*.framework' -maxdepth 2 -print0 | while IFS= read -r -d '' framework; do
+    codesign --force --sign - "$framework"
+  done
+fi
+codesign --force --sign - --entitlements "$ENTITLEMENTS" --deep "$APP"
 
 pkill -f '/PulseBarNative.app/Contents/MacOS/PulseBarNative' 2>/dev/null || true
 open "$APP"

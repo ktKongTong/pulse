@@ -4,6 +4,7 @@ import { applyCorsHeaders, handleOptions } from "./http/cors";
 import { createWorkerLogger } from "./observability/logger";
 import { ingestRoutes } from "./routes/ingest";
 import { liveListenRoutes } from "./routes/live-listen";
+import { mediaRoomRoutes } from "./routes/media-room";
 import { metaRoutes } from "./routes/meta";
 import { partyTracksRoutes } from "./routes/partytracks";
 import { realtimeRoutes } from "./routes/realtime";
@@ -20,6 +21,7 @@ app.route("/", ingestRoutes);
 app.route("/", realtimeRoutes);
 app.route("/v1/live-listen", liveListenRoutes);
 app.route("/v1/live-listen", partyTracksRoutes);
+app.route("/v1/media-room", mediaRoomRoutes);
 
 app.all("/v1/device-interactions/*", (c) =>
   c.json({ error: "endpoint_disabled" }, 410),
