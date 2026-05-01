@@ -205,7 +205,11 @@ export class LiveListenRoom extends DurableObject<Env> {
     this.assertWorkspaceAndRoom(payload.workspaceId, payload.roomId, state);
     await this.refreshExpirations(state);
     if (state.state !== "starting" && state.state !== "live") {
-      throw new Error("live_listen_not_active");
+      state.state = "starting";
+      state.startedAt = payload.joinedAt;
+      state.hostDeviceId = state.hostDeviceId ?? "owner";
+      state.error = undefined;
+      state.endedAtMs = undefined;
     }
 
     const existing = state.listeners[payload.participantId];
@@ -245,6 +249,11 @@ export class LiveListenRoom extends DurableObject<Env> {
 
     delete state.listeners[payload.participantId];
     state.updatedAt = payload.leftAt;
+    if (Object.keys(state.listeners).length === 0) {
+      state.state = "ended";
+      state.lastHostHeartbeatMs = undefined;
+      state.endedAtMs = Date.now();
+    }
     state.revision += 1;
 
     await this.persist(state);

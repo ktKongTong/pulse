@@ -93,17 +93,21 @@ describe("LiveListenRoom", () => {
     expect(snapshot.clock?.sequence).toBe(1);
   });
 
-  it("rejects listeners while inactive", async () => {
+  it("moves inactive rooms to starting when a listener joins", async () => {
     const stub = liveListenStub();
 
-    await expect(runInDurableObject(stub, async (room: LiveListenRoom) => {
+    const response = await runInDurableObject(stub, async (room: LiveListenRoom) => {
       return room.joinListener({
         workspaceId: "pulse-demo",
         roomId: "live-listen:owner",
         participantId: "visitor-1",
         joinedAt: "2026-04-29T00:00:02.000Z",
       });
-    })).rejects.toThrow("live_listen_not_active");
+    });
+
+    expect(response.snapshot.state).toBe("starting");
+    expect(response.snapshot.listenerCount).toBe(1);
+    expect(response.snapshot.hostDeviceId).toBe("owner");
   });
 
   it("broadcasts snapshot updates over websocket", async () => {

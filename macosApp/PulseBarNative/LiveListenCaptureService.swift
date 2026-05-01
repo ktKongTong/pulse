@@ -110,6 +110,29 @@ final class LiveListenCaptureModel: ObservableObject {
         }
     }
 
+    func selectPreferredSource(preferredProvider: String?, preferredBundleId: String?) {
+        refreshSources()
+        if let preferredBundleId = preferredBundleId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !preferredBundleId.isEmpty,
+           let source = sources.first(where: { $0.bundleId?.localizedCaseInsensitiveContains(preferredBundleId) == true }) {
+            selectedSourceId = source.id
+            return
+        }
+
+        if preferredProvider?.lowercased() == "spotify",
+           let source = sources.first(where: { source in
+               source.bundleId?.localizedCaseInsensitiveContains("spotify") == true ||
+                   source.name.localizedCaseInsensitiveContains("spotify")
+           }) {
+            selectedSourceId = source.id
+            return
+        }
+
+        if selectedSource == nil {
+            selectedSourceId = sources.first?.id ?? "system"
+        }
+    }
+
     func startCaptureOnly(seconds: Double = 10) {
         guard !isCapturing, let selectedSource else { return }
         errorMessage = nil

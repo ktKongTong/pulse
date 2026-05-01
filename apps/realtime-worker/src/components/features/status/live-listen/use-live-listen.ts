@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { joinLiveListen, leaveLiveListen, liveListenDefaults, liveListenParticipantId } from "@/lib/live-listen";
 
 type LiveListenConnectionState = "idle" | "joining" | "connected" | "listening" | "error";
 
@@ -16,6 +17,8 @@ export type LiveListenMediaRoomStats = {
 export function useLiveListen() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const participantIdRef = useRef<string | null>(null);
+  const joinedRef = useRef(false);
   const nextStartTimeRef = useRef(0);
   const lastBitrateSampleRef = useRef({ at: 0, bytes: 0 });
   const [connectionState, setConnectionState] = useState<LiveListenConnectionState>("idle");
@@ -34,6 +37,16 @@ export function useLiveListen() {
     setError(null);
 
     try {
+      const defaults = liveListenDefaults();
+      const participantId = participantIdRef.current ?? liveListenParticipantId();
+      participantIdRef.current = participantId;
+      await joinLiveListen({
+        workspaceId: defaults.workspaceId,
+        roomId: defaults.roomId,
+        participantId,
+      });
+      joinedRef.current = true;
+
       const audioContext = audioContextRef.current ?? new AudioContext();
       audioContextRef.current = audioContext;
       await audioContext.resume();
@@ -77,6 +90,10 @@ export function useLiveListen() {
         }
       };
     } catch (cause) {
+      if (joinedRef.current && participantIdRef.current) {
+        joinedRef.current = false;
+        leaveLiveListen({ participantId: participantIdRef.current }).catch(() => undefined);
+      }
       setConnectionState("error");
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -85,6 +102,10 @@ export function useLiveListen() {
   const leave = useCallback(() => {
     socketRef.current?.close(1000, "listener leave");
     socketRef.current = null;
+    if (joinedRef.current && participantIdRef.current) {
+      joinedRef.current = false;
+      leaveLiveListen({ participantId: participantIdRef.current }).catch(() => undefined);
+    }
     setConnectionState("idle");
   }, []);
 
@@ -123,6 +144,10 @@ export function useLiveListen() {
     return () => {
       socketRef.current?.close(1000, "component unmount");
       socketRef.current = null;
+      if (joinedRef.current && participantIdRef.current) {
+        joinedRef.current = false;
+        leaveLiveListen({ participantId: participantIdRef.current }).catch(() => undefined);
+      }
     };
   }, []);
 

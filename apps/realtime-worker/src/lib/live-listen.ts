@@ -1,5 +1,6 @@
 import {
   LiveListenListenerJoinRequestSchema,
+  LiveListenListenerLeaveRequestSchema,
   LiveListenSnapshotSchema,
   LiveListenStreamEnvelopeSchema,
   LiveListenTokenResponseSchema,
@@ -54,6 +55,31 @@ export async function joinLiveListen(init?: {
   });
   if (!response.ok) throw new Error(`live_listen_join_failed:${response.status}`);
   return LiveListenTokenResponseSchema.parse(await response.json());
+}
+
+export async function leaveLiveListen(init?: {
+  workspaceId?: string;
+  roomId?: string;
+  participantId?: string;
+  signal?: AbortSignal;
+}): Promise<LiveListenSnapshot> {
+  const defaults = liveListenDefaults();
+  const payload = LiveListenListenerLeaveRequestSchema.parse({
+    workspaceId: init?.workspaceId ?? defaults.workspaceId,
+    roomId: init?.roomId ?? defaults.roomId,
+    participantId: init?.participantId ?? liveListenParticipantId(),
+    leftAt: new Date().toISOString(),
+  });
+  const response = await fetch("/api/v1/live-listen/listener/leave", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal: init?.signal,
+  });
+  if (!response.ok) throw new Error(`live_listen_leave_failed:${response.status}`);
+  return LiveListenSnapshotSchema.parse(await response.json());
 }
 
 export function openLiveListenEvents(init: {

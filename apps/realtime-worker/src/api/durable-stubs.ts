@@ -50,6 +50,8 @@ export interface RoomRpc {
 }
 
 export interface DeviceRpc {
+  fetch(request: Request): Promise<Response>;
+  sendLiveListenCommand(command: unknown): Promise<{ delivered: number }>;
   handlePresenceIngest(request: unknown, ttlMs: number): Promise<PresenceIngestAck>;
   handleHistoryIngest(payload: unknown): Promise<unknown>;
   getDeviceSnapshot(): Promise<unknown>;

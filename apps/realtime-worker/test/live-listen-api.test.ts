@@ -68,11 +68,10 @@ class MemoryLiveListenStub {
   }
 
   async joinListener(payload: Record<string, unknown>) {
-    if (this.state.state !== "starting" && this.state.state !== "live") {
-      throw new Error("live_listen_not_active");
-    }
     this.state = {
       ...this.state,
+      state: this.state.state === "starting" || this.state.state === "live" ? this.state.state : "starting",
+      hostDeviceId: this.state.hostDeviceId ?? "owner",
       listenerCount: Number(this.state.listenerCount ?? 0) + 1,
     };
     return {
@@ -278,7 +277,7 @@ describe("live listen api", () => {
     expect(body.snapshot.listenerCount).toBe(1);
   });
 
-  it("returns conflict when listener joins inactive room", async () => {
+  it("allows listener joins to request an inactive room start", async () => {
     const response = await app.fetch(
       jsonRequest("/v1/live-listen/listener/join", {
         workspaceId: "pulse-demo",
@@ -289,7 +288,9 @@ describe("live listen api", () => {
       env(),
     );
 
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ error: "live_listen_not_active" });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { snapshot: { state: string; listenerCount: number } };
+    expect(body.snapshot.state).toBe("starting");
+    expect(body.snapshot.listenerCount).toBe(1);
   });
 });

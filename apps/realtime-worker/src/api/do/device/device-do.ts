@@ -26,6 +26,12 @@ export function deviceStub(env: Env, workspaceId: string, deviceId: string) {
 }
 
 
+interface DeviceControlSocketAttachment {
+  workspaceId: string;
+  deviceId: string;
+  connectionId: string;
+}
+
 export class DeviceDO extends DurableObject<Env> {
   private db: ReturnType<typeof drizzle>;
   private workspaceId: string = "unknown";
@@ -60,6 +66,64 @@ export class DeviceDO extends DurableObject<Env> {
     this.workspaceId = workspaceId;
     this.deviceId = deviceId;
     await this.ctx.storage.put("meta", { w: workspaceId, d: deviceId });
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("Expected websocket", { status: 426 });
+    }
+
+    const url = new URL(request.url);
+    const workspaceId = url.searchParams.get("workspaceId") ?? this.env.WORKSPACE_ID;
+    const deviceId = url.searchParams.get("deviceId") ?? "owner";
+    await this.initMetadata(workspaceId, deviceId);
+
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.serializeAttachment({
+      workspaceId,
+      deviceId,
+      connectionId: crypto.randomUUID(),
+    } satisfies DeviceControlSocketAttachment);
+    this.ctx.acceptWebSocket(server);
+    server.send(JSON.stringify({
+      protocol: "live-listen.device.v1",
+      kind: "connected",
+      workspaceId,
+      deviceId,
+      connectedAt: new Date().toISOString(),
+    }));
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async sendLiveListenCommand(command: unknown): Promise<{ delivered: number }> {
+    const message = JSON.stringify(command);
+    let delivered = 0;
+    for (const socket of this.ctx.getWebSockets()) {
+      try {
+        socket.send(message);
+        delivered += 1;
+      } catch (error) {
+        this.logger.warn("failed to send live listen command", error as Error);
+      }
+    }
+    return { delivered };
+  }
+
+  async webSocketMessage(_socket: WebSocket, message: string | ArrayBuffer) {
+    const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
+    if (raw === "ping") {
+      _socket.send("pong");
+      return;
+    }
+    this.logger.debug("device control message", { message: raw.slice(0, 512) });
+  }
+
+  async webSocketClose(_socket: WebSocket) {}
+
+  async webSocketError(_socket: WebSocket, error: unknown) {
+    this.logger.warn("device control websocket error", error as Error);
   }
 
   // --- RPC Methods ---

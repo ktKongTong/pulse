@@ -28,6 +28,7 @@ export type Env = Cloudflare.Env & {
   REALTIME_TURN_APP_TOKEN?: string;
   DEBUG_LOGS?: string;
   LOG_LEVEL?: string;
+  LIVE_LISTEN_DEVICE_ID?: string;
 }
 
 function requiredEnvValue(env: Env, key: keyof Env): string {
