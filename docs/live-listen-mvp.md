@@ -1136,23 +1136,11 @@ Web Listener 收到：
   "protocol": "live-listen.session.v1",
   "type": "stream.ended",
   "reason": "live_listen_disabled",
-  "message": "The host disabled Live Listen.",
-  "audio": {
-    "fadeOutMs": 200,
-    "clearQueuedAudio": true
-  }
+  "message": "The host disabled Live Listen."
 }
 ```
 
-Web 行为：
-
-```text
-对当前播放做 fade-out
-清空未播放队列
-退出 listening 状态
-展示 host 已关闭一起听
-保留最近歌曲 UI
-```
+Web 客户端可以在本地决定如何停止播放、清空队列、展示提示或保留最近歌曲 UI。这属于客户端播放体验，不进入服务端协议。
 
 MVP 推荐：Room 发送 `stream.ended` 后关闭 Web session WS。用户再次点击一起听时重新走 availability 判断。
 
@@ -1193,7 +1181,7 @@ Room 收到 resumed_with_gap
 Room 决定从新 generation 恢复
 ```
 
-Room 必须在新 generation 音频前发送 `stream.transition`：
+Room 必须在新 generation 音频前发送 `stream.transition`。这个事件只描述事实：stream generation 已经变化；它不携带 UI 过渡策略。
 
 ```json
 {
@@ -1202,16 +1190,7 @@ Room 必须在新 generation 音频前发送 `stream.transition`：
   "reason": "generation_changed",
   "streamId": "stream_abc",
   "fromGeneration": 2,
-  "toGeneration": 3,
-  "audio": {
-    "fadeOutMs": 200,
-    "fadeInMs": 200,
-    "clearQueuedAudio": true,
-    "maxWaitForNextGenerationMs": 3000
-  },
-  "clock": {
-    "reset": true
-  }
+  "toGeneration": 3
 }
 ```
 
@@ -1229,23 +1208,7 @@ Room 必须在新 generation 音频前发送 `stream.transition`：
 }
 ```
 
-Web 行为：
-
-```text
-旧 generation fade-out
-清空旧 generation 未播放队列
-等待新 generation 首个 chunk
-新 generation fade-in
-歌词和进度重新对齐
-```
-
-推荐参数：
-
-```text
-fadeOutMs = 150-300
-fadeInMs  = 150-300
-maxWaitForNextGenerationMs = 3000
-```
+Web 客户端收到 generation 变化事实后，应在本地决定播放队列、歌词和进度条如何切换。是否做平滑过渡、冻结歌词、展示 buffering，都属于客户端体验策略，不进入服务端协议。
 
 ### 12.4 Gap 与 transition 的关系
 
@@ -1261,10 +1224,10 @@ Web -> 从最新 seq 继续，必要时短暂 buffering
 ```text
 Room -> stream.gap
 Room -> stream.transition
-Web -> fade-out / clear queue / fade-in
+Web -> 本地处理播放队列和展示过渡
 ```
 
-`stream.gap` 描述数据缺口；`stream.transition` 描述客户端如何切换播放体验。
+`stream.gap` 描述数据缺口；`stream.transition` 描述 generation 变化事实。客户端负责决定如何展示这个变化。
 
 ## 12. 状态机
 
