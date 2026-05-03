@@ -21,7 +21,7 @@ final class NativeMonitorModel: ObservableObject {
     private var loopTask: Task<Void, Never>?
     private var liveListenDebugTriggerTask: Task<Void, Never>?
     private let bridge = PulseBarBridge()
-    private let liveListenDebugCaptureModel = LiveListenCaptureModel()
+    let liveListenCaptureModel = LiveListenCaptureModel()
     private var liveListenDebugStartObserver: NSObjectProtocol?
     private var liveListenDebugStopObserver: NSObjectProtocol?
     private var liveListenDebugStartInProgress = false
@@ -126,18 +126,23 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
+    func prepareLiveListenCapturePane() {
+        liveListenCaptureModel.refreshSources()
+        liveListenCaptureModel.updateEndpoint(liveListenEndpoint)
+    }
+
     func startDebugNativeLiveListenStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
-        liveListenDebugCaptureModel.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
+        liveListenCaptureModel.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
         let endpoint = liveListenEndpoint
-        appendLiveListenDebugLog("start debug stream endpoint=\(endpoint?.baseURL.absoluteString ?? "nil") workspace=\(endpoint?.workspaceId ?? "nil") source=\(liveListenDebugCaptureModel.selectedSource?.name ?? "nil")")
-        liveListenDebugCaptureModel.updateEndpoint(endpoint)
+        appendLiveListenDebugLog("start debug stream endpoint=\(endpoint?.baseURL.absoluteString ?? "nil") workspace=\(endpoint?.workspaceId ?? "nil") source=\(liveListenCaptureModel.selectedSource?.name ?? "nil")")
+        liveListenCaptureModel.updateEndpoint(endpoint)
         dashboardSelection = .liveListen
-        liveListenDebugCaptureModel.startNativeStream()
+        liveListenCaptureModel.startNativeStream()
     }
 
     func stopDebugNativeLiveListenStream() {
         appendLiveListenDebugLog("stop debug stream")
-        liveListenDebugCaptureModel.stopCapture()
+        liveListenCaptureModel.stopCapture()
     }
 
     private func connectLiveListenDeviceControlIfPossible(force: Bool = false) {
@@ -229,7 +234,7 @@ final class NativeMonitorModel: ObservableObject {
 
         switch type {
         case "stream.start":
-            if liveListenDebugCaptureModel.isCapturing {
+            if liveListenCaptureModel.isCapturing {
                 appendLiveListenDebugLog("device command start already_running commandId=\(commandId)")
                 sendLiveListenDeviceAck(commandId: commandId, status: "already_running")
                 return

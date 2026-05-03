@@ -50,6 +50,22 @@ export default function MediaRoomRoute() {
             <dt>最近 chunk</dt>
             <dd>{formatBytes(liveListen.stats.lastChunkBytes)}</dd>
           </div>
+          <div>
+            <dt>最近 seq</dt>
+            <dd>{liveListen.stats.lastSeq ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>Replay chunks</dt>
+            <dd>{liveListen.stats.replayedChunks}</dd>
+          </div>
+          <div>
+            <dt>Replay miss</dt>
+            <dd>{liveListen.stats.missedChunks}</dd>
+          </div>
+          <div>
+            <dt>可恢复范围</dt>
+            <dd>{liveListen.stats.availableFromSeq ?? "-"} → {liveListen.stats.latestSeq ?? "-"}</dd>
+          </div>
         </dl>
 
         {liveListen.error ? <p style={styles.error}>{liveListen.error}</p> : null}

@@ -8,6 +8,23 @@ APP="$PRODUCTS/PulseBarNative.app"
 EXECUTABLE="$APP/Contents/MacOS/PulseBarNative"
 ENTITLEMENTS="$ROOT/macosApp/PulseBarNative/PulseBarNative.entitlements"
 SHARED_LIB="$PRODUCTS/libPulseBarShared.a"
+OPEN_APP=1
+VERIFY_LAUNCH=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --no-open)
+      OPEN_APP=0
+      ;;
+    --verify)
+      VERIFY_LAUNCH=1
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
 
 if [[ ! -f "$SHARED_LIB" ]]; then
   echo "Missing shared export library: $SHARED_LIB" >&2
@@ -84,4 +101,31 @@ fi
 codesign --force --sign - --entitlements "$ENTITLEMENTS" --deep "$APP"
 
 pkill -f '/PulseBarNative.app/Contents/MacOS/PulseBarNative' 2>/dev/null || true
-open "$APP"
+for _ in {1..40}; do
+  if ! pgrep -f '/PulseBarNative.app/Contents/MacOS/PulseBarNative' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.05
+done
+
+if [[ "$OPEN_APP" -eq 0 ]]; then
+  echo "Built PulseBarNative.app at $APP"
+  exit 0
+fi
+
+if ! /usr/bin/open -n "$APP"; then
+  echo "Failed to open PulseBarNative.app via LaunchServices" >&2
+  exit 1
+fi
+
+if [[ "$VERIFY_LAUNCH" -eq 1 ]]; then
+  for _ in {1..40}; do
+    if pgrep -f '/PulseBarNative.app/Contents/MacOS/PulseBarNative' >/dev/null 2>&1; then
+      echo "PulseBarNative launched"
+      exit 0
+    fi
+    sleep 0.1
+  done
+  echo "PulseBarNative did not appear after launch" >&2
+  exit 1
+fi

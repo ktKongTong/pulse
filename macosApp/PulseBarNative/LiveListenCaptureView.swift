@@ -2,7 +2,8 @@ import SwiftUI
 
 struct LiveListenCapturePane: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
-    @StateObject private var model = LiveListenCaptureModel()
+
+    private var model: LiveListenCaptureModel { monitor.liveListenCaptureModel }
 
     var body: some View {
         ScrollView {
@@ -19,8 +20,7 @@ struct LiveListenCapturePane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            model.refreshSources()
-            model.updateEndpoint(monitor.liveListenEndpoint)
+            monitor.prepareLiveListenCapturePane()
         }
         .onChange(of: monitor.liveListenEndpoint) { _, endpoint in
             model.updateEndpoint(endpoint)
@@ -72,7 +72,10 @@ struct LiveListenCapturePane: View {
                         .disabled(model.isCapturing)
                 }
 
-                Picker("Source", selection: $model.selectedSourceId) {
+                Picker("Source", selection: Binding(
+                    get: { model.selectedSourceId },
+                    set: { model.selectedSourceId = $0 }
+                )) {
                     ForEach(model.sources) { source in
                         Text(sourceLabel(source)).tag(source.id)
                     }
@@ -124,7 +127,14 @@ struct LiveListenCapturePane: View {
                     StatPill(title: "ws kbps", value: formatOptional(model.publisherStats.sendBitrateKbps))
                     StatPill(title: "chunks", value: "\(model.publisherStats.chunksSent)")
                     StatPill(title: "bytes", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.bytesSent), countStyle: .binary))
-                    StatPill(title: "queued", value: "\(model.publisherStats.bufferedFrames)")
+                    StatPill(title: "queued frames", value: "\(model.publisherStats.bufferedFrames)")
+                }
+
+                HStack(spacing: 18) {
+                    StatPill(title: "native queue", value: "\(model.publisherStats.queuedChunks)")
+                    StatPill(title: "queue bytes", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.queuedBytes), countStyle: .binary))
+                    StatPill(title: "reconnects", value: "\(model.publisherStats.reconnectCount)")
+                    StatPill(title: "dropped chunks", value: "\(model.publisherStats.droppedChunks)")
                 }
 
                 HStack(spacing: 18) {
@@ -132,6 +142,20 @@ struct LiveListenCapturePane: View {
                     StatPill(title: "accepted", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.acceptedBytes), countStyle: .binary))
                     StatPill(title: "dropped", value: "\(model.publisherStats.droppedFrames)")
                     StatPill(title: "transport", value: "WebSocket")
+                }
+
+                HStack(spacing: 18) {
+                    StatPill(title: "ws state", value: model.publisherStats.connectionState.rawValue)
+                    StatPill(title: "sending", value: model.publisherStats.isSending ? "yes" : "no")
+                    StatPill(title: "queue seq", value: queueRange(model.publisherStats))
+                    StatPill(title: "last send", value: formatAge(model.publisherStats.lastSendAt))
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    DetailRow(title: "WS URL", value: model.publisherStats.webSocketURL ?? "-")
+                    DetailRow(title: "Connected", value: formatAge(model.publisherStats.lastConnectedAt))
+                    DetailRow(title: "Disconnected", value: formatAge(model.publisherStats.lastDisconnectedAt))
+                    DetailRow(title: "Last error", value: model.publisherStats.lastErrorMessage ?? "-")
                 }
 
                 Text(model.publisherStatusText)
@@ -142,32 +166,33 @@ struct LiveListenCapturePane: View {
     }
 
     private var actionRow: some View {
-        HStack(spacing: 12) {
-            Button {
-                model.startNativeStream()
-            } label: {
-                Label("Start WS Stream", systemImage: "antenna.radiowaves.left.and.right")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(model.isCapturing)
-
-            Button {
-                model.startCaptureOnly(seconds: 10)
-            } label: {
-                Label("Capture 10s Sample", systemImage: "record.circle")
-            }
-            .disabled(model.isCapturing)
-
-            Button {
-                model.stopCapture()
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .disabled(!model.isCapturing)
-
-            if let url = model.lastSampleURL {
-                Button("Reveal Sample") {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
+        LiveListenCaptureSurface {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Automatic Stream Control", systemImage: "bolt.horizontal.circle")
+                    .font(.headline)
+                Text("串流由 Web 侧一起听请求触发，通过 server device control 自动 start/stop。这里是观测面板，不再提供手动 Start。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    Button("Refresh Sources") { monitor.prepareLiveListenCapturePane() }
+                        .disabled(model.isCapturing)
+                    Button {
+                        model.startCaptureOnly(seconds: 10)
+                    } label: {
+                        Label("Capture 10s Sample", systemImage: "record.circle")
+                    }
+                    .disabled(model.isCapturing)
+                    Button {
+                        monitor.stopDebugNativeLiveListenStream()
+                    } label: {
+                        Label("Force Stop", systemImage: "stop.fill")
+                    }
+                    .disabled(!model.isCapturing)
+                    if let url = model.lastSampleURL {
+                        Button("Reveal Sample") {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
+                    }
                 }
             }
         }
@@ -202,6 +227,19 @@ struct LiveListenCapturePane: View {
         return value.formatted(.number.precision(.fractionLength(1)))
     }
 
+    private func queueRange(_ stats: LiveListenPublisherStats) -> String {
+        guard let first = stats.queuedFirstSequence, let last = stats.queuedLastSequence else { return "-" }
+        return first == last ? "#\(first)" : "#\(first)-#\(last)"
+    }
+
+    private func formatAge(_ date: Date?) -> String {
+        guard let date else { return "-" }
+        let age = max(0, Date().timeIntervalSince(date))
+        if age < 1 { return "now" }
+        if age < 60 { return String(format: "%.0fs ago", age) }
+        return String(format: "%.0fm ago", age / 60)
+    }
+
     private func sourceLabel(_ source: LiveListenCaptureSource) -> String {
         switch source.kind {
         case .system:
@@ -234,6 +272,25 @@ private struct MeterRow: View {
                 }
             }
             .frame(height: 8)
+        }
+    }
+}
+
+private struct DetailRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 86, alignment: .leading)
+            Text(value)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 }

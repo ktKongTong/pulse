@@ -29,6 +29,7 @@ export type Env = Cloudflare.Env & {
   DEBUG_LOGS?: string;
   LOG_LEVEL?: string;
   LIVE_LISTEN_DEVICE_ID?: string;
+  MEDIA_ROOM_ZERO_CONSUMER_GRACE_MS?: string;
 }
 
 function requiredEnvValue(env: Env, key: keyof Env): string {
