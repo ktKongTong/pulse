@@ -1,6 +1,12 @@
 # Live Listen 协议说明（单房间单 DO + 可恢复流）
 
-Live Listen 是 Pulse 的网页内一起听能力。新的协议目标是：**一个 Live Listen 房间只对应一个 Durable Object；Web Listener 只建立一条 WebSocket；Native 通过同一个房间 DO 完成控制、媒体状态上报与音频上传；Room DO 持有可恢复的 stream intent、媒体历史和 ring buffer**。
+Live Listen 是 Pulse 的网页内一起听能力。新的协议目标是：**一个 Live Listen 房间只对应一个 Durable Object；Web Listener 只建立一条 WebSocket；Native 通过同一个房间 DO 完成控制、媒体状态上报与音频上传；Room DO 持有可恢复的 stream demand、媒体历史和 ring buffer**。
+
+Native 侧 media 状态不是单个 room state。它由 WS 连接、media 允许、media 播放、capture runtime 四个正交事实组成；具体状态空间和转换规则见 [`live-listen-native-media-state.md`](./live-listen-native-media-state.md)。
+
+Server 侧状态也不是单个 lifecycle 字符串。它由 listener presence、native link、admission、stream demand、audio flow 这些事实派生；具体模型见 [`live-listen-server-state.md`](./live-listen-server-state.md)。
+
+Web 侧 media 状态只由 `ws`、`streamable`、`streaming` 三个事实组成；具体模型见 [`live-listen-web-media-state.md`](./live-listen-web-media-state.md)。
 
 核心链路：
 
@@ -13,10 +19,10 @@ Web Listener  <->  LiveListenRoomDO  <->  Pulse Native
 ```text
 Web listener sessions
 Native device session
-Native availability
+Native media facts
 room media state
 recent media history
-stream desired state
+stream demand
 stream generation
 audio ring buffer
 audio fan-out
@@ -37,13 +43,13 @@ WS /api/v1/live-listen/session?workspaceId=koft&roomId=live-listen:owner
 语义：
 
 ```text
-WS open   = 请求一起听
-accepted  = listener 注册成功，server 会确保 Native 开始或恢复串流
-rejected  = 当前不能一起听，server 返回原因并关闭连接
-WS close  = listener 暂时断线，先进入 recovering，不立即 leave
+WS open   = Web 请求一起听
+accepted  = listener 注册成功，server 计入 listeners.activeCount
+rejected  = admission blocked，server 返回 reason 并关闭连接
+WS close  = activeCount 减少；如果仍在 grace 内，graceCount 增加
 ```
 
-Web 不需要额外发送 join、leave，不需要额外订阅 events，也不需要额外连接媒体接收通道。
+Web 不需要额外发送 join、leave，不需要额外订阅 events，也不需要额外连接媒体接收通道。Web UI 只暴露 `ws`、`streamable`、`streaming` 三个 media 状态事实。
 
 ### 1.2 Native 单房间连接
 
@@ -58,11 +64,11 @@ Authorization: Bearer <device-api-key>
 
 ```text
 server -> JSON control frame: stream.start / stream.resume / stream.stop
-native -> JSON status frame: device.hello / availability.updated / media.updated / stream.heartbeat / ack / error
+native -> JSON status frame: device.hello / media.state.updated / media.updated / stream.heartbeat / ack / error
 native -> binary frame: audio chunk
 ```
 
-Native 断线后，Room DO 不丢失 stream intent。Native 重连后通过 `device.hello` 恢复。
+Native 断线后，Room DO 不丢失 stream demand。Native 重连后通过 `device.hello` 恢复。
 
 ### 1.3 Room owns media
 
@@ -81,19 +87,19 @@ updatedAt          媒体状态更新时间
 
 这样 Web 页面即使 Native 不在线，也可以展示最近听过的歌曲，而不是未知空状态。
 
-### 1.4 Stream intent 持久化在 Room
+### 1.4 Stream demand 由 listener presence 派生
 
-串流是否应该运行，不由某一次 WebSocket command 决定，而由 Room 的 desired state 决定。
+串流是否应该运行，不由某一次 WebSocket command 决定，而由 Room 的 listener presence 派生。
 
 ```ts
-type StreamIntent = {
-  desiredState: "stopped" | "running";
-  reason: "listener-demand" | "manual-stop" | "device-unavailable";
+type StreamDemand = {
+  state: "wanted" | "not-wanted";
+  reason: "listener-demand" | "no-listeners" | "manual-stop";
   updatedAt: string;
 };
 ```
 
-只要还有 active/recovering listener，Room 的 desired state 就应该保持 `running`。Native 重连后，Room 根据 desired state 下发 `stream.resume` 或 `stream.start`。
+只要 `listeners.activeCount + listeners.graceCount > 0`，Room 的 stream demand 就应该保持 `wanted`。Native 重连后，Room 根据 `streamDemand` 和 `admission` 下发 `stream.resume` 或 `stream.start`。
 
 ## 2. ID 设计
 
@@ -194,142 +200,32 @@ HTTP /api/v1/live-listen/state?workspaceId=koft&roomId=live-listen:owner
 
 只返回 snapshot，不改变状态，不触发 Native。
 
-## 4. Room snapshot
+## 4. Server state
 
-协议名：
+Server 协议状态不是顶层 lifecycle 字符串。目标协议只暴露事实字段：
 
 ```text
-live-listen.v1
+ListenerPresence
+NativeLink
+Admission
+StreamDemand
+AudioFlow
+Media
 ```
 
-```ts
-type LiveListenSnapshot = {
-  protocol: "live-listen.v1";
-  workspaceId: string;
-  roomId: string;
-  state:
-    | "offline"
-    | "available"
-    | "starting"
-    | "live"
-    | "buffering"
-    | "recovering"
-    | "ended"
-    | "error";
-  listenerCount: number;
-  recoveringListenerCount: number;
-  hostDeviceId?: string;
-  native: LiveListenNativeState;
-  availability: LiveListenAvailability;
-  media: LiveListenRoomMediaState;
-  stream: LiveListenStreamState;
-  updatedAt: string;
-  error?: { code: string; message: string };
-};
-```
-
-### Native state
-
-```ts
-type LiveListenNativeState = {
-  state: "offline" | "connected" | "streaming" | "reconnecting" | "failed";
-  deviceId?: string;
-  connectedAt?: string;
-  disconnectedAt?: string;
-  lastSeenAt?: string;
-  reconnectDeadlineAt?: string;
-  lastError?: { code: string; message: string };
-};
-```
-
-### Availability
-
-```ts
-type LiveListenAvailability =
-  | {
-      state: "available";
-      deviceId: string;
-      media?: LiveListenMedia;
-      updatedAt: string;
-    }
-  | {
-      state: "unavailable";
-      reason:
-        | "device_offline"
-        | "live_listen_disabled"
-        | "no_playable_media"
-        | "capture_permission_missing"
-        | "capture_permission_revoked"
-        | "capture_source_unavailable"
-        | "capture_source_lost"
-        | "live_listen_disabled_during_stream"
-        | "unsupported_app";
-      message?: string;
-      updatedAt: string;
-    };
-```
-
-### Room media state
-
-```ts
-type LiveListenRoomMediaState = {
-  current?: LiveListenMedia;
-  recent: LiveListenRecentMedia[];
-  playbackState: "playing" | "paused" | "stopped" | "unknown";
-  clock?: LiveListenClock;
-  sourceDeviceId?: string;
-  updatedAt?: string;
-};
-
-type LiveListenRecentMedia = LiveListenMedia & {
-  firstSeenAt: string;
-  lastSeenAt: string;
-  lastProgressSeconds?: number;
-  sourceDeviceId?: string;
-};
-```
-
-`recent` 最多保留 3-5 首。MVP 推荐 5 首。
-
-### Stream state
-
-```ts
-type LiveListenStreamState = {
-  intent: {
-    desiredState: "stopped" | "running";
-    reason: "listener-demand" | "manual-stop" | "device-unavailable";
-    updatedAt: string;
-  };
-  actualState:
-    | "idle"
-    | "starting"
-    | "streaming"
-    | "buffering"
-    | "native-reconnecting"
-    | "stopping"
-    | "failed";
-  streamId?: string;
-  generation?: number;
-  codec: "pcm16-wav";
-  latestSeq: number;
-  availableFromSeq: number;
-  targetLatencyMs: number;
-  bufferedChunks: number;
-  bufferedSeconds: number;
-  lastChunkAt?: string;
-  lastGap?: {
-    reason: "native_reconnect_buffer_miss" | "server_ring_buffer_miss" | "generation_changed";
-    streamId: string;
-    generation: number;
-    missingUntilSeq?: number;
-    occurredAt: string;
-  };
-};
-```
+具体字段、转换和禁止概念见 [`live-listen-server-state.md`](./live-listen-server-state.md)。
 
 ## 5. 什么时候可以请求一起听
 
-Web 可以随时尝试建立 session WS，但 Room 只有在 availability 为 `available` 时才接受。
+Web 只有在本地状态满足下面条件时才允许发起 session WS：
+
+```text
+ws=on
+streamable=true
+streaming=false
+```
+
+Room 只有在 server `admission.state = open` 时才接受 session。其他情况必须 `session.rejected`，不能改变 `streamDemand`，也不能给 Native 发 `stream.start`。
 
 ### 设备不在线
 
@@ -339,10 +235,11 @@ Web 可以随时尝试建立 session WS，但 Room 只有在 availability 为 `a
   "type": "session.rejected",
   "reason": "device_offline",
   "snapshot": {
-    "state": "offline",
     "media": {
       "recent": []
-    }
+    },
+    "admission": { "state": "blocked", "reason": "device_offline" },
+    "nativeLink": { "state": "disconnected" }
   }
 }
 ```
@@ -355,13 +252,14 @@ Web 可以随时尝试建立 session WS，但 Room 只有在 availability 为 `a
   "type": "session.rejected",
   "reason": "device_offline",
   "snapshot": {
-    "state": "offline",
     "media": {
       "recent": [
         { "provider": "spotify", "title": "Song A", "artist": "Artist A", "lastSeenAt": "2026-05-03T12:00:00.000Z" },
         { "provider": "spotify", "title": "Song B", "artist": "Artist B", "lastSeenAt": "2026-05-03T11:56:00.000Z" }
       ]
-    }
+    },
+    "admission": { "state": "blocked", "reason": "device_offline" },
+    "nativeLink": { "state": "disconnected" }
   }
 }
 ```
@@ -376,8 +274,8 @@ UI 可以展示“设备离线，最近听过”。
   "type": "session.rejected",
   "reason": "live_listen_disabled",
   "snapshot": {
-    "availability": {
-      "state": "unavailable",
+    "admission": {
+      "state": "blocked",
       "reason": "live_listen_disabled"
     }
   }
@@ -414,13 +312,18 @@ UI 可以展示“设备离线，最近听过”。
   "resumeToken": "resume_xxx",
   "serverTime": "2026-05-03T12:00:00.000Z",
   "snapshot": {
-    "protocol": "live-listen.v1",
+    "protocol": "live-listen.server.v1",
     "workspaceId": "koft",
     "roomId": "live-listen:owner",
-    "state": "starting",
-    "listenerCount": 1,
-    "recoveringListenerCount": 0,
-    "availability": { "state": "available", "deviceId": "owner", "updatedAt": "2026-05-03T12:00:00.000Z" },
+    "listeners": { "activeCount": 1, "graceCount": 0, "demand": "wanted" },
+    "nativeLink": { "state": "connected" },
+    "admission": { "state": "open" },
+    "streamDemand": { "state": "wanted", "reason": "listener-demand", "updatedAt": "2026-05-03T12:00:00.000Z" },
+    "audioFlow": { "state": "starting", "latestSeq": 0, "availableFromSeq": 0 },
+    "media": {
+      "current": { "provider": "spotify", "title": "Song A", "playbackState": "playing" },
+      "playback": "playing"
+    },
     "updatedAt": "2026-05-03T12:00:00.000Z"
   }
 }
@@ -429,8 +332,10 @@ UI 可以展示“设备离线，最近听过”。
 如果这是第一个 active listener，Room 设置：
 
 ```text
-stream.intent.desiredState = running
-stream.intent.reason = listener-demand
+listeners.activeCount += 1
+streamDemand.state = wanted
+streamDemand.reason = listener-demand
+audioFlow.state = starting
 ```
 
 然后向 Native 下发 `stream.start` 或 `stream.resume`。
@@ -467,10 +372,10 @@ WS /api/v1/live-listen/session?workspaceId=koft&roomId=live-listen:owner
 
 server：
 
-1. 检查 Room availability。
+1. 检查 Room `admission`。
 2. 不可用则发送 `session.rejected` 并关闭。
 3. 可用则创建 `participantId` 和 `resumeToken`。
-4. 注册 listener 为 `connected`。
+4. 注册 listener，`listeners.activeCount += 1`。
 5. 返回 `session.accepted`。
 6. 如果需要，启动或恢复 Native stream。
 
@@ -478,17 +383,16 @@ server：
 
 WS close 不等于立即 leave。
 
-Room 将 listener 标记为 recovering：
+Room 只更新 listener presence facts：
 
 ```ts
 type ListenerSession = {
   participantId: string;
-  state: "connected" | "recovering" | "gone";
   socket?: WebSocket;
   joinedAt: string;
   lastSeenAt: string;
   disconnectedAt?: string;
-  reconnectDeadlineAt?: string;
+  graceDeadlineAt?: string;
   lastAckSeq?: number;
 };
 ```
@@ -503,10 +407,19 @@ roomEmptyGraceMs         = 10000-20000
 在 listener reconnect grace 内：
 
 ```text
-listenerCount 可以继续按 active 计算
-stream.intent.desiredState 继续保持 running
+listeners.activeCount -= 1
+listeners.graceCount += 1
+streamDemand.state 继续保持 wanted
 Native 不停止
 Room ring buffer 继续积累
+```
+
+不要把这个状态命名成 `recovering`。如果 Web UI 仍在听但 WS 断了，Web 侧表达为：
+
+```text
+ws=half-off
+streamable=false(connection_lost)
+streaming=true
 ```
 
 ### 6.3 Web 重连恢复
@@ -527,7 +440,13 @@ WS /api/v1/live-listen/session?workspaceId=koft&roomId=live-listen:owner&partici
   "requestedFromSeq": 240,
   "latestSeq": 260,
   "availableFromSeq": 231,
-  "snapshot": { "protocol": "live-listen.v1", "state": "live" }
+  "snapshot": {
+    "protocol": "live-listen.server.v1",
+    "listeners": { "activeCount": 1, "graceCount": 0, "demand": "wanted" },
+    "admission": { "state": "open" },
+    "streamDemand": { "state": "wanted", "reason": "listener-demand", "updatedAt": "2026-05-03T12:00:03.000Z" },
+    "audioFlow": { "state": "flowing", "streamId": "stream_abc", "generation": 2, "latestSeq": 260, "availableFromSeq": 231 }
+  }
 }
 ```
 
@@ -607,15 +526,14 @@ Web 收到后：
 如果 listener 超过 reconnect grace 仍未回来：
 
 ```text
-listener.state = gone
-listenerCount - 1
+listeners.graceCount -= 1
 ```
 
-如果没有 active/recovering listener：
+如果没有 active/grace listener：
 
 ```text
 启动 roomEmptyGraceMs
-超时后 stream.intent.desiredState = stopped
+超时后 streamDemand.state = not-wanted
 server -> Native stream.stop
 ```
 
@@ -652,12 +570,15 @@ Native 每次连接或重连后，第一帧必须是 `device.hello`：
     "localRingBuffer": true,
     "localRingBufferSeconds": 30
   },
-  "availability": {
-    "state": "available",
+  "mediaState": {
+    "permission": "allow",
+    "playback": "playing",
+    "capture": "no-capture",
     "media": {
       "provider": "spotify",
       "title": "For you〜月の光が降り注ぐテラス",
-      "artist": "ふんわり漂う雲"
+      "artist": "ふんわり漂う雲",
+      "playbackState": "playing"
     }
   }
 }
@@ -666,31 +587,34 @@ Native 每次连接或重连后，第一帧必须是 `device.hello`：
 Room 收到后：
 
 ```text
-更新 native state
-更新 availability
+更新 nativeLink
+更新 Native media facts
+派生 admission
 更新 room media current/recent
-如果 stream.intent.desiredState == running，则下发 stream.resume 或 stream.start
-如果 desiredState == stopped，则保持 idle
+如果 streamDemand.state == wanted 且 admission.state == open，则下发 stream.resume 或 stream.start
+否则不启动 Native capture
 ```
 
-### 7.2 Availability updated
+### 7.2 Media state updated
 
-Native 可随时上报 availability：
+Native 可随时上报四轴 media facts：
 
 ```json
 {
   "protocol": "live-listen.device.v1",
-  "type": "availability.updated",
+  "type": "media.state.updated",
   "deviceId": "owner",
   "sentAt": "2026-05-03T12:00:10.000Z",
-  "availability": {
-    "state": "unavailable",
+  "mediaState": {
+    "permission": "disallow",
+    "playback": "paused",
+    "capture": "no-capture",
     "reason": "capture_permission_missing"
   }
 }
 ```
 
-Room 会同步更新 snapshot，并广播给 Web/Observer。
+Room 会同步更新 snapshot 中的 `admission`、`media`，并广播给 Web/Observer。
 
 ### 7.3 Media updated
 
@@ -724,7 +648,7 @@ Room 行为：
 
 ```text
 更新 media.current
-更新 playbackState
+更新 media.playback
 更新 clock
 把新歌曲 upsert 到 media.recent
 最多保留 5 首
@@ -788,7 +712,7 @@ Room 行为：
 Native 行为：
 
 ```text
-如果本地 ring buffer 有 fromSeq 之后的 chunk，先 flush，再继续 live
+如果本地 ring buffer 有 fromSeq 之后的 chunk，先 flush，再继续发送 audio chunk
 如果本地 ring buffer 不足，回复 resumed_with_gap
 如果采集已经停止，回复 rejected 或 restarted
 ```
@@ -878,7 +802,7 @@ Native 可上报采集和发送状态：
 
 ### 7.8 Stream stop
 
-最后一个 active/recovering listener 离开并超过 room empty grace：
+最后一个 active/grace listener 离开并超过 room empty grace：
 
 ```json
 {
@@ -906,11 +830,11 @@ Room 不立即停止 stream。
 Room 行为：
 
 ```text
-native.state = reconnecting
-native.disconnectedAt = now
-native.reconnectDeadlineAt = now + nativeReconnectGraceMs
-stream.intent.desiredState 保持 running
-stream.actualState = native-reconnecting 或 buffering
+nativeLink.state = disconnected
+nativeLink.disconnectedAt = now
+nativeLink.graceDeadlineAt = now + nativeGraceMs
+streamDemand.state 保持 wanted
+audioFlow 在 no-chunk threshold 后变为 stalled
 Web sessions 保持 accepted
 ```
 
@@ -938,18 +862,18 @@ wait for stream.resume / stream.stop
 
 ### 8.3 Native 重连成功
 
-Room 根据 desired state 决定：
+Room 根据 `streamDemand` 和 `admission` 决定：
 
 ```text
-if desiredState == running and same stream can continue:
+if streamDemand.state == wanted and admission.state == open and same stream can continue:
   send stream.resume
-elif desiredState == running but cannot continue:
+elif streamDemand.state == wanted and admission.state == open but cannot continue:
   send stream.start with generation + 1
 else:
   send no stream command or stream.stop
 ```
 
-Native 不需要等待用户重新点击，也不需要重新收到旧的 start。恢复由 Room 的 desired state 驱动。
+Native 不需要等待用户重新点击，也不需要重新收到旧的 start。恢复由 Room 的 `streamDemand` 和 `admission` 驱动。
 
 ## 9. Web 断线恢复
 
@@ -958,9 +882,10 @@ Native 不需要等待用户重新点击，也不需要重新收到旧的 start�
 Room 不立即删除 listener。
 
 ```text
-listener.state = recovering
+listeners.activeCount -= 1
+listeners.graceCount += 1
 listener.disconnectedAt = now
-listener.reconnectDeadlineAt = now + listenerReconnectGraceMs
+listener.graceDeadlineAt = now + listenerReconnectGraceMs
 ```
 
 推荐：
@@ -990,7 +915,7 @@ Room：
 如果补发失败，发送 replay.miss
 ```
 
-Web 重连不应重复触发 Native start，除非这是当前唯一 listener 且 stream intent 已经 stopped。
+Web 重连不应重复触发 Native start，除非这是当前唯一 listener 且 `streamDemand` 已经从 `not-wanted` 重新变成 `wanted`。
 
 ## 10. Ring buffer
 
@@ -1034,7 +959,7 @@ Room 保留最近 3-5 首歌曲，用于提升 Native 离线或不可请求时�
 
 ### 写入规则
 
-Native 上报 `media.updated` 或 `availability.updated` 带 media 时：
+Native 上报 `media.updated` 或 `media.state.updated` 带 media 时：
 
 ```text
 if media identity 与 current 不同:
@@ -1067,7 +992,7 @@ Native 离线时 snapshot 仍可包含：
       { "provider": "spotify", "title": "Song A", "artist": "Artist A", "lastSeenAt": "2026-05-03T12:00:00.000Z" },
       { "provider": "spotify", "title": "Song B", "artist": "Artist B", "lastSeenAt": "2026-05-03T11:56:00.000Z" }
     ],
-    "playbackState": "unknown"
+    "playback": "unknown"
   }
 }
 ```
@@ -1088,16 +1013,18 @@ UI 可以展示：
 
 如果 Native 正在串流时用户关闭 Live Listen、撤销采集权限、关闭采集源，或 Native 主动停止允许推送，这不是普通网络断线，也不是可恢复 reconnect。
 
-Native 必须立即发送 `availability.updated`：
+Native 必须立即发送 `media.state.updated`：
 
 ```json
 {
   "protocol": "live-listen.device.v1",
-  "type": "availability.updated",
+  "type": "media.state.updated",
   "deviceId": "owner",
   "sentAt": "2026-05-03T12:10:00.000Z",
-  "availability": {
-    "state": "unavailable",
+  "mediaState": {
+    "permission": "disallow",
+    "playback": "paused",
+    "capture": "no-capture",
     "reason": "live_listen_disabled",
     "message": "Live Listen was disabled on the device."
   }
@@ -1120,9 +1047,9 @@ Native 必须立即发送 `availability.updated`：
 Room 收到后必须：
 
 ```text
-availability = unavailable
-stream.intent.desiredState = stopped
-stream.actualState = stopped 或 failed
+admission = blocked(live_listen_disabled)
+streamDemand.state = not-wanted
+audioFlow.state = failed 或 none
 停止接受当前 generation 的 audio chunk
 保留 media.current 和 media.recent
 广播 snapshot.updated
@@ -1140,9 +1067,17 @@ Web Listener 收到：
 }
 ```
 
-Web 客户端可以在本地决定如何停止播放、清空队列、展示提示或保留最近歌曲 UI。这属于客户端播放体验，不进入服务端协议。
+Web 客户端必须把本地 media state 更新为：
 
-MVP 推荐：Room 发送 `stream.ended` 后关闭 Web session WS。用户再次点击一起听时重新走 availability 判断。
+```text
+ws=off 或 error
+streamable=false(live_listen_disabled)
+streaming=false
+```
+
+停止播放、清空队列、展示提示或保留最近歌曲 UI 属于客户端播放体验，不进入服务端协议。
+
+MVP 推荐：Room 发送 `stream.ended` 后关闭 Web session WS。用户再次点击一起听时重新走 `streamable` / server admission 判断。
 
 ### 12.2 Stop reason
 
@@ -1208,7 +1143,7 @@ Room 必须在新 generation 音频前发送 `stream.transition`。这个事件�
 }
 ```
 
-Web 客户端收到 generation 变化事实后，应在本地决定播放队列、歌词和进度条如何切换。是否做平滑过渡、冻结歌词、展示 buffering，都属于客户端体验策略，不进入服务端协议。
+Web 客户端收到 generation 变化事实后，应在本地决定播放队列、歌词和进度条如何切换。是否做平滑过渡、冻结歌词、展示等待音频，都属于客户端体验策略，不进入服务端协议。
 
 ### 12.4 Gap 与 transition 的关系
 
@@ -1216,7 +1151,7 @@ Web 客户端收到 generation 变化事实后，应在本地决定播放队列�
 
 ```text
 Room -> replay.miss
-Web -> 从最新 seq 继续，必要时短暂 buffering
+Web -> 从最新 seq 继续，必要时短暂等待音频
 ```
 
 如果 Native buffer miss 或 generation 改变：
@@ -1229,44 +1164,11 @@ Web -> 本地处理播放队列和展示过渡
 
 `stream.gap` 描述数据缺口；`stream.transition` 描述 generation 变化事实。客户端负责决定如何展示这个变化。
 
-## 12. 状态机
+## 13. Server state
 
-```text
-offline
-  -> available     Native connected and availability=available
+Server 状态转换由 [`live-listen-server-state.md`](./live-listen-server-state.md) 定义。目标协议不引入 room lifecycle 字符串，不把 listener grace 命名成 recovering，不把 native grace 命名成 reconnecting，也不把 native link 状态塞进 audio flow。
 
-available
-  -> starting      first Web Listener accepted
-  -> offline       Native disconnected and no recoverable session
-
-starting
-  -> live          Native ack stream.start and audio chunks arrive
-  -> buffering     Native disconnected during startup but within grace
-  -> available     all listeners leave before stream starts
-  -> error         Native rejected or start timeout
-
-live
-  -> buffering     Native disconnected or Web audio queue waiting for chunks
-  -> recovering    Native reconnecting but desiredState still running
-  -> available     all listeners gone and stream.stop completed
-  -> error         unrecoverable stream failure
-
-buffering
-  -> live          chunks resume
-  -> recovering    Native still disconnected but within grace
-  -> error         buffer/reconnect timeout
-
-recovering
-  -> live          Native resumed without gap
-  -> live          Native restarted with new generation and Web accepted gap
-  -> error         Native reconnect timeout
-
-error
-  -> available     Native reports available again
-  -> offline       Native offline
-```
-
-## 13. 成本与部署
+## 14. 成本与部署
 
 Live Listen 热路径只使用一个 `LiveListenRoomDO`。
 
@@ -1307,7 +1209,7 @@ Native -> LiveListenRoomDO -> Web
 需要把音频传输迁移到非 WebSocket 协议
 ```
 
-## 14. Observer telemetry
+## 15. Observer telemetry
 
 Observer 连接：
 
@@ -1322,41 +1224,42 @@ WS /api/v1/live-listen/observe?workspaceId=koft&roomId=live-listen:owner
   "protocol": "live-listen.observe.v1",
   "type": "telemetry",
   "snapshot": {
+    "protocol": "live-listen.server.v1",
     "workspaceId": "koft",
     "roomId": "live-listen:owner",
-    "state": "live",
-    "listenerCount": 2,
-    "recoveringListenerCount": 0,
-    "nativeState": "streaming",
-    "availability": { "state": "available", "deviceId": "owner" },
-    "streamId": "stream_abc",
-    "generation": 2,
-    "latestSeq": 129,
-    "availableFromSeq": 100,
-    "bufferedChunks": 30,
-    "bytesIn": 24581632,
-    "bytesOut": 49163264,
-    "chunksIn": 129,
-    "chunksOut": 258,
-    "replayChunks": 3,
-    "replayMisses": 0,
-    "lastChunkBytes": 192044,
-    "lastChunkAt": "2026-05-03T12:00:03.000Z"
+    "listeners": { "activeCount": 2, "graceCount": 0, "demand": "wanted" },
+    "nativeLink": { "state": "connected" },
+    "admission": { "state": "open" },
+    "streamDemand": { "state": "wanted", "reason": "listener-demand", "updatedAt": "2026-05-03T12:00:00.000Z" },
+    "audioFlow": {
+      "state": "flowing",
+      "streamId": "stream_abc",
+      "generation": 2,
+      "latestSeq": 129,
+      "availableFromSeq": 100,
+      "lastChunkAt": "2026-05-03T12:00:03.000Z"
+    },
+    "media": {
+      "current": { "provider": "spotify", "title": "Song A", "playbackState": "playing" },
+      "playback": "playing",
+      "updatedAt": "2026-05-03T12:00:00.000Z"
+    }
   }
 }
 ```
 
 Observer 不计入 listener，不影响 start/stop。
 
-## 15. 角色视角
+## 16. 角色视角
 
 ### Web Listener
 
 只做：
 
 ```text
-connect session WS
-receive accepted / rejected
+derive ws / streamable / streaming
+connect session WS only when ws=on, streamable=true, streaming=false
+receive accepted / rejected and update streaming
 receive snapshot.updated
 receive audio.chunk
 reconnect with participantId + resumeToken + fromSeq
@@ -1370,7 +1273,7 @@ close session WS
 ```text
 connect device-session WS
 send device.hello
-report availability
+report media.state.updated
 report media.updated
 receive stream.start / stream.resume / stream.stop
 send binary audio chunk
@@ -1384,11 +1287,12 @@ keep local ring buffer during short disconnect
 
 ```text
 accept/reject listener
-recover listener
+track listeners.activeCount / listeners.graceCount
 track native session
 hold room media state
 hold recent media history
-hold stream intent
+derive streamDemand
+derive admission
 send start/resume/stop
 receive binary audio
 assign seq
@@ -1399,17 +1303,20 @@ emit gap/replay/miss
 observer telemetry
 ```
 
-## 16. MVP 验收标准
+## 17. MVP 验收标准
 
 新协议通过，当满足：
 
 - Web 点击“一起听”只建立一个 session WS。
 - 设备离线、禁用、无媒体、无采集权限时，Web 收到 `session.rejected`。
+- Web 侧 media state 只暴露 `ws`、`streamable`、`streaming`。
+- `streamable=false(no_playable_media)` 时 Web 不能建立 session WS。
+- Web 正在听时 WS 短断表达为 `ws=half-off, streaming=true`。
 - rejected response 仍可携带最近 3-5 首歌曲。
 - 设备可用时，Web 收到 `session.accepted` 和 `resumeToken`。
 - Web 短断后在 grace 内用 `participantId + resumeToken + fromSeq` 恢复。
 - Native 连接后第一帧发送 `device.hello`。
-- Native 短断时 Room 保持 `stream.intent.desiredState = running`。
+- Native 短断时 Room 保持 `streamDemand.state = wanted`。
 - Native 重连后 Room 自动下发 `stream.resume` 或新 generation 的 `stream.start`。
 - Native 不需要重新等待用户点击或旧的一次性 start command。
 - Native 本地 ring buffer 可补发短断期间 chunk。
