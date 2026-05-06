@@ -4,8 +4,4 @@ export default [
   route("api/lyrics", "routes/api.lyrics.ts"),
   route("live-listen/benchmark", "routes/live-listen.benchmark.tsx"),
   index("routes/status.tsx"),
-  route("media-room", "routes/media-room.tsx"),
-  route("media-room/debug", "routes/media-room.debug.tsx"),
-  route("live-listen/debug", "routes/live-listen.debug.tsx"),
-  route("live-listen/host", "routes/live-listen.host.tsx"),
 ] satisfies RouteConfig;

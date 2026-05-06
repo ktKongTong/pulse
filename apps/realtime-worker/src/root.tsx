@@ -46,7 +46,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <TooltipProvider>
         <PulseRealtimeProvider
           config={{
-            // baseUrl: REALTIME_BASE_URL,
             workspaceId: WORKSPACE_ID,
             siteId: SITE_ID,
             readingHeartbeatMs: READING_HEARTBEAT_MS,

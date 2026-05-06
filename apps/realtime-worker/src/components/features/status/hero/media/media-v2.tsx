@@ -39,16 +39,18 @@ export function MediaState({ className }: MediaStateProps) {
   const heading = resolveHeading(displayMedia);
 
   return (
-    <div className={className}>
-      <div className="flex items-center gap-2">
+    <div className={cn('space-y-1',className)}>
+      <div className="flex items-center relative">
         {mediaSession.loading ? (
-          <Skeleton className="h-5 w-20 rounded-full" />
+          <Skeleton className="h-7 w-20 rounded" />
         ) : (
-          <div className="line-clamp-1 py-2 text-start text-sm font-medium uppercase leading-tight tracking-widest opacity-70">
-            {heading}
-          </div>
+            <>
+              <div className="line-clamp-1 py-1 text-start text-sm font-medium uppercase leading-tight tracking-widest opacity-70">
+                {heading}
+                </div>
+                  <LiveListenControl/>
+            </>
         )}
-        <LiveListenControl className="mt-1" />
       </div>
 
       {mediaSession.loading ? (
@@ -96,12 +98,19 @@ function useLiveListenMediaSessionStore() {
 }
 
 function mapCurrentMedia(snapshot: LiveListenMediaSessionSnapshot | null) {
+  if (!isLiveCurrentMedia(snapshot)) return null;
   const media = snapshot?.media.current;
   if (!media || !hasRenderableLiveListenMedia(media)) return null;
   return mapLiveListenMedia(media, {
     progressSeconds: snapshot?.media.clock?.mediaProgressSeconds,
     updatedAt: snapshot?.media.clock?.observedAt ?? snapshot?.media.updatedAt ?? snapshot?.updatedAt,
   });
+}
+
+function isLiveCurrentMedia(snapshot: LiveListenMediaSessionSnapshot | null) {
+  if (!snapshot?.media.current) return false;
+  if (snapshot.nativeLink.state !== "connected") return false;
+  return !snapshot.media.sourceDeviceId || snapshot.media.sourceDeviceId === snapshot.nativeLink.deviceId;
 }
 
 function mapRecentMedia(snapshot: LiveListenMediaSessionSnapshot | null) {
@@ -177,8 +186,8 @@ function cleanText(value: string | null | undefined) {
 
 function resolveHeading(displayMedia: DisplayMedia | null) {
   if (!displayMedia) return "暂无媒体";
-  if (displayMedia.kind === "recent") return "最近聆听";
-  return displayMedia.media.playbackState === "paused" ? "暂停聆听" : "正在聆听";
+  if (displayMedia.kind === "recent") return "最近在听";
+  return "正在听";
 }
 
 function mediaTitle(media: MediaStatus | null) {
@@ -223,9 +232,10 @@ function MediaByline({ media }: { media: MediaStatus | null }) {
   const text = [media?.artist, media?.album].filter(Boolean).join(" · ");
   if (!text) return <div className="h-7" />;
   return (
-    <p className="line-clamp-1 text-start text-sm font-medium leading-7 text-stone-700">
-      {text}
-    </p>
+    <div>
+      {media?.artist && <p className="line-clamp-1 text-start text-xs font-medium leading-3 text-stone-400">{media.artist}</p>}
+      {media?.album && <p className="line-clamp-1 max-w-120 text-start text-sm font-medium leading-7 text-stone-700">{media.album}</p>}
+    </div>
   );
 }
 
@@ -243,10 +253,14 @@ function EmptyMedia() {
 function MediaSkeleton() {
   return (
     <div className="flex w-full flex-row items-start gap-2 md:gap-4">
-      <Skeleton className="size-20 shrink-0 rounded-lg" />
-      <div className="flex w-full min-w-0 flex-col items-start gap-3 pt-1">
+      <Skeleton className="size-20 shrink-0 rounded" />
+      <div className="flex w-full min-w-0 flex-col items-start gap-2 pt-1">
         <Skeleton className="h-7 w-56 max-w-full" />
-        <Skeleton className="h-5 w-72 max-w-full" />
+        <div className="flex gap-1 flex-col">
+          <Skeleton className="h-3 w-24 max-w-full" />
+          <Skeleton className="h-5 w-72 max-w-full" />
+        </div>
+
       </div>
     </div>
   );

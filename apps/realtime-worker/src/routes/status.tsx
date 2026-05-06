@@ -36,10 +36,10 @@ export default function StatusPage() {
   const pageContext = useMemo(() => getStatusPageContext(), []);
   useTrackPagePresence(pageContext);
   return (
-    <main className="min-h-screen  bg-[#f8f3f0]   text-stone-900">
+    <main className="min-h-screen  bg-[#f8f3f0]   text-stone-900 md:flex items-center ">
       <section className="mx-auto w-full relative flex max-w-4xl flex-col items-center">
         <StatusHero />
-        <StatusAggregateHistory />
+        {/*<StatusAggregateHistory />*/}
       </section>
     </main>
   );
