@@ -203,6 +203,8 @@ struct EndpointSettingsDraft: Identifiable, Equatable {
 
 
 struct LiveListenEndpointConfig: Equatable {
+    let id: String
+    let name: String
     let baseURL: URL
     let workspaceId: String
     let apiKey: String
@@ -215,7 +217,13 @@ extension LiveListenEndpointConfig {
         let apiKey = endpoint.apiKey
         guard !workspaceId.isEmpty, !apiKey.isEmpty else { return nil }
         guard let baseURL = normalizedLiveListenBaseURL(endpoint.endpointUrl) else { return nil }
-        return LiveListenEndpointConfig(baseURL: baseURL, workspaceId: workspaceId, apiKey: apiKey)
+        return LiveListenEndpointConfig(
+            id: endpoint.id,
+            name: endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            baseURL: baseURL,
+            workspaceId: workspaceId,
+            apiKey: apiKey
+        )
     }
 
     private static func normalizedLiveListenBaseURL(_ raw: String) -> URL? {

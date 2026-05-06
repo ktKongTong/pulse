@@ -68,7 +68,7 @@ final class NativeMonitorModel: ObservableObject {
         isMonitoring = true
         isPaused = false
         refresh()
-        liveListenCaptureModel.updateEndpoint(liveListenEndpoint)
+        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
         loopTask = Task {
             while !Task.isCancelled {
                 if !isPaused {
@@ -122,7 +122,7 @@ final class NativeMonitorModel: ObservableObject {
 
     func prepareLiveListenCapturePane() {
         liveListenCaptureModel.refreshSources()
-        liveListenCaptureModel.updateEndpoint(liveListenEndpoint)
+        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
     func requestLiveListenAudioCapturePermissionAtStartup() {
@@ -131,9 +131,9 @@ final class NativeMonitorModel: ObservableObject {
 
     func startDebugNativeLiveListenStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
         liveListenCaptureModel.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
-        let endpoint = liveListenEndpoint
-        appendLiveListenDebugLog("start debug stream endpoint=\(endpoint?.baseURL.absoluteString ?? "nil") workspace=\(endpoint?.workspaceId ?? "nil") source=\(liveListenCaptureModel.selectedSource?.name ?? "nil")")
-        liveListenCaptureModel.updateEndpoint(endpoint)
+        let endpoints = liveListenEndpoints
+        appendLiveListenDebugLog("start debug stream endpoints=\(endpoints.map { $0.baseURL.absoluteString }.joined(separator: ",")) source=\(liveListenCaptureModel.selectedSource?.name ?? "nil")")
+        liveListenCaptureModel.updateEndpoints(endpoints)
         dashboardSelection = .liveListen
         liveListenCaptureModel.startNativeStream()
     }
@@ -317,22 +317,18 @@ final class NativeMonitorModel: ObservableObject {
 
     func saveConfig() {
         bridge.updateConfig(config: Self.makeConfig(from: settingsDraft))
-        liveListenCaptureModel.updateEndpoint(liveListenEndpoint)
+        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
-    var liveListenEndpoint: LiveListenEndpointConfig? {
-        let endpoint = settingsDraft.endpoints.first { endpoint in
-            endpoint.enabled &&
-                !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !endpoint.apiKey.isEmpty
-        } ?? settingsDraft.endpoints.first { endpoint in
-            !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !endpoint.apiKey.isEmpty
+    var liveListenEndpoints: [LiveListenEndpointConfig] {
+        let enabled = settingsDraft.endpoints.compactMap { endpoint -> LiveListenEndpointConfig? in
+            guard endpoint.enabled else { return nil }
+            return LiveListenEndpointConfig.fromEndpointDraft(endpoint)
         }
-        guard let endpoint else { return nil }
-        return LiveListenEndpointConfig.fromEndpointDraft(endpoint)
+        if !enabled.isEmpty { return enabled }
+        return settingsDraft.endpoints.compactMap { endpoint in
+            LiveListenEndpointConfig.fromEndpointDraft(endpoint)
+        }
     }
 
     func addEndpoint() {

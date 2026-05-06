@@ -11,6 +11,27 @@ function liveListenStub(name = `pulse-demo:live-listen:owner:${crypto.randomUUID
   return liveListenRoom.get(id);
 }
 
+function setLiveListenStreamEnv(config: {
+  chunkDurationMs?: string;
+  targetLatencyMs?: string;
+  ringBufferSeconds?: string;
+}) {
+  const mutableEnv = env as Env;
+  const previous = {
+    chunkDurationMs: mutableEnv.LIVE_LISTEN_CHUNK_DURATION_MS,
+    targetLatencyMs: mutableEnv.LIVE_LISTEN_TARGET_LATENCY_MS,
+    ringBufferSeconds: mutableEnv.LIVE_LISTEN_RING_BUFFER_SECONDS,
+  };
+  mutableEnv.LIVE_LISTEN_CHUNK_DURATION_MS = config.chunkDurationMs;
+  mutableEnv.LIVE_LISTEN_TARGET_LATENCY_MS = config.targetLatencyMs;
+  mutableEnv.LIVE_LISTEN_RING_BUFFER_SECONDS = config.ringBufferSeconds;
+  return () => {
+    mutableEnv.LIVE_LISTEN_CHUNK_DURATION_MS = previous.chunkDurationMs;
+    mutableEnv.LIVE_LISTEN_TARGET_LATENCY_MS = previous.targetLatencyMs;
+    mutableEnv.LIVE_LISTEN_RING_BUFFER_SECONDS = previous.ringBufferSeconds;
+  };
+}
+
 async function openSocket(stub: DurableObjectStub, path: string) {
   const response = await stub.fetch(
     new Request(`https://pulse.test/internal/live-listen/${path}`, {
@@ -26,11 +47,29 @@ async function openSocket(stub: DurableObjectStub, path: string) {
 function nextJson<T extends { type?: string; protocol?: string }>(socket: WebSocket, type?: string): Promise<T> {
   return new Promise((resolve) => {
     socket.addEventListener("message", function onMessage(event) {
+      if (typeof event.data !== "string") return;
       const parsed = JSON.parse(String(event.data)) as T;
       if (!type || parsed.type === type) {
         socket.removeEventListener("message", onMessage);
         resolve(parsed);
       }
+    });
+  });
+}
+
+function nextBinary(socket: WebSocket): Promise<ArrayBuffer> {
+  return new Promise((resolve) => {
+    socket.addEventListener("message", function onMessage(event) {
+      if (event.data instanceof Blob) {
+        event.data.arrayBuffer().then((data) => {
+          socket.removeEventListener("message", onMessage);
+          resolve(data);
+        });
+        return;
+      }
+      if (!(event.data instanceof ArrayBuffer)) return;
+      socket.removeEventListener("message", onMessage);
+      resolve(event.data);
     });
   });
 }
@@ -227,6 +266,70 @@ describe("LiveListenRoom", () => {
     expect(receivedCommand).toBeNull();
   });
 
+  it("does not expose stale current media after native disconnect", async () => {
+    const stub = liveListenStub();
+    const device = await openSocket(stub, "device-session?workspaceId=pulse-demo&roomId=live-listen:owner&deviceId=owner");
+    device.send(JSON.stringify({
+      protocol: "live-listen.device.v1",
+      type: "device.hello",
+      deviceId: "owner",
+      sentAt: "2026-05-03T12:00:00.000Z",
+      mediaState: playableMediaState(),
+    }));
+    await waitForSnapshot(stub, (snapshot) => snapshot.media.current?.title === "Song A");
+
+    device.close(1001, "native closed");
+    const disconnected = await waitForSnapshot(stub, (snapshot) => snapshot.nativeLink.state === "disconnected");
+
+    expect(disconnected).toMatchObject({
+      nativeLink: { state: "disconnected" },
+      media: {
+        current: null,
+        recent: [
+          { provider: "spotify", title: "Song A", artist: "Artist A" },
+        ],
+      },
+    });
+  });
+
+  it("moves current media to recent when native reports no playable media", async () => {
+    const stub = liveListenStub();
+    const device = await openSocket(stub, "device-session?workspaceId=pulse-demo&roomId=live-listen:owner&deviceId=owner");
+    device.send(JSON.stringify({
+      protocol: "live-listen.device.v1",
+      type: "device.hello",
+      deviceId: "owner",
+      sentAt: "2026-05-03T12:00:00.000Z",
+      mediaState: playableMediaState(),
+    }));
+    await waitForSnapshot(stub, (snapshot) => snapshot.media.current?.title === "Song A");
+
+    device.send(JSON.stringify({
+      protocol: "live-listen.device.v1",
+      type: "media.state.updated",
+      deviceId: "owner",
+      sentAt: "2026-05-03T12:00:01.000Z",
+      mediaState: {
+        permission: "allow",
+        playback: "paused",
+        capture: "no-capture",
+        reason: "no_playable_media",
+      },
+    }));
+    const paused = await waitForSnapshot(stub, (snapshot) => snapshot.admission.state === "blocked");
+
+    expect(paused).toMatchObject({
+      nativeLink: { state: "connected" },
+      admission: { state: "blocked", reason: "no_playable_media" },
+      media: {
+        current: null,
+        recent: [
+          { provider: "spotify", title: "Song A", artist: "Artist A" },
+        ],
+      },
+    });
+  });
+
   it("starts listening from the existing media-session websocket", async () => {
     const stub = liveListenStub();
     const device = await openSocket(stub, "device-session?workspaceId=pulse-demo&roomId=live-listen:owner&deviceId=owner");
@@ -258,6 +361,7 @@ describe("LiveListenRoom", () => {
     }>(mediaSession, "session.accepted");
     const command = await nativeCommand;
     const audio = nextJson(mediaSession, "audio.chunk");
+    const binary = nextBinary(mediaSession);
     device.send(new Uint8Array([1, 2, 3, 4]).buffer);
 
     expect(accepted).toMatchObject({
@@ -271,14 +375,16 @@ describe("LiveListenRoom", () => {
       type: "command",
       command: { type: "stream.start" },
     });
-    expect(await audio).toMatchObject({
+    const audioMetadata = await audio;
+    expect(audioMetadata).toMatchObject({
       protocol: "live-listen.media-session.v1",
       type: "audio.chunk",
       streamId: accepted.snapshot.audioFlow.streamId,
       generation: accepted.snapshot.audioFlow.generation,
       seq: 1,
-      data: "AQIDBA==",
     });
+    expect(audioMetadata).not.toHaveProperty("data");
+    expect([...new Uint8Array(await binary)]).toEqual([1, 2, 3, 4]);
   });
 
   it("accepts listen requests, returns a resume token, and commands native start", async () => {
@@ -320,7 +426,7 @@ describe("LiveListenRoom", () => {
       command: {
         type: "stream.start",
         generation: 1,
-        audio: { codec: "pcm16-wav", chunkDurationMs: 1000 },
+        audio: { codec: "pcm16-wav", chunkDurationMs: 500, targetLatencyMs: 2000 },
       },
     });
   });
@@ -463,9 +569,11 @@ describe("LiveListenRoom", () => {
     const listener = await openListeningMediaSession(stub, { participantId: "web-listener-1" });
     const accepted = await nextJson<{ type: string; streamId?: string; generation?: number; snapshot: { audioFlow: { streamId: string; generation: number } } }>(listener, "session.accepted");
     const audio = nextJson(listener, "audio.chunk");
+    const binary = nextBinary(listener);
     device.send(new Uint8Array([1, 2, 3, 4]).buffer);
 
-    expect(await audio).toMatchObject({
+    const audioMetadata = await audio;
+    expect(audioMetadata).toMatchObject({
       protocol: "live-listen.media-session.v1",
       type: "audio.chunk",
       streamId: accepted.snapshot.audioFlow.streamId,
@@ -473,14 +581,60 @@ describe("LiveListenRoom", () => {
       seq: 1,
       codec: "pcm16-wav",
       byteLength: 4,
-      data: "AQIDBA==",
       replayed: false,
     });
+    expect(audioMetadata).not.toHaveProperty("data");
+    expect([...new Uint8Array(await binary)]).toEqual([1, 2, 3, 4]);
 
     const persisted = await runInDurableObject(stub, async (room: LiveListenRoom) => {
       return (room as unknown as { ctx: DurableObjectState }).ctx.storage.get("live-listen-state");
     }) as { audioRing?: unknown };
     expect(persisted.audioRing).toBeUndefined();
+  });
+
+  it("uses server stream config for native commands and audio chunk metadata", async () => {
+    const restoreEnv = setLiveListenStreamEnv({
+      chunkDurationMs: "125",
+      targetLatencyMs: "500",
+      ringBufferSeconds: "10",
+    });
+    try {
+      const stub = liveListenStub();
+      const device = await openSocket(stub, "device-session?workspaceId=pulse-demo&roomId=live-listen:owner&deviceId=owner");
+      const nativeCommand = nextJson<{
+        type: string;
+        command: { type: string; audio?: { codec: string; chunkDurationMs: number; targetLatencyMs: number } };
+      }>(device, "command");
+      device.send(JSON.stringify({
+        protocol: "live-listen.device.v1",
+        type: "device.hello",
+        deviceId: "owner",
+        sentAt: "2026-05-03T12:00:00.000Z",
+        mediaState: playableMediaState(),
+      }));
+
+      const listener = await openListeningMediaSession(stub, { participantId: "web-listener-1" });
+      await nextJson(listener, "session.accepted");
+      expect(await nativeCommand).toMatchObject({
+        command: {
+          type: "stream.start",
+          audio: { codec: "pcm16-wav", chunkDurationMs: 125, targetLatencyMs: 500 },
+        },
+      });
+
+      const audio = nextJson(listener, "audio.chunk");
+      const binary = nextBinary(listener);
+      device.send(new Uint8Array([1, 2]).buffer);
+
+      expect(await audio).toMatchObject({
+        type: "audio.chunk",
+        durationMs: 125,
+        byteLength: 2,
+      });
+      expect([...new Uint8Array(await binary)]).toEqual([1, 2]);
+    } finally {
+      restoreEnv();
+    }
   });
 
   it("resumes a recovering web listener and replays buffered audio from fromSeq", async () => {
@@ -516,7 +670,8 @@ describe("LiveListenRoom", () => {
       fromSeq: 2,
     });
     const resumed = await nextJson(resumedSocket, "session.resumed");
-    const replayed = await nextJson(resumedSocket, "audio.chunk");
+    const replayed = nextJson(resumedSocket, "audio.chunk");
+    const replayedBinary = nextBinary(resumedSocket);
 
     expect(resumed).toMatchObject({
       type: "session.resumed",
@@ -524,12 +679,13 @@ describe("LiveListenRoom", () => {
       latestSeq: 2,
       availableFromSeq: 1,
     });
-    expect(replayed).toMatchObject({
+    expect(await replayed).toMatchObject({
       type: "audio.chunk",
       seq: 2,
       replayed: true,
-      data: "Ag==",
     });
+    expect(await replayed).not.toHaveProperty("data");
+    expect([...new Uint8Array(await replayedBinary)]).toEqual([2]);
   });
 
   it("keeps stream demand wanted during native reconnect and sends stream.resume on hello", async () => {

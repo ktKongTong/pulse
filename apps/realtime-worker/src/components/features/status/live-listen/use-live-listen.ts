@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { LiveListenMediaSessionEnvelope, LiveListenMediaSessionSnapshot } from "@pulse/realtime-protocol";
+import type { LiveListenMediaSessionSnapshot } from "@pulse/realtime-protocol";
 
 import {
+  type LiveListenMediaSessionRuntimeEvent,
   type LiveListenSnapshot,
   liveListenParticipantId,
   liveListenResumeToken,
@@ -15,6 +16,7 @@ import {
   subscribeLiveListenMediaSessionEvents,
   subscribeLiveListenMediaSessionStore,
 } from "@/lib/live-listen-media-session";
+import { LIVE_LISTEN_RECEIVER_JITTER_BUFFER_MS } from "@/lib/config";
 
 type WebLiveListenWsState = "on" | "off" | "half-off" | "error";
 type WebLiveListenCommandState = "idle" | "joining" | "leaving" | "reconnecting";
@@ -22,7 +24,7 @@ type WebLiveListenStreamable =
   | { value: true }
   | { value: false; reason: string };
 
-const INITIAL_BUFFER_SECONDS = 3;
+const INITIAL_BUFFER_SECONDS = Math.max(0.25, (LIVE_LISTEN_RECEIVER_JITTER_BUFFER_MS ?? 2_000) / 1000);
 
 export type LiveListenMediaRoomStats = {
   chunkCount: number;
@@ -35,6 +37,17 @@ export type LiveListenMediaRoomStats = {
   missedChunks: number;
   availableFromSeq: number | null;
   latestSeq: number | null;
+  serverToReceiveLatencyMs: number | null;
+  receiveToPlayLatencyMs: number | null;
+  serverToPlayLatencyMs: number | null;
+  decodeMs: number | null;
+  maxServerToPlayLatencyMs: number | null;
+  underrunCount: number;
+  cumulativeUnderrunMs: number;
+  maxUnderrunMs: number;
+  lastUnderrunMs: number;
+  measuredSeconds: number;
+  interruptionRatio: number;
 };
 
 export function useLiveListen() {
@@ -65,6 +78,17 @@ export function useLiveListen() {
     missedChunks: 0,
     availableFromSeq: null,
     latestSeq: null,
+    serverToReceiveLatencyMs: null,
+    receiveToPlayLatencyMs: null,
+    serverToPlayLatencyMs: null,
+    decodeMs: null,
+    maxServerToPlayLatencyMs: null,
+    underrunCount: 0,
+    cumulativeUnderrunMs: 0,
+    maxUnderrunMs: 0,
+    lastUnderrunMs: 0,
+    measuredSeconds: 0,
+    interruptionRatio: 0,
   });
   const mediaSession = useSyncExternalStore(
     subscribeLiveListenMediaSessionStore,
@@ -144,6 +168,17 @@ export function useLiveListen() {
       receiveBitrateKbps: null,
       lastChunkBytes: 0,
       replayedChunks: 0,
+      serverToReceiveLatencyMs: null,
+      receiveToPlayLatencyMs: null,
+      serverToPlayLatencyMs: null,
+      decodeMs: null,
+      maxServerToPlayLatencyMs: null,
+      underrunCount: 0,
+      cumulativeUnderrunMs: 0,
+      maxUnderrunMs: 0,
+      lastUnderrunMs: 0,
+      measuredSeconds: 0,
+      interruptionRatio: 0,
     }));
     await requestListen(false);
   }, [command, mediaSession.snapshot, requestListen, snapshot, streaming]);
@@ -162,13 +197,18 @@ export function useLiveListen() {
   const scheduleAudioChunk = useCallback(async (
     arrayBuffer: ArrayBuffer,
     audioContext: AudioContext,
-    envelope: { seq: number; byteLength: number; replayed?: boolean },
+    envelope: { seq: number; byteLength: number; sentAt?: string; replayed?: boolean },
   ) => {
+    const receiveWallTime = Date.now();
+    const decodeStartedAt = performance.now();
     const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+    const decodeMs = performance.now() - decodeStartedAt;
     const source = audioContext.createBufferSource();
     source.buffer = decodedBuffer;
     source.connect(audioContext.destination);
 
+    const previousNextStartTime = nextStartTimeRef.current;
+    const underrunSeconds = lastSeqRef.current === null ? 0 : Math.max(0, audioContext.currentTime - previousNextStartTime);
     const start = Math.max(audioContext.currentTime, nextStartTimeRef.current);
     source.start(start);
     nextStartTimeRef.current = start + decodedBuffer.duration;
@@ -185,6 +225,16 @@ export function useLiveListen() {
         receiveBitrateKbps = (deltaBytes * 8) / elapsedMs;
         lastBitrateSampleRef.current = { at: now, bytes: receivedBytes };
       }
+      const serverToReceiveLatencyMs = envelope.sentAt
+        ? Math.max(0, receiveWallTime - (Date.parse(envelope.sentAt) || receiveWallTime))
+        : null;
+      const receiveToPlayLatencyMs = Math.max(0, (start - audioContext.currentTime) * 1000);
+      const serverToPlayLatencyMs = serverToReceiveLatencyMs == null
+        ? null
+        : serverToReceiveLatencyMs + receiveToPlayLatencyMs;
+      const underrunMs = underrunSeconds * 1000;
+      const cumulativeUnderrunMs = current.cumulativeUnderrunMs + underrunMs;
+      const measuredSeconds = current.measuredSeconds + decodedBuffer.duration;
       return {
         ...current,
         chunkCount: current.chunkCount + 1,
@@ -194,11 +244,22 @@ export function useLiveListen() {
         lastChunkBytes: envelope.byteLength || arrayBuffer.byteLength,
         lastSeq: envelope.seq,
         replayedChunks: current.replayedChunks + (envelope.replayed ? 1 : 0),
+        serverToReceiveLatencyMs,
+        receiveToPlayLatencyMs,
+        serverToPlayLatencyMs,
+        decodeMs,
+        maxServerToPlayLatencyMs: maxNullable(current.maxServerToPlayLatencyMs, serverToPlayLatencyMs),
+        underrunCount: current.underrunCount + (underrunMs > 1 ? 1 : 0),
+        cumulativeUnderrunMs,
+        maxUnderrunMs: Math.max(current.maxUnderrunMs, underrunMs),
+        lastUnderrunMs: underrunMs,
+        measuredSeconds,
+        interruptionRatio: measuredSeconds > 0 ? cumulativeUnderrunMs / (measuredSeconds * 1000) : 0,
       };
     });
   }, []);
 
-  const handleMediaSessionEvent = useCallback(async (event: LiveListenMediaSessionEnvelope) => {
+  const handleMediaSessionEvent = useCallback(async (event: LiveListenMediaSessionRuntimeEvent) => {
     try {
       if (event.type === "media.snapshot.updated") {
         const next = snapshotFromMediaSession(event.snapshot);
@@ -267,16 +328,19 @@ export function useLiveListen() {
         }));
         return;
       }
-      if (event.type === "audio.chunk" && event.data && event.seq != null) {
+      if (event.type === "audio.chunk" && event.seq != null) {
+        const audioData = event.binaryData ?? (event.data ? base64ToArrayBuffer(event.data) : null);
+        if (!audioData) return;
         const audioContext = audioContextRef.current;
         if (!audioContext) return;
         if (event.streamId !== streamRef.current.streamId || event.generation !== streamRef.current.generation) {
           streamRef.current = { streamId: event.streamId, generation: event.generation };
           resetAudioQueue();
         }
-        await scheduleAudioChunk(base64ToArrayBuffer(event.data), audioContext, {
+        await scheduleAudioChunk(audioData, audioContext, {
           seq: event.seq,
           byteLength: event.byteLength ?? 0,
+          sentAt: event.sentAt,
           replayed: event.replayed,
         });
         setWs("on");
@@ -409,6 +473,12 @@ function shouldDisplayError(reason: string) {
     || reason === "live_listen_session_ws_error"
     || reason === "live_listen_media_session_ws_error"
     || reason === "stream_error";
+}
+
+function maxNullable(left: number | null, right: number | null) {
+  if (left == null) return right;
+  if (right == null) return left;
+  return Math.max(left, right);
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {

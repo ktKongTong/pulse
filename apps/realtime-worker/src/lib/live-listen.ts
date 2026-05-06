@@ -10,6 +10,10 @@ export type {
   LiveListenSnapshot,
 } from "@pulse/realtime-protocol";
 
+export type LiveListenMediaSessionRuntimeEvent = LiveListenMediaSessionEnvelope & {
+  binaryData?: ArrayBuffer;
+};
+
 const DEFAULT_WORKSPACE_ID = "koft";
 const DEFAULT_ROOM_ID = "live-listen:owner";
 
@@ -36,7 +40,7 @@ export async function fetchLiveListenSnapshot(init?: {
 export function openLiveListenMediaSession(init: {
   workspaceId?: string;
   roomId?: string;
-  onMessage: (event: LiveListenMediaSessionEnvelope) => void;
+  onMessage: (event: LiveListenMediaSessionRuntimeEvent) => void;
   onError?: (event: Event) => void;
   onClose?: (event: CloseEvent) => void;
   onOpen?: (event: Event) => void;
@@ -44,8 +48,16 @@ export function openLiveListenMediaSession(init: {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const params = liveListenParams(init);
   const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/live-listen/media-session?${params}`);
-  socket.addEventListener("message", (event) => {
-    if (typeof event.data !== "string") return;
+  socket.binaryType = "arraybuffer";
+  let pendingAudioChunk: LiveListenMediaSessionEnvelope | null = null;
+  socket.addEventListener("message", async (event) => {
+    if (typeof event.data !== "string") {
+      const binaryData = await binaryMessageData(event.data);
+      if (!binaryData || pendingAudioChunk?.type !== "audio.chunk") return;
+      init.onMessage({ ...pendingAudioChunk, binaryData });
+      pendingAudioChunk = null;
+      return;
+    }
     let payload: unknown;
     try {
       payload = JSON.parse(event.data);
@@ -53,7 +65,13 @@ export function openLiveListenMediaSession(init: {
       return;
     }
     const parsed = LiveListenMediaSessionEnvelopeSchema.safeParse(payload);
-    if (parsed.success) init.onMessage(parsed.data);
+    if (!parsed.success) return;
+    if (parsed.data.type === "audio.chunk" && !parsed.data.data) {
+      pendingAudioChunk = parsed.data;
+      return;
+    }
+    pendingAudioChunk = null;
+    init.onMessage(parsed.data);
   });
   if (init.onError) socket.addEventListener("error", init.onError);
   if (init.onClose) socket.addEventListener("close", init.onClose);
@@ -82,4 +100,10 @@ function liveListenParams(init?: { workspaceId?: string; roomId?: string }) {
   params.set("workspaceId", init?.workspaceId ?? defaults.workspaceId);
   params.set("roomId", init?.roomId ?? defaults.roomId);
   return params;
+}
+
+async function binaryMessageData(data: unknown) {
+  if (data instanceof ArrayBuffer) return data;
+  if (data instanceof Blob) return data.arrayBuffer();
+  return null;
 }

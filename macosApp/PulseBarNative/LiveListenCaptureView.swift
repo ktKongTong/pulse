@@ -22,8 +22,8 @@ struct LiveListenCapturePane: View {
         .onAppear {
             monitor.prepareLiveListenCapturePane()
         }
-        .onChange(of: monitor.liveListenEndpoint) { _, endpoint in
-            model.updateEndpoint(endpoint)
+        .onChange(of: monitor.liveListenEndpoints) { _, endpoints in
+            model.updateEndpoints(endpoints)
         }
     }
 
@@ -31,7 +31,7 @@ struct LiveListenCapturePane: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Live Listen Capture")
                 .font(.largeTitle.weight(.semibold))
-            Text("Capture Spotify, Apple Music, or app audio without changing the current output device. The native app keeps one server connection from the Settings endpoint; web listener demand controls when capture starts and stops.")
+            Text("Capture Spotify, Apple Music, or app audio without changing the current output device. The native app keeps one server connection per configured Settings endpoint; web listener demand controls when capture starts and stops.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -44,16 +44,23 @@ struct LiveListenCapturePane: View {
             VStack(alignment: .leading, spacing: 10) {
                 Label("Live Listen Endpoint", systemImage: "network")
                     .font(.headline)
-                if let endpoint = monitor.liveListenEndpoint {
-                    Text(endpoint.baseURL.absoluteString)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Text("Workspace: \(endpoint.workspaceId)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                let endpoints = monitor.liveListenEndpoints
+                if !endpoints.isEmpty {
+                    ForEach(endpoints, id: \.id) { endpoint in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(endpoint.name.isEmpty ? endpoint.baseURL.absoluteString : endpoint.name)
+                                .font(.caption.weight(.semibold))
+                            Text(endpoint.baseURL.absoluteString)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Text("Workspace: \(endpoint.workspaceId)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 } else {
-                    Text("Configure an endpoint URL, Workspace ID, and API Key in Settings > Endpoints before starting a native stream.")
+                    Text("Configure endpoint URLs, Workspace IDs, and API Keys in Settings > Endpoints before starting a native stream.")
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
@@ -139,6 +146,7 @@ struct LiveListenCapturePane: View {
 
                 HStack(spacing: 18) {
                     StatPill(title: "last chunk", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.lastChunkBytes), countStyle: .binary))
+                    StatPill(title: "chunk ms", value: "\(model.publisherStats.chunkDurationMs)")
                     StatPill(title: "accepted", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.acceptedBytes), countStyle: .binary))
                     StatPill(title: "dropped", value: "\(model.publisherStats.droppedFrames)")
                 }
@@ -166,9 +174,33 @@ struct LiveListenCapturePane: View {
                     DetailRow(title: "Last error", value: model.publisherStats.lastErrorMessage ?? "-")
                 }
 
+                endpointPublisherMeter
+
                 Text(model.publisherStatusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var endpointPublisherMeter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Endpoint Publishers")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if model.endpointPublisherStats.isEmpty {
+                Text("No configured Live Listen endpoints.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(model.endpointPublisherStats) { endpoint in
+                    EndpointPublisherMeterRow(
+                        endpoint: endpoint,
+                        formatOptional: formatOptional,
+                        formatAge: formatAge,
+                        queueRange: queueRange
+                    )
+                }
             }
         }
     }
@@ -332,6 +364,83 @@ private struct StatPill: View {
     }
 }
 
+private struct EndpointPublisherMeterRow: View {
+    let endpoint: LiveListenEndpointPublisherStatus
+    let formatOptional: (Double?) -> String
+    let formatAge: (Date?) -> String
+    let queueRange: (LiveListenPublisherStats) -> String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(endpoint.name)
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(endpoint.stats.connectionState.rawValue)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(connectionColor)
+            }
+            Text(endpoint.endpointURL)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            HStack(spacing: 10) {
+                MiniStat(title: "kbps", value: formatOptional(endpoint.stats.sendBitrateKbps))
+                MiniStat(title: "chunks", value: "\(endpoint.stats.chunksSent)")
+                MiniStat(title: "bytes", value: ByteCountFormatter.string(fromByteCount: Int64(endpoint.stats.bytesSent), countStyle: .binary))
+                MiniStat(title: "chunk ms", value: "\(endpoint.stats.chunkDurationMs)")
+                MiniStat(title: "queue", value: "\(endpoint.stats.queuedChunks)")
+                MiniStat(title: "seq", value: queueRange(endpoint.stats))
+                MiniStat(title: "last", value: formatAge(endpoint.stats.lastSendAt))
+            }
+            if let error = endpoint.stats.lastErrorMessage, !error.isEmpty {
+                Text(error)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            } else {
+                Text(endpoint.statusText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.08)))
+    }
+
+    private var connectionColor: Color {
+        switch endpoint.stats.connectionState {
+        case .connected:
+            return .green
+        case .connecting, .reconnecting:
+            return .orange
+        case .failed:
+            return .red
+        default:
+            return .secondary
+        }
+    }
+}
+
+private struct MiniStat: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.caption.monospacedDigit())
+        }
+        .frame(minWidth: 54, alignment: .leading)
+    }
+}
 
 private struct LiveListenCaptureSurface<Content: View>: View {
     @ViewBuilder let content: Content

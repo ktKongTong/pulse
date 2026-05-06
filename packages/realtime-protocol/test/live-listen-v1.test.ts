@@ -60,7 +60,7 @@ describe("live listen protocol", () => {
     expect(parsed.streamDemand.state).toBe("wanted");
   });
 
-  it("parses listener session accepted and audio chunk envelopes", () => {
+  it("parses listener session accepted and audio chunk metadata envelopes", () => {
     const accepted = LiveListenSessionEnvelopeSchema.parse({
       protocol: "live-listen.media-session.v1",
       type: "session.accepted",
@@ -81,12 +81,12 @@ describe("live listen protocol", () => {
       durationMs: 1000,
       codec: "pcm16-wav",
       byteLength: 4,
-      data: "AQIDBA==",
       replayed: false,
     });
 
     expect(accepted.type).toBe("session.accepted");
     expect(chunk.seq).toBe(241);
+    expect(chunk.data).toBeUndefined();
   });
 
   it("parses media-session snapshots and listen request messages", () => {
@@ -161,14 +161,42 @@ describe("live listen protocol", () => {
         },
         audio: {
           codec: "pcm16-wav",
-          chunkDurationMs: 1000,
-          targetLatencyMs: 3000,
+          chunkDurationMs: 500,
+          targetLatencyMs: 2000,
         },
       },
     });
 
     expect(hello.type).toBe("device.hello");
     expect(command.command.type).toBe("stream.start");
+  });
+
+  it("drops invalid optional media urls instead of rejecting native media frames", () => {
+    const hello = LiveListenDeviceFrameSchema.parse({
+      protocol: "live-listen.device.v1",
+      type: "device.hello",
+      deviceId: "owner",
+      sentAt: "2026-05-03T12:00:00.000Z",
+      lastSeq: 0,
+      capabilities: { binaryAudio: true, localRingBuffer: true, localRingBufferSeconds: 30 },
+      mediaState: {
+        permission: "allow",
+        playback: "playing",
+        capture: "no-capture",
+        media: {
+          provider: "spotify",
+          title: "広告ナシで音楽を聴こう。",
+          playbackState: "playing",
+          artworkUrl: "missing value",
+          linkUrl: "spotify:ad:19c9775cbc854821b8231b591e105f0d",
+        },
+      },
+    });
+
+    expect(hello.type).toBe("device.hello");
+    if (hello.type !== "device.hello") throw new Error("expected hello");
+    expect(hello.mediaState.media?.artworkUrl).toBeUndefined();
+    expect(hello.mediaState.media?.linkUrl).toBeUndefined();
   });
 
   it("does not allow missing or paused mediaState for a playable device", () => {

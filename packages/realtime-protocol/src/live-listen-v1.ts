@@ -20,17 +20,30 @@ export const LiveListenPlaybackStateSchema = z.enum([
   "paused",
 ]);
 
+const OptionalLiveListenWebUrlSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return trimmed;
+  } catch {
+    return undefined;
+  }
+}, z.string().url().optional());
+
 export const LiveListenMediaSchema = z.object({
   providerId: z.string().optional(),
   provider: LiveListenProviderSchema.optional(),
   itemType: z.string().optional(),
   trackId: z.string().optional(),
   uri: z.string().optional(),
-  linkUrl: z.string().url().optional(),
+  linkUrl: OptionalLiveListenWebUrlSchema,
   title: z.string().optional(),
   artist: z.string().optional(),
   album: z.string().optional(),
-  artworkUrl: z.string().url().optional(),
+  artworkUrl: OptionalLiveListenWebUrlSchema,
   durationSeconds: z.number().nonnegative().optional(),
   playbackState: LiveListenPlaybackStateSchema.optional(),
 });

@@ -75,6 +75,33 @@ protocol LiveListenPCMConsumer: AnyObject, Sendable {
     func consume(_ frame: LiveListenPCMFrame)
 }
 
+final class LiveListenPublisherFanout: LiveListenPCMConsumer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var publishers: [NativeLiveListenPublisher] = []
+
+    func updatePublishers(_ publishers: [NativeLiveListenPublisher]) {
+        lock.withLock {
+            self.publishers = publishers
+        }
+    }
+
+    func consume(_ frame: LiveListenPCMFrame) {
+        let snapshot = lock.withLock { publishers }
+        for publisher in snapshot {
+            publisher.consume(frame)
+        }
+    }
+}
+
+struct LiveListenEndpointPublisherStatus: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let endpointURL: String
+    let workspaceId: String
+    let statusText: String
+    let stats: LiveListenPublisherStats
+}
+
 @MainActor
 final class LiveListenCaptureModel: ObservableObject {
     private static let mediaStreamAllowedKey = "PulseBarNative.liveListen.mediaStreamAllowed"
@@ -88,15 +115,17 @@ final class LiveListenCaptureModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var publisherStatusText = "Publisher idle"
     @Published private(set) var publisherStats = LiveListenPublisherStats()
+    @Published private(set) var endpointPublisherStats: [LiveListenEndpointPublisherStatus] = []
     @Published private(set) var mediaStreamPermission: LiveListenMediaStreamPermission = .allow
     @Published private(set) var mediaPlaybackStatus: LiveListenMediaPlaybackStatus = .paused
     @Published private(set) var mediaPlaybackReason = "no media"
     @Published private(set) var currentMediaLabel = "-"
     @Published private(set) var audioCapturePermissionStatus: LiveListenAudioCapturePermissionStatus = .unknown
 
-    private var endpoint: LiveListenEndpointConfig?
+    private var endpoints: [LiveListenEndpointConfig] = []
     private let service = LiveListenCaptureService()
-    private let publisher = NativeLiveListenPublisher()
+    private var publishers: [String: NativeLiveListenPublisher] = [:]
+    private let publisherFanout = LiveListenPublisherFanout()
     private var meterTask: Task<Void, Never>?
     private var startupPermissionTask: Task<Void, Never>?
     private var lastPublishedMediaSignature: String?
@@ -107,16 +136,17 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     var serverConnectionText: String {
-        switch publisherStats.connectionState {
-        case .connected:
-            return "connected"
-        default:
-            return "disconnected"
-        }
+        let total = endpoints.count
+        guard total > 0 else { return "none" }
+        let connected = publishers.values.filter { $0.stats.connectionState == .connected }.count
+        return "\(connected)/\(total)"
     }
 
     var serverEndpointText: String {
-        endpoint?.baseURL.absoluteString ?? "-"
+        endpoints.map { endpoint in
+            let name = endpoint.name.isEmpty ? endpoint.baseURL.host ?? endpoint.baseURL.absoluteString : endpoint.name
+            return "\(name): \(endpoint.baseURL.absoluteString)"
+        }.joined(separator: "\n")
     }
 
     var captureActivityText: String {
@@ -134,7 +164,7 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     var canReconnectServer: Bool {
-        endpoint != nil
+        !endpoints.isEmpty
     }
 
     init() {
@@ -142,37 +172,45 @@ final class LiveListenCaptureModel: ObservableObject {
             UserDefaults.standard.set(true, forKey: Self.mediaStreamAllowedKey)
         }
         mediaStreamPermission = UserDefaults.standard.bool(forKey: Self.mediaStreamAllowedKey) ? .allow : .disallow
-        publisher.onCommand = { [weak self] command in
-            Task { @MainActor [weak self] in
-                self?.handlePublisherCommand(command)
-            }
-        }
-        publisher.telemetry.onSnapshotChanged = { [weak self] stats, statusText in
-            Task { @MainActor [weak self] in
-                self?.applyPublisherUpdate(stats: stats, publisherStatusText: statusText)
-            }
-        }
         refreshSources()
     }
 
     deinit {
         meterTask?.cancel()
         startupPermissionTask?.cancel()
-        let publisher = publisher
-        Task { await publisher.stop() }
+        let publishers = Array(publishers.values)
+        Task {
+            for publisher in publishers {
+                await publisher.stop()
+            }
+        }
     }
 
-    func updateEndpoint(_ endpoint: LiveListenEndpointConfig?) {
-        self.endpoint = endpoint
-        if endpoint == nil && !isCapturing {
-            publisherStatusText = "Configure a Live Listen endpoint in Settings"
+    func updateEndpoints(_ endpoints: [LiveListenEndpointConfig]) {
+        self.endpoints = endpoints
+        let endpointIds = Set(endpoints.map(\.id))
+        let removed = publishers.filter { !endpointIds.contains($0.key) }.map(\.value)
+        for id in publishers.keys where !endpointIds.contains(id) {
+            publishers[id] = nil
+        }
+        for publisher in removed {
             Task { await publisher.stop() }
+        }
+        for endpoint in endpoints {
+            _ = publisher(for: endpoint)
+        }
+        publisherFanout.updatePublishers(endpoints.compactMap { publishers[$0.id] })
+        updateAggregatePublisherState()
+
+        if endpoints.isEmpty && !isCapturing {
+            publisherStatusText = "Configure a Live Listen endpoint in Settings"
+            for publisher in publishers.values {
+                Task { await publisher.stop() }
+            }
         } else if !isCapturing {
             publisherStatusText = "Publisher idle"
-            if let endpoint {
-                Task { [weak self] in
-                    await self?.connectPublisher(endpoint: endpoint, roomId: "live-listen:owner", deviceId: "owner")
-                }
+            Task { [weak self] in
+                await self?.connectPublishers(roomId: "live-listen:owner", deviceId: "owner")
             }
         }
     }
@@ -222,12 +260,11 @@ final class LiveListenCaptureModel: ObservableObject {
         }
 
         if mediaStreamPermission == .allow {
-            publisher.sendMediaUpdate(media)
+            for publisher in publishers.values {
+                publisher.sendMediaUpdate(media)
+            }
         } else {
-            publisher.sendMediaStateUnavailable(
-                reason: "live_listen_disabled",
-                message: "Media stream disabled by device owner."
-            )
+            sendMediaStateUnavailableToPublishers(reason: "live_listen_disabled", message: "Media stream disabled by device owner.")
         }
         if isCapturing && (mediaStreamPermission != .allow || media?.isPlaying != true) {
             let stopReason = mediaStreamPermission == .allow ? "no_playable_media" : "live_listen_disabled"
@@ -235,10 +272,10 @@ final class LiveListenCaptureModel: ObservableObject {
             service.stop()
             meterTask?.cancel()
             meterTask = nil
-            publisher.stopStreamingAndNotify(reason: stopReason)
+            stopStreamingAndNotifyPublishers(reason: stopReason)
             isCapturing = false
             statusText = mediaStreamPermission == .allow ? "Media stopped" : "Media stream disabled"
-            publisherStatusText = publisher.statusText
+            updateAggregatePublisherState()
         }
     }
 
@@ -248,23 +285,22 @@ final class LiveListenCaptureModel: ObservableObject {
         mediaStreamPermission = next
         UserDefaults.standard.set(allowed, forKey: Self.mediaStreamAllowedKey)
         if allowed {
-            publisher.sendMediaUpdate(currentMedia)
-            publisherStatusText = publisher.statusText
+            for publisher in publishers.values {
+                publisher.sendMediaUpdate(currentMedia)
+            }
+            updateAggregatePublisherState()
         } else {
-            publisher.sendMediaStateUnavailable(
-                reason: "live_listen_disabled",
-                message: "Media stream disabled by device owner."
-            )
+            sendMediaStateUnavailableToPublishers(reason: "live_listen_disabled", message: "Media stream disabled by device owner.")
             if isCapturing {
                 appendLiveListenCaptureDebugLog("owner disabled media stream during capture")
                 service.stop()
                 meterTask?.cancel()
                 meterTask = nil
-                publisher.stopStreamingAndNotify(reason: "live_listen_disabled")
+                stopStreamingAndNotifyPublishers(reason: "live_listen_disabled")
                 isCapturing = false
                 statusText = "Media stream disabled"
             }
-            publisherStatusText = publisher.statusText
+            updateAggregatePublisherState()
         }
     }
 
@@ -327,33 +363,33 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     func startNativeStream(roomId: String = "live-listen:owner", deviceId: String = "owner") {
-        appendLiveListenCaptureDebugLog("startNativeStream called room=\(roomId) device=\(deviceId) isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoint=\(endpoint?.baseURL.absoluteString ?? "nil")")
+        appendLiveListenCaptureDebugLog("startNativeStream called room=\(roomId) device=\(deviceId) isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoints=\(endpoints.map { $0.baseURL.absoluteString }.joined(separator: ","))")
         guard !isCapturing, let selectedSource else {
             appendLiveListenCaptureDebugLog("startNativeStream ignored isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil")")
             return
         }
-        guard let endpoint else {
+        guard !endpoints.isEmpty else {
             errorMessage = "Configure an endpoint URL, Workspace ID, and API Key in Settings > Endpoints before starting a native stream."
             publisherStatusText = "Missing Native endpoint config"
-            appendLiveListenCaptureDebugLog("startNativeStream missing endpoint")
+            appendLiveListenCaptureDebugLog("startNativeStream missing endpoints")
             return
         }
         guard mediaStreamPermission == .allow else {
-            publisher.stopStreamingAndNotify(reason: "live_listen_disabled")
+            stopStreamingAndNotifyPublishers(reason: "live_listen_disabled")
             publisherStatusText = "Media stream permission disallowed"
             appendLiveListenCaptureDebugLog("startNativeStream rejected permission=\(mediaStreamPermission.rawValue)")
             return
         }
         guard mediaPlaybackStatus == .playing else {
-            publisher.stopStreamingAndNotify(reason: "no_playable_media")
+            stopStreamingAndNotifyPublishers(reason: "no_playable_media")
             publisherStatusText = "No playing media"
             appendLiveListenCaptureDebugLog("startNativeStream rejected playback=\(mediaPlaybackStatus.rawValue) reason=\(mediaPlaybackReason)")
             return
         }
         errorMessage = nil
         statusText = "Starting stream…"
-        publisherStatusText = "Connecting Live Listen server…"
-        publisherStats = publisher.stats
+        publisherStatusText = "Connecting Live Listen servers…"
+        updateAggregatePublisherState()
         isCapturing = true
         meter = LiveListenCaptureMeter()
 
@@ -362,30 +398,21 @@ final class LiveListenCaptureModel: ObservableObject {
             guard let self else { return }
             var publisherStarted = false
             do {
-                let publisherConfig = LiveListenPublisherConfig(
-                    roomId: roomId,
-                    deviceId: deviceId,
-                    baseURL: endpoint.baseURL,
-                    workspaceId: endpoint.workspaceId,
-                    apiKey: endpoint.apiKey
-                )
                 appendLiveListenCaptureDebugLog("audio permission preflight begin")
                 try service.ensureAudioCapturePermissionForBackgroundStart()
                 appendLiveListenCaptureDebugLog("audio permission preflight ok")
-                try await publisher.connect(config: publisherConfig)
-                publisherStats = publisher.stats
-                publisherStatusText = publisher.statusText
+                await connectPublishers(roomId: roomId, deviceId: deviceId)
+                updateAggregatePublisherState()
                 publisherStarted = true
                 appendLiveListenCaptureDebugLog("capture begin before publisher source=\(selectedSource.name)")
-                let stream = try await service.capture(source: selectedSource, pcmConsumer: publisher)
+                let stream = try await service.capture(source: selectedSource, pcmConsumer: publisherFanout)
                 appendLiveListenCaptureDebugLog("capture stream returned")
                 statusText = "Waiting for \(selectedSource.name) audio…"
-                publisherStatusText = publisher.statusText
+                updateAggregatePublisherState()
                 for try await update in stream {
                     meter = update.meter
-                    let stats = publisher.stats
-                    publisherStats = stats
-                    publisherStatusText = publisher.statusText
+                    updateAggregatePublisherState()
+                    let stats = publisherStats
                     statusText = Self.streamStatusText(
                         sourceName: selectedSource.name,
                         captureStatus: update.statusText,
@@ -393,33 +420,37 @@ final class LiveListenCaptureModel: ObservableObject {
                         publisherStats: stats
                     )
                 }
-                publisherStatusText = publisher.statusText
+                updateAggregatePublisherState()
             } catch {
                 appendLiveListenCaptureDebugLog("stream failed error=\(error.localizedDescription)")
                 errorMessage = error.localizedDescription
                 statusText = "Stream failed"
                 publisherStatusText = "Publisher failed"
             }
-            publisher.stopStreaming()
+            stopStreamingPublishers()
             isCapturing = false
         }
     }
 
     func reconnectServer() {
-        guard endpoint != nil else {
+        guard !endpoints.isEmpty else {
             publisherStatusText = "Configure a Live Listen endpoint in Settings"
             return
         }
         publisherStatusText = "Manual reconnect requested"
         Task { [weak self] in
-            do {
-                try await self?.publisher.reconnectNow()
-            } catch {
-                await MainActor.run {
-                    self?.errorMessage = error.localizedDescription
-                    self?.publisherStatusText = self?.publisher.statusText ?? "Reconnect failed"
-                    self?.publisherStats = self?.publisher.stats ?? LiveListenPublisherStats()
+            guard let self else { return }
+            for publisher in await MainActor.run(body: { Array(self.publishers.values) }) {
+                do {
+                    try await publisher.reconnectNow()
+                } catch {
+                    await MainActor.run {
+                        self.errorMessage = error.localizedDescription
+                    }
                 }
+            }
+            await MainActor.run {
+                self.updateAggregatePublisherState()
             }
         }
     }
@@ -431,11 +462,36 @@ final class LiveListenCaptureModel: ObservableObject {
             selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
             startNativeStream()
         case .stop:
+            if publishers.values.contains(where: { $0.isStreamActive }) { return }
             stopCapture()
         }
     }
 
+    private func publisher(for endpoint: LiveListenEndpointConfig) -> NativeLiveListenPublisher {
+        if let publisher = publishers[endpoint.id] { return publisher }
+        let publisher = NativeLiveListenPublisher()
+        publisher.onCommand = { [weak self] command in
+            Task { @MainActor [weak self] in
+                self?.handlePublisherCommand(command)
+            }
+        }
+        publisher.telemetry.onSnapshotChanged = { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.updateAggregatePublisherState()
+            }
+        }
+        publishers[endpoint.id] = publisher
+        return publisher
+    }
+
+    private func connectPublishers(roomId: String, deviceId: String) async {
+        for endpoint in endpoints {
+            await connectPublisher(endpoint: endpoint, roomId: roomId, deviceId: deviceId)
+        }
+    }
+
     private func connectPublisher(endpoint: LiveListenEndpointConfig, roomId: String, deviceId: String) async {
+        let publisher = publisher(for: endpoint)
         let config = LiveListenPublisherConfig(
             roomId: roomId,
             deviceId: deviceId,
@@ -448,21 +504,19 @@ final class LiveListenCaptureModel: ObservableObject {
         } catch {
             await MainActor.run {
                 errorMessage = error.localizedDescription
-                publisherStatusText = publisher.statusText
-                publisherStats = publisher.stats
+                updateAggregatePublisherState()
             }
         }
     }
 
     private func applyPublisherUpdate(stats: LiveListenPublisherStats, publisherStatusText: String) {
-        self.publisherStats = stats
-        self.publisherStatusText = publisherStatusText
-        if isCapturing && stats.connectionState == .failed {
-            appendLiveListenCaptureDebugLog("publisher failed during capture; stopping capture error=\(stats.lastErrorMessage ?? "-")")
+        updateAggregatePublisherState()
+        if isCapturing && publishers.values.allSatisfy({ $0.stats.connectionState == .failed }) {
+            appendLiveListenCaptureDebugLog("all publishers failed during capture")
             service.stop()
             meterTask?.cancel()
             meterTask = nil
-            publisher.stopStreaming()
+            stopStreamingPublishers()
             isCapturing = false
             statusText = "Live Listen connection failed"
             return
@@ -472,8 +526,95 @@ final class LiveListenCaptureModel: ObservableObject {
                 sourceName: selectedSource?.name ?? "selected source",
                 captureStatus: statusText,
                 publisherStarted: true,
-                publisherStats: stats
+                publisherStats: self.publisherStats
             )
+        }
+    }
+
+    private func updateAggregatePublisherState() {
+        let stats = aggregatePublisherStats()
+        publisherStats = stats
+        endpointPublisherStats = endpoints.map { endpoint in
+            let publisher = publishers[endpoint.id]
+            return LiveListenEndpointPublisherStatus(
+                id: endpoint.id,
+                name: endpoint.name.isEmpty ? endpoint.baseURL.host ?? endpoint.baseURL.absoluteString : endpoint.name,
+                endpointURL: endpoint.baseURL.absoluteString,
+                workspaceId: endpoint.workspaceId,
+                statusText: publisher?.statusText ?? "Publisher idle",
+                stats: publisher?.stats ?? LiveListenPublisherStats()
+            )
+        }
+        let connected = publishers.values.filter { $0.stats.connectionState == .connected }.count
+        if endpoints.isEmpty {
+            publisherStatusText = "Configure a Live Listen endpoint in Settings"
+        } else {
+            publisherStatusText = "Live Listen device sessions connected \(connected)/\(endpoints.count)"
+        }
+    }
+
+    private func aggregatePublisherStats() -> LiveListenPublisherStats {
+        var aggregate = LiveListenPublisherStats()
+        let stats = endpoints.compactMap { publishers[$0.id]?.stats }
+        guard !stats.isEmpty else { return aggregate }
+        aggregate.connectionState = aggregateConnectionState(stats)
+        aggregate.webSocketURL = stats.compactMap(\.webSocketURL).joined(separator: "\n")
+        aggregate.lastConnectedAt = stats.compactMap(\.lastConnectedAt).max()
+        aggregate.lastDisconnectedAt = stats.compactMap(\.lastDisconnectedAt).max()
+        aggregate.nextReconnectAt = stats.compactMap(\.nextReconnectAt).min()
+        aggregate.reconnectDelaySeconds = aggregate.nextReconnectAt.map { max(0, $0.timeIntervalSince(Date())) }
+        aggregate.lastSendAt = stats.compactMap(\.lastSendAt).max()
+        aggregate.lastErrorMessage = stats.compactMap(\.lastErrorMessage).last
+        aggregate.acceptedFrames = stats.map(\.acceptedFrames).max() ?? 0
+        aggregate.acceptedBytes = stats.map(\.acceptedBytes).max() ?? 0
+        aggregate.droppedFrames = stats.map(\.droppedFrames).max() ?? 0
+        aggregate.lastSequence = stats.map(\.lastSequence).max() ?? 0
+        aggregate.bufferedFrames = stats.map(\.bufferedFrames).max() ?? 0
+        aggregate.queuedChunks = stats.reduce(0) { $0 + $1.queuedChunks }
+        aggregate.queuedBytes = stats.reduce(0) { $0 + $1.queuedBytes }
+        aggregate.queuedFirstSequence = stats.compactMap(\.queuedFirstSequence).min()
+        aggregate.queuedLastSequence = stats.compactMap(\.queuedLastSequence).max()
+        aggregate.isSending = stats.contains { $0.isSending }
+        aggregate.maxQueuedChunks = stats.reduce(0) { $0 + $1.maxQueuedChunks }
+        aggregate.droppedChunks = stats.reduce(0) { $0 + $1.droppedChunks }
+        aggregate.replayedChunks = stats.reduce(0) { $0 + $1.replayedChunks }
+        aggregate.reconnectCount = stats.reduce(0) { $0 + $1.reconnectCount }
+        aggregate.reconnectAttempt = stats.map(\.reconnectAttempt).max() ?? 0
+        aggregate.chunksSent = stats.reduce(0) { $0 + $1.chunksSent }
+        aggregate.bytesSent = stats.reduce(0) { $0 + $1.bytesSent }
+        aggregate.sendBitrateKbps = stats.compactMap(\.sendBitrateKbps).reduce(0, +)
+        aggregate.lastChunkBytes = stats.map(\.lastChunkBytes).max() ?? 0
+        aggregate.chunkDurationMs = stats.map(\.chunkDurationMs).max() ?? aggregate.chunkDurationMs
+        return aggregate
+    }
+
+    private func aggregateConnectionState(_ stats: [LiveListenPublisherStats]) -> LiveListenPublisherConnectionState {
+        if stats.contains(where: { $0.connectionState == .connected }) { return .connected }
+        if stats.contains(where: { $0.connectionState == .connecting }) { return .connecting }
+        if stats.contains(where: { $0.connectionState == .reconnecting }) { return .reconnecting }
+        if stats.allSatisfy({ $0.connectionState == .failed }) { return .failed }
+        if stats.allSatisfy({ $0.connectionState == .stopped }) { return .stopped }
+        if stats.contains(where: { $0.connectionState == .stopping }) { return .stopping }
+        return .idle
+    }
+
+    private func stopStreamingPublishers() {
+        for publisher in publishers.values {
+            publisher.stopStreaming()
+        }
+        updateAggregatePublisherState()
+    }
+
+    private func stopStreamingAndNotifyPublishers(reason: String) {
+        for publisher in publishers.values {
+            publisher.stopStreamingAndNotify(reason: reason)
+        }
+        updateAggregatePublisherState()
+    }
+
+    private func sendMediaStateUnavailableToPublishers(reason: String, message: String?) {
+        for publisher in publishers.values {
+            publisher.sendMediaStateUnavailable(reason: reason, message: message)
         }
     }
 
@@ -538,10 +679,10 @@ final class LiveListenCaptureModel: ObservableObject {
         service.stop()
         meterTask?.cancel()
         meterTask = nil
-        publisher.stopStreaming()
+        stopStreamingPublishers()
         isCapturing = false
         statusText = "Stopped"
-        publisherStatusText = publisher.statusText
+        updateAggregatePublisherState()
     }
 }
 

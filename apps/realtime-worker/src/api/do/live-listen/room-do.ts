@@ -35,15 +35,14 @@ import {
   type LiveListenTokenResponse,
 } from "@pulse/realtime-protocol";
 
-import type { Env } from "../../config/env";
+import { liveListenStreamConfig, type Env } from "../../config/env";
 
 const LIVE_LISTEN_STATE_KEY = "live-listen-state";
 const LISTENER_RECONNECT_GRACE_MS = 20_000;
 const ROOM_EMPTY_GRACE_MS = 15_000;
 const NATIVE_RECONNECT_GRACE_MS = 45_000;
-const MAX_BUFFERED_CHUNKS = 30;
-const CHUNK_DURATION_MS = 1_000;
-const TARGET_LATENCY_MS = 3_000;
+const AUDIO_CHUNK_PERSIST_INTERVAL_MS = 2_000;
+const AUDIO_CHUNK_OBSERVER_INTERVAL_MS = 1_000;
 const RECENT_MEDIA_LIMIT = 5;
 
 type SocketRole = "device" | "observer" | "media-session";
@@ -56,7 +55,7 @@ interface AudioChunkRecord {
   durationMs: number;
   codec: "pcm16-wav";
   byteLength: number;
-  data: string;
+  data: ArrayBuffer;
 }
 
 interface ListenerRecord {
@@ -156,6 +155,8 @@ interface ListenerRequestParams {
 export class LiveListenRoom extends DurableObject<Env> {
   private roomState?: StoredLiveListenState;
   private readonly telemetry = new LiveListenRoomTelemetry();
+  private lastAudioChunkPersistAt = 0;
+  private lastAudioChunkObserverBroadcastAt = 0;
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
@@ -524,6 +525,7 @@ export class LiveListenRoom extends DurableObject<Env> {
     if (state.streamDemand.state !== "wanted" || !state.audioFlow.streamId || !state.audioFlow.generation) {
       return;
     }
+    const streamConfig = liveListenStreamConfig(this.env);
     const now = new Date().toISOString();
     const seq = state.audioFlow.latestSeq + 1;
     const chunk: AudioChunkRecord = {
@@ -531,27 +533,28 @@ export class LiveListenRoom extends DurableObject<Env> {
       generation: state.audioFlow.generation,
       seq,
       sentAt: now,
-      durationMs: CHUNK_DURATION_MS,
+      durationMs: streamConfig.chunkDurationMs,
       codec: "pcm16-wav",
       byteLength: message.byteLength,
-      data: arrayBufferToBase64(message),
+      data: message.slice(0),
     };
     state.audioRing.push(chunk);
-    while (state.audioRing.length > MAX_BUFFERED_CHUNKS) state.audioRing.shift();
+    while (state.audioRing.length > streamConfig.maxBufferedChunks) state.audioRing.shift();
     this.updateStreamBufferStats(state, chunk);
     state.audioFlow.state = "flowing";
     state.nativeMediaState.capture = "capturing";
     this.telemetry.recordChunkIn(chunk.byteLength);
-    this.broadcastSession({
-      type: "audio.chunk",
-      workspaceId: state.workspaceId,
-      roomId: state.roomId,
-      ...chunk,
-      replayed: false,
-    });
+    this.broadcastAudioChunk(state, chunk, false);
     this.telemetry.recordChunkOut(chunk.byteLength, this.connectedListenerSockets().length);
-    await this.persist(state);
-    await this.broadcastObservers(state);
+    const nowMs = Date.now();
+    if (nowMs - this.lastAudioChunkPersistAt >= AUDIO_CHUNK_PERSIST_INTERVAL_MS) {
+      this.lastAudioChunkPersistAt = nowMs;
+      await this.persist(state);
+    }
+    if (nowMs - this.lastAudioChunkObserverBroadcastAt >= AUDIO_CHUNK_OBSERVER_INTERVAL_MS) {
+      this.lastAudioChunkObserverBroadcastAt = nowMs;
+      await this.broadcastObservers(state);
+    }
   }
 
   private async handleSocketGone(socket: WebSocket) {
@@ -573,10 +576,17 @@ export class LiveListenRoom extends DurableObject<Env> {
     }
 
     if (attachment.role === "device" && state.nativeLink.deviceId === attachment.deviceId) {
+      if (state.media.current) {
+        this.upsertRecentMedia(state, state.media.current, attachment.deviceId, now, state.media.clock);
+      }
       state.nativeLink.state = "disconnected";
       state.nativeLink.disconnectedAt = now;
       state.nativeLink.graceDeadlineAt = new Date(Date.now() + NATIVE_RECONNECT_GRACE_MS).toISOString();
       state.admission = { state: "blocked", reason: "device_offline" };
+      state.media.current = null;
+      state.media.clock = undefined;
+      state.media.sourceDeviceId = attachment.deviceId;
+      state.media.updatedAt = now;
       if (state.streamDemand.state === "wanted" && state.audioFlow.state !== "none") {
         state.audioFlow.state = "stalled";
       }
@@ -622,6 +632,12 @@ export class LiveListenRoom extends DurableObject<Env> {
     state.nativeMediaState = mediaState;
     if (mediaState.media) {
       this.updateMedia(state, mediaState.media, deviceId, at);
+    } else if (state.media.current) {
+      this.upsertRecentMedia(state, state.media.current, deviceId, at, state.media.clock);
+      state.media.current = null;
+      state.media.clock = undefined;
+      state.media.sourceDeviceId = deviceId;
+      state.media.updatedAt = at;
     }
     state.admission = this.deriveAdmission(state);
     state.media.playback = mediaState.playback;
@@ -818,6 +834,12 @@ export class LiveListenRoom extends DurableObject<Env> {
     const sentAt = new Date().toISOString();
     const streamId = state.audioFlow.streamId ?? `stream_${crypto.randomUUID()}`;
     const generation = state.audioFlow.generation ?? 1;
+    const streamConfig = liveListenStreamConfig(this.env);
+    const audio = {
+      codec: "pcm16-wav" as const,
+      chunkDurationMs: streamConfig.chunkDurationMs,
+      targetLatencyMs: streamConfig.targetLatencyMs,
+    };
     return {
       protocol: LIVE_LISTEN_DEVICE_PROTOCOL_V1,
       type: "command",
@@ -830,14 +852,14 @@ export class LiveListenRoom extends DurableObject<Env> {
             streamId,
             generation,
             fromSeq: state.audioFlow.latestSeq + 1,
-            audio: { codec: "pcm16-wav", chunkDurationMs: CHUNK_DURATION_MS, targetLatencyMs: TARGET_LATENCY_MS },
+            audio,
           }
         : {
             type: "stream.start",
             streamId,
             generation,
             capture: { mode: "current-media-app", preferredProvider: "spotify", fallback: "selected" },
-            audio: { codec: "pcm16-wav", chunkDurationMs: CHUNK_DURATION_MS, targetLatencyMs: TARGET_LATENCY_MS },
+            audio,
           },
     };
   }
@@ -861,7 +883,7 @@ export class LiveListenRoom extends DurableObject<Env> {
       return;
     }
     for (const chunk of state.audioRing.filter((item) => item.seq >= fromSeq)) {
-      this.sendSession(socket, { type: "audio.chunk", workspaceId: state.workspaceId, roomId: state.roomId, ...chunk, replayed: true });
+      this.sendAudioChunk(socket, state, chunk, true);
       this.telemetry.recordReplayChunk(chunk.byteLength);
     }
   }
@@ -918,8 +940,20 @@ export class LiveListenRoom extends DurableObject<Env> {
       admission: state.admission,
       streamDemand: state.streamDemand,
       audioFlow: state.audioFlow,
-      media: state.media,
+      media: this.snapshotMedia(state),
       updatedAt: state.updatedAt,
+    });
+  }
+
+  private snapshotMedia(state: StoredLiveListenState): LiveListenRoomMediaState {
+    const currentIsLive =
+      state.nativeLink.state === "connected" &&
+      Boolean(state.media.current) &&
+      (!state.media.sourceDeviceId || state.media.sourceDeviceId === state.nativeLink.deviceId);
+    return LiveListenRoomMediaStateSchema.parse({
+      ...state.media,
+      current: currentIsLive ? state.media.current : null,
+      clock: currentIsLive ? state.media.clock : undefined,
     });
   }
 
@@ -980,6 +1014,24 @@ export class LiveListenRoom extends DurableObject<Env> {
     for (const socket of this.connectedListenerSockets()) {
       this.sendSession(socket, init);
     }
+  }
+
+  private broadcastAudioChunk(state: StoredLiveListenState, chunk: AudioChunkRecord, replayed: boolean) {
+    for (const socket of this.connectedListenerSockets()) {
+      this.sendAudioChunk(socket, state, chunk, replayed);
+    }
+  }
+
+  private sendAudioChunk(socket: WebSocket, state: StoredLiveListenState, chunk: AudioChunkRecord, replayed: boolean) {
+    const { data: _data, ...metadata } = chunk;
+    this.sendSession(socket, {
+      type: "audio.chunk",
+      workspaceId: state.workspaceId,
+      roomId: state.roomId,
+      ...metadata,
+      replayed,
+    });
+    this.sendBinary(socket, chunk.data);
   }
 
   private connectedListenerSockets() {
@@ -1151,6 +1203,14 @@ export class LiveListenRoom extends DurableObject<Env> {
       socket.close(1011, "live listen send failed");
     }
   }
+
+  private sendBinary(socket: WebSocket, payload: ArrayBuffer) {
+    try {
+      socket.send(payload);
+    } catch {
+      socket.close(1011, "live listen send failed");
+    }
+  }
 }
 
 function initialState(workspaceId: string, roomId: string): StoredLiveListenState {
@@ -1227,14 +1287,4 @@ function mediaIdentity(media: LiveListenMedia | LiveListenRecentMedia): string {
   if (media.provider && media.trackId) return `${media.provider}:track:${media.trackId}`;
   if (media.provider && media.uri) return `${media.provider}:uri:${media.uri}`;
   return [media.provider, media.title, media.artist, media.album].filter(Boolean).join(":");
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  const size = 0x8000;
-  for (let index = 0; index < bytes.length; index += size) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + size));
-  }
-  return btoa(binary);
 }

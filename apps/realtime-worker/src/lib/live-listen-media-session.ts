@@ -1,11 +1,11 @@
 import {
   LIVE_LISTEN_MEDIA_SESSION_PROTOCOL_V1,
   type LiveListenMediaSessionClientMessage,
-  type LiveListenMediaSessionEnvelope,
   type LiveListenMediaSessionSnapshot,
 } from "@pulse/realtime-protocol";
 
 import { openLiveListenMediaSession } from "./live-listen";
+import type { LiveListenMediaSessionRuntimeEvent } from "./live-listen";
 
 type WebLiveListenWsState = "on" | "off" | "half-off" | "error";
 
@@ -27,7 +27,7 @@ let storeState: LiveListenMediaSessionStoreState = {
 let socket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 const storeListeners = new Set<() => void>();
-const envelopeListeners = new Set<(event: LiveListenMediaSessionEnvelope) => void>();
+const envelopeListeners = new Set<(event: LiveListenMediaSessionRuntimeEvent) => void>();
 
 export function subscribeLiveListenMediaSessionStore(listener: () => void) {
   storeListeners.add(listener);
@@ -42,7 +42,7 @@ export function getLiveListenMediaSessionStoreSnapshot() {
   return storeState;
 }
 
-export function subscribeLiveListenMediaSessionEvents(listener: (event: LiveListenMediaSessionEnvelope) => void) {
+export function subscribeLiveListenMediaSessionEvents(listener: (event: LiveListenMediaSessionRuntimeEvent) => void) {
   envelopeListeners.add(listener);
   ensureLiveListenMediaSessionSocket();
   return () => {

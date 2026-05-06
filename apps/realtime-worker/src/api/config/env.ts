@@ -29,6 +29,9 @@ export type Env = Cloudflare.Env & {
   DEBUG_LOGS?: string;
   LOG_LEVEL?: string;
   LIVE_LISTEN_DEVICE_ID?: string;
+  LIVE_LISTEN_CHUNK_DURATION_MS?: string;
+  LIVE_LISTEN_TARGET_LATENCY_MS?: string;
+  LIVE_LISTEN_RING_BUFFER_SECONDS?: string;
   MEDIA_ROOM_ZERO_CONSUMER_GRACE_MS?: string;
 }
 
@@ -130,4 +133,26 @@ export function optionalEnvValue(env: Env, key: keyof Env): string | null {
   const value = env[key];
   if (typeof value !== "string" || value.trim() === "") return null;
   return value.trim();
+}
+
+export function liveListenStreamConfig(env: Env) {
+  const chunkDurationMs = optionalEnvInt(env, "LIVE_LISTEN_CHUNK_DURATION_MS", 500, 50, 2_000);
+  const targetLatencyMs = optionalEnvInt(env, "LIVE_LISTEN_TARGET_LATENCY_MS", 2_000, 0, 30_000);
+  const ringBufferSeconds = optionalEnvInt(env, "LIVE_LISTEN_RING_BUFFER_SECONDS", 30, 1, 300);
+  return {
+    chunkDurationMs,
+    targetLatencyMs,
+    ringBufferSeconds,
+    maxBufferedChunks: Math.max(1, Math.ceil((ringBufferSeconds * 1_000) / chunkDurationMs)),
+  };
+}
+
+function optionalEnvInt(env: Env, key: keyof Env, defaultValue: number, min: number, max: number) {
+  const raw = optionalEnvValue(env, key);
+  if (raw === null) return defaultValue;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`Invalid numeric environment variable: ${String(key)}`);
+  }
+  return value;
 }

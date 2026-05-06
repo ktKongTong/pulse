@@ -8,6 +8,7 @@ struct LiveListenPublisherConfig: Equatable, Sendable {
     let apiKey: String
     var sampleRate: UInt32 = 48_000
     var channels: UInt32 = 2
+    var chunkDurationMs: UInt32 = 500
 }
 
 enum LiveListenPublisherConnectionState: String, Sendable {
@@ -48,6 +49,7 @@ struct LiveListenPublisherStats: Equatable, Sendable {
     var bytesSent: UInt64 = 0
     var sendBitrateKbps: Double?
     var lastChunkBytes: UInt64 = 0
+    var chunkDurationMs: UInt32 = 500
 }
 
 enum LiveListenPublisherCommand: Sendable {
@@ -92,6 +94,7 @@ protocol LiveListenPublisher: LiveListenPCMConsumer {
     var statusText: String { get }
     var stats: LiveListenPublisherStats { get }
     var telemetry: LiveListenPublisherTelemetry { get }
+    var isStreamActive: Bool { get }
 
     func connect(config: LiveListenPublisherConfig) async throws
     func reconnectNow() async throws
@@ -143,6 +146,10 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         telemetry.stats
     }
 
+    var isStreamActive: Bool {
+        lock.withLock { streamActive }
+    }
+
     func connect(config: LiveListenPublisherConfig) async throws {
         var oldHandles: (URLSessionWebSocketTask?, URLSession?) = (nil, nil)
         let shouldConnect = lock.withLock {
@@ -178,9 +185,10 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
             mutableStats = LiveListenPublisherStats()
             mutableStats.connectionState = .connecting
             mutableStats.maxQueuedChunks = UInt64(maxQueuedChunks)
+            mutableStats.chunkDurationMs = config.chunkDurationMs
             mutableStatusText = "Connecting Live Listen server…"
-            chunkFrameCount = config.sampleRate
-            chunkByteCount = Int(config.sampleRate * config.channels) * MemoryLayout<Int16>.size
+            chunkFrameCount = max(1, config.sampleRate * config.chunkDurationMs / 1_000)
+            chunkByteCount = Int(chunkFrameCount * config.channels) * MemoryLayout<Int16>.size
             lastBitrateSampleAt = Date()
             lastBitrateSampleBytes = 0
             isRunning = true
@@ -515,7 +523,10 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
             let capture = command["capture"] as? [String: Any]
             let preferredProvider = capture?["preferredProvider"] as? String
             let preferredBundleId = capture?["preferredBundleId"] as? String
+            let audio = command["audio"] as? [String: Any]
+            let chunkDurationMs = Self.uint32Value(audio?["chunkDurationMs"])
             lock.withLock {
+                applyAudioConfigLocked(chunkDurationMs: chunkDurationMs)
                 streamActive = true
                 streamId = nextStreamId
                 generation = nextGeneration
@@ -676,6 +687,19 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         }
         if shouldFlush { flushPendingChunks() }
         emitStatsChanged()
+    }
+
+    private func applyAudioConfigLocked(chunkDurationMs: UInt32?) {
+        guard let chunkDurationMs, chunkDurationMs > 0 else { return }
+        let sampleRate = currentConfig?.sampleRate ?? 48_000
+        let channels = currentConfig?.channels ?? 2
+        currentConfig?.chunkDurationMs = chunkDurationMs
+        chunkFrameCount = max(1, sampleRate * chunkDurationMs / 1_000)
+        chunkByteCount = Int(chunkFrameCount * channels) * MemoryLayout<Int16>.size
+        pcmBuffer.removeAll(keepingCapacity: true)
+        mutableStats.bufferedFrames = 0
+        mutableStats.chunkDurationMs = chunkDurationMs
+        appendLiveListenPublisherDebugLog("audio config chunkDurationMs=\(chunkDurationMs) chunkBytes=\(chunkByteCount)")
     }
 
     private func flushPendingChunks() {
@@ -929,6 +953,13 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         return nil
     }
 
+    private static func uint32Value(_ value: Any?) -> UInt32? {
+        if let value = value as? UInt32 { return value }
+        if let value = value as? Int, value >= 0, value <= Int(UInt32.max) { return UInt32(value) }
+        if let value = value as? NSNumber, value.int64Value >= 0, value.uint64Value <= UInt64(UInt32.max) { return value.uint32Value }
+        return nil
+    }
+
     private static func liveListenMediaPayload(_ media: MediaInfo) -> [String: Any] {
         var payload: [String: Any] = [
             "providerId": media.providerId,
@@ -940,10 +971,24 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         ]
         if let provider = liveListenProvider(media) { payload["provider"] = provider }
         if let album = media.album, !album.isEmpty { payload["album"] = album }
-        if let artwork = media.artworkURL?.absoluteString, URL(string: artwork) != nil { payload["artworkUrl"] = artwork }
+        if let artwork = Self.publicWebURL(media.artworkURL) { payload["artworkUrl"] = artwork }
         if let duration = media.durationSeconds, duration > 0 { payload["durationSeconds"] = duration }
-        if let link = media.link, URL(string: link) != nil { payload["linkUrl"] = link }
+        if let link = Self.publicWebURL(media.link) { payload["linkUrl"] = link }
         return payload
+    }
+
+    private static func publicWebURL(_ url: URL?) -> String? {
+        guard let url else { return nil }
+        return publicWebURL(url.absoluteString)
+    }
+
+    private static func publicWebURL(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let url = URL(string: trimmed) else { return nil }
+        guard url.scheme == "http" || url.scheme == "https" else { return nil }
+        guard url.host != nil else { return nil }
+        return trimmed
     }
 
     private static func liveListenProvider(_ media: MediaInfo) -> String? {
