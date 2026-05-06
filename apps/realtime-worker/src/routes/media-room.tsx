@@ -4,7 +4,6 @@ const ROOM_ID = "room-test-1";
 
 export default function MediaRoomRoute() {
   const liveListen = useLiveListen();
-  const isConnected = liveListen.connectionState === "connected" || liveListen.connectionState === "listening";
 
   return (
     <main style={styles.page}>
@@ -17,18 +16,26 @@ export default function MediaRoomRoute() {
         </p>
 
         <div style={styles.actions}>
-          <button type="button" onClick={liveListen.join} disabled={liveListen.connectionState === "joining" || isConnected} style={styles.primaryButton}>
+          <button type="button" onClick={liveListen.join} disabled={!liveListen.canJoin || liveListen.streaming} style={styles.primaryButton}>
             连接
           </button>
-          <button type="button" onClick={liveListen.leave} disabled={!isConnected} style={styles.secondaryButton}>
+          <button type="button" onClick={liveListen.leave} disabled={!liveListen.streaming} style={styles.secondaryButton}>
             断开
           </button>
         </div>
 
         <dl style={styles.stats}>
           <div>
-            <dt>连接状态</dt>
-            <dd>{liveListen.connectionState}</dd>
+            <dt>WS</dt>
+            <dd>{liveListen.ws}</dd>
+          </div>
+          <div>
+            <dt>可串流</dt>
+            <dd>{liveListen.streamable.value ? "true" : liveListen.streamable.reason}</dd>
+          </div>
+          <div>
+            <dt>串流中</dt>
+            <dd>{liveListen.streaming ? "true" : "false"}</dd>
           </div>
           <div>
             <dt>已接收 chunks</dt>

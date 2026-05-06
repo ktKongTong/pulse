@@ -25,10 +25,6 @@ final class NativeMonitorModel: ObservableObject {
     private var liveListenDebugStartObserver: NSObjectProtocol?
     private var liveListenDebugStopObserver: NSObjectProtocol?
     private var liveListenDebugStartInProgress = false
-    private var liveListenDeviceControlSession: URLSession?
-    private var liveListenDeviceControlTask: URLSessionWebSocketTask?
-    private var liveListenDeviceControlEndpointKey: String?
-    private let liveListenDeviceId = "owner"
     private var lastStatsRefreshAt: Date = .distantPast
     private var lastInteractionRefreshAt: Date = .distantPast
     private var lastSyncRefreshAt: Date = .distantPast
@@ -72,7 +68,7 @@ final class NativeMonitorModel: ObservableObject {
         isMonitoring = true
         isPaused = false
         refresh()
-        connectLiveListenDeviceControlIfPossible()
+        liveListenCaptureModel.updateEndpoint(liveListenEndpoint)
         loopTask = Task {
             while !Task.isCancelled {
                 if !isPaused {
@@ -86,8 +82,6 @@ final class NativeMonitorModel: ObservableObject {
     deinit {
         loopTask?.cancel()
         liveListenDebugTriggerTask?.cancel()
-        liveListenDeviceControlTask?.cancel(with: .goingAway, reason: nil)
-        liveListenDeviceControlSession?.invalidateAndCancel()
     }
 
 
@@ -131,6 +125,10 @@ final class NativeMonitorModel: ObservableObject {
         liveListenCaptureModel.updateEndpoint(liveListenEndpoint)
     }
 
+    func requestLiveListenAudioCapturePermissionAtStartup() {
+        liveListenCaptureModel.requestAudioCapturePermissionAtStartup()
+    }
+
     func startDebugNativeLiveListenStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
         liveListenCaptureModel.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
         let endpoint = liveListenEndpoint
@@ -143,138 +141,6 @@ final class NativeMonitorModel: ObservableObject {
     func stopDebugNativeLiveListenStream() {
         appendLiveListenDebugLog("stop debug stream")
         liveListenCaptureModel.stopCapture()
-    }
-
-    private func connectLiveListenDeviceControlIfPossible(force: Bool = false) {
-        guard let endpoint = liveListenEndpoint else {
-            closeLiveListenDeviceControl()
-            appendLiveListenDebugLog("device control skipped missing endpoint")
-            return
-        }
-        guard var components = URLComponents(url: endpoint.baseURL, resolvingAgainstBaseURL: false) else {
-            appendLiveListenDebugLog("device control invalid base url=\(endpoint.baseURL.absoluteString)")
-            return
-        }
-        components.scheme = endpoint.baseURL.scheme == "https" ? "wss" : "ws"
-        components.path = "/api/v1/live-listen/device/connect"
-        components.queryItems = [
-            URLQueryItem(name: "workspaceId", value: endpoint.workspaceId),
-            URLQueryItem(name: "deviceId", value: liveListenDeviceId),
-        ]
-        guard let url = components.url else { return }
-        let endpointKey = "\(url.absoluteString)|\(endpoint.apiKey)"
-        if !force, liveListenDeviceControlEndpointKey == endpointKey, liveListenDeviceControlTask != nil {
-            return
-        }
-
-        closeLiveListenDeviceControl()
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
-        let session = URLSession(configuration: .default)
-        let task = session.webSocketTask(with: request)
-        liveListenDeviceControlSession = session
-        liveListenDeviceControlTask = task
-        liveListenDeviceControlEndpointKey = endpointKey
-        appendLiveListenDebugLog("device control connect url=\(url.absoluteString)")
-        task.resume()
-        receiveLiveListenDeviceControlMessage()
-    }
-
-    private func closeLiveListenDeviceControl() {
-        liveListenDeviceControlTask?.cancel(with: .goingAway, reason: nil)
-        liveListenDeviceControlTask = nil
-        liveListenDeviceControlSession?.invalidateAndCancel()
-        liveListenDeviceControlSession = nil
-        liveListenDeviceControlEndpointKey = nil
-    }
-
-    private func receiveLiveListenDeviceControlMessage() {
-        guard let task = liveListenDeviceControlTask else { return }
-        task.receive { [weak self] result in
-            Task { @MainActor [weak self] in
-                guard let self, self.liveListenDeviceControlTask === task else { return }
-                switch result {
-                case .success(let message):
-                    self.handleLiveListenDeviceControlMessage(message)
-                    self.receiveLiveListenDeviceControlMessage()
-                case .failure(let error):
-                    self.appendLiveListenDebugLog("device control receive failed error=\(error.localizedDescription)")
-                    self.liveListenDeviceControlTask = nil
-                    self.liveListenDeviceControlSession = nil
-                    self.liveListenDeviceControlEndpointKey = nil
-                    try? await Task.sleep(for: .seconds(3))
-                    self.connectLiveListenDeviceControlIfPossible()
-                }
-            }
-        }
-    }
-
-    private func handleLiveListenDeviceControlMessage(_ message: URLSessionWebSocketTask.Message) {
-        let data: Data?
-        switch message {
-        case .string(let text):
-            data = text.data(using: .utf8)
-        case .data(let payload):
-            data = payload
-        @unknown default:
-            data = nil
-        }
-        guard let data,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            appendLiveListenDebugLog("device control ignored non-json message")
-            return
-        }
-        guard object["kind"] as? String == "command",
-              let commandId = object["commandId"] as? String,
-              let command = object["command"] as? [String: Any],
-              let type = command["type"] as? String else {
-            appendLiveListenDebugLog("device control message \(object["kind"] as? String ?? "unknown")")
-            return
-        }
-
-        switch type {
-        case "stream.start":
-            if liveListenCaptureModel.isCapturing {
-                appendLiveListenDebugLog("device command start already_running commandId=\(commandId)")
-                sendLiveListenDeviceAck(commandId: commandId, status: "already_running")
-                return
-            }
-            let capture = command["capture"] as? [String: Any]
-            let preferredProvider = capture?["preferredProvider"] as? String
-            let preferredBundleId = capture?["preferredBundleId"] as? String
-            appendLiveListenDebugLog("device command start commandId=\(commandId) provider=\(preferredProvider ?? "nil") bundle=\(preferredBundleId ?? "nil")")
-            startDebugNativeLiveListenStream(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
-            sendLiveListenDeviceAck(commandId: commandId, status: "accepted")
-        case "stream.stop":
-            appendLiveListenDebugLog("device command stop commandId=\(commandId)")
-            stopDebugNativeLiveListenStream()
-            sendLiveListenDeviceAck(commandId: commandId, status: "accepted")
-        default:
-            appendLiveListenDebugLog("device command unsupported type=\(type) commandId=\(commandId)")
-            sendLiveListenDeviceAck(commandId: commandId, status: "rejected", reason: "unsupported_command")
-        }
-    }
-
-    private func sendLiveListenDeviceAck(commandId: String, status: String, reason: String? = nil) {
-        guard let task = liveListenDeviceControlTask else { return }
-        var payload: [String: Any] = [
-            "protocol": "live-listen.device.v1",
-            "kind": "ack",
-            "commandId": commandId,
-            "deviceId": liveListenDeviceId,
-            "status": status,
-            "sentAt": ISO8601DateFormatter().string(from: Date()),
-        ]
-        if let reason { payload["reason"] = reason }
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let text = String(data: data, encoding: .utf8) else { return }
-        task.send(.string(text)) { [weak self] error in
-            if let error {
-                Task { @MainActor [weak self] in
-                    self?.appendLiveListenDebugLog("device ack failed commandId=\(commandId) error=\(error.localizedDescription)")
-                }
-            }
-        }
     }
 
     private func appendLiveListenDebugLog(_ message: String) {
@@ -411,6 +277,7 @@ final class NativeMonitorModel: ObservableObject {
         }
 
         applySnapshotIfNeeded(payload.snapshot)
+        liveListenCaptureModel.updateCurrentMedia(payload.snapshot?.media)
 
         if let todayStats = payload.todayStats,
            let todayTotalSeconds = payload.todayTotalSeconds,
@@ -450,7 +317,7 @@ final class NativeMonitorModel: ObservableObject {
 
     func saveConfig() {
         bridge.updateConfig(config: Self.makeConfig(from: settingsDraft))
-        connectLiveListenDeviceControlIfPossible(force: true)
+        liveListenCaptureModel.updateEndpoint(liveListenEndpoint)
     }
 
     var liveListenEndpoint: LiveListenEndpointConfig? {
@@ -981,13 +848,13 @@ final class NativeMonitorModel: ObservableObject {
                 id: endpoint.id,
                 name: endpoint.name,
                 enabled: endpoint.enabled,
-                transport: mapTransport(endpoint.transport),
-                transportName: endpoint.transport.rawValue,
+                transport: .WEBSOCKET,
+                transportName: TransportOption.websocket.rawValue,
                 endpointUrl: endpoint.endpointUrl,
                 workspaceId: endpoint.workspaceId,
                 siteId: endpoint.siteId,
                 apiKey: endpoint.apiKey,
-                batchWindowSeconds: Int32(endpoint.batchWindowSeconds)
+                batchWindowSeconds: 15
             )
         }
         return PulseBarConfig(

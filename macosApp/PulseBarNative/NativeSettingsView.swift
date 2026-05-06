@@ -332,7 +332,7 @@ private struct EndpointSyncCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(endpoint.name)
                         .font(.headline)
-                    Text(endpoint.transportName.replacingOccurrences(of: "_", with: " ").capitalized)
+                    Text(endpoint.endpointURL.isEmpty ? "Server not configured" : endpoint.endpointURL)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -340,10 +340,6 @@ private struct EndpointSyncCard: View {
                 EndpointSyncBadge(endpoint: endpoint)
             }
 
-            DashboardKeyValueRow(
-                key: "URL",
-                value: endpoint.endpointURL.isEmpty ? "Not configured" : endpoint.endpointURL
-            )
             DashboardKeyValueRow(key: "Server Probe", value: axisStatusLabel(derivedServerStatus(endpoint.status)))
             DashboardKeyValueRow(key: "Ingest Config", value: axisStatusLabel(derivedClientStatus(endpoint.status)))
             DashboardKeyValueRow(key: "SQLite Queue", value: "\(endpoint.pendingCount) pending")
@@ -432,13 +428,13 @@ private struct SettingsEditorContent: View {
                         }
                     }
 
-                    SettingsCard(title: "Endpoint Delivery", subtitle: "Configure multiple sync targets and keep each one independently enabled or disabled.") {
+                    SettingsCard(title: "Server Connections", subtitle: "Configure the Pulse server used by native reporting and Live Listen media streaming.") {
                         VStack(alignment: .leading, spacing: 16) {
                             HStack(alignment: .top) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Configured endpoints")
+                                    Text("Configured servers")
                                         .font(.headline)
-                                    Text("Each endpoint keeps its own auth, transport, and enabled state.")
+                                    Text("Each server keeps its own URL, auth, workspace, site, and enabled state.")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -451,7 +447,7 @@ private struct SettingsEditorContent: View {
                             }
 
                             if monitor.settingsDraft.endpoints.isEmpty {
-                                Text("No endpoints configured yet.")
+                                Text("No servers configured yet.")
                                     .foregroundStyle(.secondary)
                             } else {
                                 VStack(spacing: 14) {
@@ -466,8 +462,6 @@ private struct SettingsEditorContent: View {
                                             endpointBinding(id: endpoint.id, fallback: endpoint.enabled, \.enabled)
                                         } name: {
                                             endpointBinding(id: endpoint.id, fallback: endpoint.name, \.name)
-                                        } transport: {
-                                            endpointBinding(id: endpoint.id, fallback: endpoint.transport, \.transport)
                                         } endpointURL: {
                                             endpointBinding(id: endpoint.id, fallback: endpoint.endpointUrl, \.endpointUrl)
                                         } workspaceId: {
@@ -476,8 +470,6 @@ private struct SettingsEditorContent: View {
                                             endpointBinding(id: endpoint.id, fallback: endpoint.siteId, \.siteId)
                                         } apiKey: {
                                             endpointBinding(id: endpoint.id, fallback: endpoint.apiKey, \.apiKey)
-                                        } batchWindowSeconds: {
-                                            endpointBinding(id: endpoint.id, fallback: endpoint.batchWindowSeconds, \.batchWindowSeconds)
                                         }
                                     }
                                 }
@@ -622,12 +614,10 @@ private struct EndpointEditorCard: View {
     let onRemove: () -> Void
     @Binding var enabled: Bool
     @Binding var name: String
-    @Binding var transport: TransportOption
     @Binding var endpointURL: String
     @Binding var workspaceId: String
     @Binding var siteId: String
     @Binding var apiKey: String
-    @Binding var batchWindowSeconds: Int
 
     init(
         index: Int,
@@ -635,24 +625,20 @@ private struct EndpointEditorCard: View {
         onRemove: @escaping () -> Void,
         enabled: @escaping () -> Binding<Bool>,
         name: @escaping () -> Binding<String>,
-        transport: @escaping () -> Binding<TransportOption>,
         endpointURL: @escaping () -> Binding<String>,
         workspaceId: @escaping () -> Binding<String>,
         siteId: @escaping () -> Binding<String>,
-        apiKey: @escaping () -> Binding<String>,
-        batchWindowSeconds: @escaping () -> Binding<Int>
+        apiKey: @escaping () -> Binding<String>
     ) {
         self.index = index
         self.canRemove = canRemove
         self.onRemove = onRemove
         self._enabled = enabled()
         self._name = name()
-        self._transport = transport()
         self._endpointURL = endpointURL()
         self._workspaceId = workspaceId()
         self._siteId = siteId()
         self._apiKey = apiKey()
-        self._batchWindowSeconds = batchWindowSeconds()
     }
 
     var body: some View {
@@ -661,7 +647,7 @@ private struct EndpointEditorCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(name.isEmpty ? "Endpoint \(index + 1)" : name)
                         .font(.headline)
-                    Text("Delivery target, auth, and transport options.")
+                    Text("Pulse server URL and credentials.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -674,7 +660,7 @@ private struct EndpointEditorCard: View {
 
             ToggleRow(
                 title: "Enabled",
-                subtitle: "Disabled endpoints stay saved but do not receive reports.",
+                subtitle: "Disabled servers stay saved but are not used by native reporting or Live Listen.",
                 isOn: $enabled
             )
 
@@ -684,20 +670,9 @@ private struct EndpointEditorCard: View {
                 text: $name
             )
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Transport")
-                    .font(.subheadline.weight(.semibold))
-                Picker("Transport", selection: $transport) {
-                    ForEach(TransportOption.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
             LabeledField(
-                title: "Endpoint URL",
-                subtitle: "Base host or ingest URL for this endpoint.",
+                title: "Server URL",
+                subtitle: "Base Pulse server URL. Reporting and Live Listen paths are derived from this URL.",
                 text: $endpointURL
             )
 
@@ -717,14 +692,6 @@ private struct EndpointEditorCard: View {
                 title: "API Key",
                 subtitle: "Required bearer token for device ingest.",
                 text: $apiKey
-            )
-
-            PresetNumericRow(
-                title: "Batch window",
-                subtitle: "How long to buffer HTTP batch events.",
-                unit: "s",
-                value: $batchWindowSeconds,
-                presets: [5, 15, 30, 60]
             )
         }
         .padding(18)

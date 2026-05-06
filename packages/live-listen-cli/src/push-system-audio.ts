@@ -18,6 +18,16 @@ const { RTCPeerConnection, RTCSessionDescription, nonstandard } = wrtc;
 const LIVE_LISTEN_AUDIO_MAX_BITRATE = 320_000;
 const LIVE_LISTEN_OPUS_FMTP = `stereo=1;sprop-stereo=1;maxaveragebitrate=${LIVE_LISTEN_AUDIO_MAX_BITRATE};useinbandfec=1`;
 const LIVE_LISTEN_FFMPEG_AUDIO_SYNC_FILTER = "aresample=async=1000:first_pts=0";
+const LIVE_LISTEN_CHUNK_DURATION_MS = 1_000;
+
+let liveListenDeviceSocket: WebSocket | null = null;
+let liveListenPcmQueue: Int16Array[] = [];
+let liveListenQueuedSamples = 0;
+let liveListenStreamActive = false;
+let liveListenStreamId: string | undefined;
+let liveListenGeneration: number | undefined;
+let liveListenLocalSeq = 0;
+let liveListenLocalRing: Array<{ seq: number; data: ArrayBuffer }> = [];
 
 if (existsSync(".env")) {
   loadEnvFile();
@@ -1194,69 +1204,218 @@ function sendAudioFrame(
     channelCount: cfg.channels,
     numberOfFrames: Math.floor(cfg.sampleRate * cfg.frameMs / 1000),
   });
+  enqueueLiveListenAudioChunk(cfg, samples);
 }
 
 async function startHost(cfg: Config, metadata: TrackMetadata | null) {
-  const payload = {
-    workspaceId: cfg.workspaceId,
-    roomId: cfg.roomId,
-    hostDeviceId: cfg.hostDeviceId,
-    requestedAt: new Date().toISOString(),
-    audio: audioSession(cfg, metadata),
-  };
-  const response = await pulseFetch(cfg, "/api/v1/live-listen/host/start", payload);
-  if (!response.ok) throw new Error(`host_start_failed:${response.status}:${await response.text()}`);
+  const socket = await openLiveListenDeviceSession(cfg);
+  socket.send(JSON.stringify({
+    protocol: "live-listen.device.v1",
+    type: "device.hello",
+    deviceId: cfg.hostDeviceId,
+    sentAt: new Date().toISOString(),
+    capabilities: {
+      binaryAudio: true,
+      localRingBuffer: true,
+      localRingBufferSeconds: 30,
+    },
+    mediaState: {
+      permission: "allow",
+      playback: "playing",
+      capture: "no-capture",
+      media: liveListenMedia(metadata),
+    },
+    lastStreamId: liveListenStreamId,
+    lastGeneration: liveListenGeneration,
+    lastSeq: liveListenLocalSeq || undefined,
+  }));
 }
 
 async function heartbeatHost(cfg: Config, metadata: TrackMetadata | null) {
-  const payload = {
-    workspaceId: cfg.workspaceId,
-    roomId: cfg.roomId,
-    hostDeviceId: cfg.hostDeviceId,
+  const socket = await openLiveListenDeviceSession(cfg);
+  socket.send(JSON.stringify({
+    protocol: "live-listen.device.v1",
+    type: "media.updated",
+    deviceId: cfg.hostDeviceId,
     sentAt: new Date().toISOString(),
-    audio: audioSession(cfg, metadata),
-  };
-  const response = await pulseFetch(cfg, "/api/v1/live-listen/host/heartbeat", payload);
-  if (!response.ok) throw new Error(`host_heartbeat_failed:${response.status}:${await response.text()}`);
+    media: liveListenMedia(metadata),
+  }));
 }
 
 async function stopHost(cfg: Config, reason: string) {
-  const payload = {
-    workspaceId: cfg.workspaceId,
-    roomId: cfg.roomId,
-    hostDeviceId: cfg.hostDeviceId,
-    stoppedAt: new Date().toISOString(),
-    reason,
-  };
-  const response = await pulseFetch(cfg, "/api/v1/live-listen/host/stop", payload);
-  if (!response.ok) throw new Error(`host_stop_failed:${response.status}:${await response.text()}`);
+  if (liveListenDeviceSocket?.readyState === WebSocket.OPEN) {
+    liveListenDeviceSocket.send(JSON.stringify({
+      protocol: "live-listen.device.v1",
+      type: "stream.stopped",
+      streamId: "stream_unknown",
+      generation: 1,
+      reason: reason === "SIGINT" || reason === "SIGTERM" ? "native_shutdown" : "manual_stop",
+      sentAt: new Date().toISOString(),
+    }));
+    liveListenDeviceSocket.close(1000, reason);
+  }
+  liveListenDeviceSocket = null;
+  liveListenStreamActive = false;
+  liveListenPcmQueue = [];
+  liveListenQueuedSamples = 0;
 }
 
-function audioSession(cfg: Config, metadata: TrackMetadata | null) {
-  return {
-    transport: "cloudflare-realtime" as const,
-    sessionId: metadata?.sessionId ?? "pending-partytracks-session",
-    roomName: cfg.roomId,
-    publishTrackName: metadata?.trackName ?? "host-audio",
-    partyTracksPrefix: "/api/v1/live-listen/partytracks",
-    track: {
-      location: metadata?.location ?? "remote",
-      sessionId: metadata?.sessionId,
-      trackName: metadata?.trackName ?? "host-audio",
-      mid: undefined,
-    },
-  };
-}
-
-function pulseFetch(cfg: Config, path: string, payload: unknown) {
-  return fetch(new URL(path, cfg.pulseBaseUrl), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${cfg.deviceApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
+async function openLiveListenDeviceSession(cfg: Config): Promise<WebSocket> {
+  if (liveListenDeviceSocket?.readyState === WebSocket.OPEN) return liveListenDeviceSocket;
+  const url = new URL("/api/v1/live-listen/device-session", cfg.pulseBaseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("workspaceId", cfg.workspaceId);
+  url.searchParams.set("roomId", cfg.roomId);
+  url.searchParams.set("deviceId", cfg.hostDeviceId);
+  url.searchParams.set("apiKey", cfg.deviceApiKey);
+  const socket = new WebSocket(url);
+  liveListenDeviceSocket = socket;
+  socket.addEventListener("message", (event) => handleLiveListenDeviceCommand(socket, event.data));
+  await new Promise<void>((resolve, reject) => {
+    socket.addEventListener("open", () => resolve(), { once: true });
+    socket.addEventListener("error", () => reject(new Error("live_listen_device_session_ws_error")), { once: true });
+    socket.addEventListener("close", () => {
+      if (liveListenDeviceSocket === socket) liveListenDeviceSocket = null;
+    });
   });
+  return socket;
+}
+
+function handleLiveListenDeviceCommand(socket: WebSocket, data: unknown) {
+  if (typeof data !== "string") return;
+  const frame = JSON.parse(data) as {
+    type?: string;
+    commandId?: string;
+    command?: {
+      type?: string;
+      streamId?: string;
+      generation?: number;
+      fromSeq?: number;
+      reason?: string;
+    };
+  };
+  if (frame.type !== "command") return;
+  const command = frame.command;
+  if (command?.type === "stream.stop") {
+    liveListenStreamActive = false;
+    sendLiveListenAck(socket, frame.commandId, "stopped", command.streamId, liveListenGeneration);
+    return;
+  }
+  if (command?.type !== "stream.start" && command?.type !== "stream.resume") return;
+  liveListenStreamActive = true;
+  liveListenStreamId = command.streamId;
+  liveListenGeneration = command.generation;
+  if (command.type === "stream.start") {
+    liveListenLocalSeq = 0;
+    liveListenLocalRing = [];
+    sendLiveListenAck(socket, frame.commandId, "started", liveListenStreamId, liveListenGeneration, 1);
+    return;
+  }
+  const fromSeq = command.fromSeq ?? liveListenLocalSeq + 1;
+  const replayable = liveListenLocalRing.filter((chunk) => chunk.seq >= fromSeq);
+  sendLiveListenAck(
+    socket,
+    frame.commandId,
+    replayable.length > 0 || fromSeq > liveListenLocalSeq ? "resumed" : "resumed_with_gap",
+    liveListenStreamId,
+    liveListenGeneration,
+    replayable[0]?.seq ?? liveListenLocalSeq + 1,
+    replayable.length > 0 ? undefined : liveListenLocalSeq + 1,
+  );
+  for (const chunk of replayable) socket.send(chunk.data.slice(0));
+}
+
+function sendLiveListenAck(
+  socket: WebSocket,
+  commandId: string | undefined,
+  status: "started" | "resumed" | "resumed_with_gap" | "stopped",
+  streamId: string | undefined,
+  generation: number | undefined,
+  firstSeq?: number,
+  missingBeforeSeq?: number,
+) {
+  socket.send(JSON.stringify({
+    protocol: "live-listen.device.v1",
+    type: "ack",
+    commandId: commandId ?? randomUUID(),
+    status,
+    streamId,
+    generation,
+    firstSeq,
+    missingBeforeSeq,
+    sentAt: new Date().toISOString(),
+  }));
+}
+
+function liveListenMedia(metadata: TrackMetadata | null) {
+  return {
+    provider: "local" as const,
+    title: metadata?.trackName ?? "System audio",
+    playbackState: "playing" as const,
+  };
+}
+
+function enqueueLiveListenAudioChunk(cfg: Config, samples: Int16Array) {
+  liveListenPcmQueue.push(new Int16Array(samples));
+  liveListenQueuedSamples += samples.length;
+  const chunkSamples = Math.floor(cfg.sampleRate * cfg.channels * LIVE_LISTEN_CHUNK_DURATION_MS / 1000);
+  while (liveListenQueuedSamples >= chunkSamples) {
+    const chunk = drainPcmSamples(chunkSamples);
+    const wav = pcm16Wav(chunk, cfg.sampleRate, cfg.channels);
+    liveListenLocalSeq += 1;
+    liveListenLocalRing.push({ seq: liveListenLocalSeq, data: wav.slice(0) });
+    liveListenLocalRing = liveListenLocalRing.slice(-30);
+    if (liveListenStreamActive && liveListenDeviceSocket?.readyState === WebSocket.OPEN) {
+      liveListenDeviceSocket.send(wav);
+    }
+  }
+}
+
+function drainPcmSamples(sampleCount: number) {
+  const drained = new Int16Array(sampleCount);
+  let offset = 0;
+  while (offset < sampleCount) {
+    const head = liveListenPcmQueue[0];
+    if (!head) break;
+    const take = Math.min(head.length, sampleCount - offset);
+    drained.set(head.subarray(0, take), offset);
+    offset += take;
+    liveListenQueuedSamples -= take;
+    if (take === head.length) {
+      liveListenPcmQueue.shift();
+    } else {
+      liveListenPcmQueue[0] = head.subarray(take);
+    }
+  }
+  return drained;
+}
+
+function pcm16Wav(samples: Int16Array, sampleRate: number, channels: number) {
+  const dataBytes = samples.byteLength;
+  const buffer = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(buffer);
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataBytes, true);
+  const bytes = new Uint8Array(buffer, 44);
+  bytes.set(new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength));
+  return buffer;
+}
+
+function writeAscii(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
 }
 
 main().catch((error) => {

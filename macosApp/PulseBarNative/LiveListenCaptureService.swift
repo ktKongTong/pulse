@@ -7,7 +7,7 @@ import Foundation
 private typealias LiveListenTCCPreflightFunc = @convention(c) (CFString, CFDictionary?) -> Int32
 private typealias LiveListenTCCRequestFunc = @convention(c) (CFString, CFDictionary?, @escaping (Bool) -> Void) -> Void
 
-private enum LiveListenAudioCapturePermissionStatus: String {
+enum LiveListenAudioCapturePermissionStatus: String {
     case authorized
     case denied
     case unknown
@@ -61,12 +61,24 @@ struct LiveListenPCMFrame: Sendable {
     let capturedAt: Date
 }
 
+enum LiveListenMediaStreamPermission: String {
+    case allow
+    case disallow
+}
+
+enum LiveListenMediaPlaybackStatus: String {
+    case playing
+    case paused
+}
+
 protocol LiveListenPCMConsumer: AnyObject, Sendable {
     func consume(_ frame: LiveListenPCMFrame)
 }
 
 @MainActor
 final class LiveListenCaptureModel: ObservableObject {
+    private static let mediaStreamAllowedKey = "PulseBarNative.liveListen.mediaStreamAllowed"
+
     @Published private(set) var sources: [LiveListenCaptureSource] = []
     @Published var selectedSourceId: String = "system"
     @Published private(set) var isCapturing = false
@@ -76,30 +88,115 @@ final class LiveListenCaptureModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var publisherStatusText = "Publisher idle"
     @Published private(set) var publisherStats = LiveListenPublisherStats()
+    @Published private(set) var mediaStreamPermission: LiveListenMediaStreamPermission = .allow
+    @Published private(set) var mediaPlaybackStatus: LiveListenMediaPlaybackStatus = .paused
+    @Published private(set) var mediaPlaybackReason = "no media"
+    @Published private(set) var currentMediaLabel = "-"
+    @Published private(set) var audioCapturePermissionStatus: LiveListenAudioCapturePermissionStatus = .unknown
 
     private var endpoint: LiveListenEndpointConfig?
     private let service = LiveListenCaptureService()
-    private let publisher: LiveListenPublisher = NativeLiveListenPublisher()
+    private let publisher = NativeLiveListenPublisher()
     private var meterTask: Task<Void, Never>?
+    private var startupPermissionTask: Task<Void, Never>?
+    private var lastPublishedMediaSignature: String?
+    private var currentMedia: MediaInfo?
 
     var selectedSource: LiveListenCaptureSource? {
         sources.first { $0.id == selectedSourceId } ?? sources.first
     }
 
+    var serverConnectionText: String {
+        switch publisherStats.connectionState {
+        case .connected:
+            return "connected"
+        default:
+            return "disconnected"
+        }
+    }
+
+    var serverEndpointText: String {
+        endpoint?.baseURL.absoluteString ?? "-"
+    }
+
+    var captureActivityText: String {
+        if !isCapturing { return "idle" }
+        if publisherStats.isSending { return "sending" }
+        if meter.capturedFrames > 0 { return "capturing" }
+        return "starting"
+    }
+
+    var nextReconnectText: String {
+        guard let nextReconnectAt = publisherStats.nextReconnectAt else { return "-" }
+        let seconds = max(0, nextReconnectAt.timeIntervalSince(Date()))
+        if seconds < 1 { return "now" }
+        return String(format: "%.0fs", seconds)
+    }
+
+    var canReconnectServer: Bool {
+        endpoint != nil
+    }
+
     init() {
+        if UserDefaults.standard.object(forKey: Self.mediaStreamAllowedKey) == nil {
+            UserDefaults.standard.set(true, forKey: Self.mediaStreamAllowedKey)
+        }
+        mediaStreamPermission = UserDefaults.standard.bool(forKey: Self.mediaStreamAllowedKey) ? .allow : .disallow
+        publisher.onCommand = { [weak self] command in
+            Task { @MainActor [weak self] in
+                self?.handlePublisherCommand(command)
+            }
+        }
+        publisher.telemetry.onSnapshotChanged = { [weak self] stats, statusText in
+            Task { @MainActor [weak self] in
+                self?.applyPublisherUpdate(stats: stats, publisherStatusText: statusText)
+            }
+        }
         refreshSources()
     }
 
     deinit {
         meterTask?.cancel()
+        startupPermissionTask?.cancel()
+        let publisher = publisher
+        Task { await publisher.stop() }
     }
 
     func updateEndpoint(_ endpoint: LiveListenEndpointConfig?) {
         self.endpoint = endpoint
         if endpoint == nil && !isCapturing {
             publisherStatusText = "Configure a Live Listen endpoint in Settings"
+            Task { await publisher.stop() }
         } else if !isCapturing {
             publisherStatusText = "Publisher idle"
+            if let endpoint {
+                Task { [weak self] in
+                    await self?.connectPublisher(endpoint: endpoint, roomId: "live-listen:owner", deviceId: "owner")
+                }
+            }
+        }
+    }
+
+    func requestAudioCapturePermissionAtStartup() {
+        guard startupPermissionTask == nil else { return }
+        startupPermissionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let initialStatus = service.audioCapturePermissionStatus()
+            audioCapturePermissionStatus = initialStatus
+            appendLiveListenCaptureDebugLog("startup audio permission begin status=\(initialStatus.rawValue)")
+            do {
+                try await service.ensureAudioCapturePermissionForUI()
+                let status = service.audioCapturePermissionStatus()
+                audioCapturePermissionStatus = status
+                appendLiveListenCaptureDebugLog("startup audio permission ok status=\(status.rawValue)")
+            } catch {
+                let status = service.audioCapturePermissionStatus()
+                audioCapturePermissionStatus = status
+                errorMessage = error.localizedDescription
+                publisherStatusText = "Audio capture permission required"
+                appendLiveListenCaptureDebugLog("startup audio permission failed status=\(status.rawValue) error=\(error.localizedDescription)")
+            }
+            startupPermissionTask = nil
         }
     }
 
@@ -107,6 +204,67 @@ final class LiveListenCaptureModel: ObservableObject {
         sources = service.availableSources()
         if !sources.contains(where: { $0.id == selectedSourceId }) {
             selectedSourceId = sources.first?.id ?? "system"
+        }
+    }
+
+    func updateCurrentMedia(_ media: MediaInfo?) {
+        let signature = Self.mediaSignature(media)
+        guard signature != lastPublishedMediaSignature else { return }
+        lastPublishedMediaSignature = signature
+        currentMedia = media
+        mediaPlaybackStatus = media?.isPlaying == true ? .playing : .paused
+        if let media {
+            currentMediaLabel = media.artist.isEmpty ? media.title : "\(media.title) - \(media.artist)"
+            mediaPlaybackReason = media.isPlaying ? "playing" : "paused"
+        } else {
+            currentMediaLabel = "-"
+            mediaPlaybackReason = "no playable media"
+        }
+
+        if mediaStreamPermission == .allow {
+            publisher.sendMediaUpdate(media)
+        } else {
+            publisher.sendMediaStateUnavailable(
+                reason: "live_listen_disabled",
+                message: "Media stream disabled by device owner."
+            )
+        }
+        if isCapturing && (mediaStreamPermission != .allow || media?.isPlaying != true) {
+            let stopReason = mediaStreamPermission == .allow ? "no_playable_media" : "live_listen_disabled"
+            appendLiveListenCaptureDebugLog("media stream stopped during capture reason=\(stopReason) media=\(media?.title ?? "nil")")
+            service.stop()
+            meterTask?.cancel()
+            meterTask = nil
+            publisher.stopStreamingAndNotify(reason: stopReason)
+            isCapturing = false
+            statusText = mediaStreamPermission == .allow ? "Media stopped" : "Media stream disabled"
+            publisherStatusText = publisher.statusText
+        }
+    }
+
+    func setMediaStreamAllowed(_ allowed: Bool) {
+        let next: LiveListenMediaStreamPermission = allowed ? .allow : .disallow
+        guard next != mediaStreamPermission else { return }
+        mediaStreamPermission = next
+        UserDefaults.standard.set(allowed, forKey: Self.mediaStreamAllowedKey)
+        if allowed {
+            publisher.sendMediaUpdate(currentMedia)
+            publisherStatusText = publisher.statusText
+        } else {
+            publisher.sendMediaStateUnavailable(
+                reason: "live_listen_disabled",
+                message: "Media stream disabled by device owner."
+            )
+            if isCapturing {
+                appendLiveListenCaptureDebugLog("owner disabled media stream during capture")
+                service.stop()
+                meterTask?.cancel()
+                meterTask = nil
+                publisher.stopStreamingAndNotify(reason: "live_listen_disabled")
+                isCapturing = false
+                statusText = "Media stream disabled"
+            }
+            publisherStatusText = publisher.statusText
         }
     }
 
@@ -168,8 +326,8 @@ final class LiveListenCaptureModel: ObservableObject {
         }
     }
 
-    func startNativeStream() {
-        appendLiveListenCaptureDebugLog("startNativeStream called isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoint=\(endpoint?.baseURL.absoluteString ?? "nil")")
+    func startNativeStream(roomId: String = "live-listen:owner", deviceId: String = "owner") {
+        appendLiveListenCaptureDebugLog("startNativeStream called room=\(roomId) device=\(deviceId) isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoint=\(endpoint?.baseURL.absoluteString ?? "nil")")
         guard !isCapturing, let selectedSource else {
             appendLiveListenCaptureDebugLog("startNativeStream ignored isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil")")
             return
@@ -180,10 +338,22 @@ final class LiveListenCaptureModel: ObservableObject {
             appendLiveListenCaptureDebugLog("startNativeStream missing endpoint")
             return
         }
+        guard mediaStreamPermission == .allow else {
+            publisher.stopStreamingAndNotify(reason: "live_listen_disabled")
+            publisherStatusText = "Media stream permission disallowed"
+            appendLiveListenCaptureDebugLog("startNativeStream rejected permission=\(mediaStreamPermission.rawValue)")
+            return
+        }
+        guard mediaPlaybackStatus == .playing else {
+            publisher.stopStreamingAndNotify(reason: "no_playable_media")
+            publisherStatusText = "No playing media"
+            appendLiveListenCaptureDebugLog("startNativeStream rejected playback=\(mediaPlaybackStatus.rawValue) reason=\(mediaPlaybackReason)")
+            return
+        }
         errorMessage = nil
         statusText = "Starting stream…"
-        publisherStatusText = "Starting native publisher…"
-        publisherStats = LiveListenPublisherStats()
+        publisherStatusText = "Connecting Live Listen server…"
+        publisherStats = publisher.stats
         isCapturing = true
         meter = LiveListenCaptureMeter()
 
@@ -193,31 +363,35 @@ final class LiveListenCaptureModel: ObservableObject {
             var publisherStarted = false
             do {
                 let publisherConfig = LiveListenPublisherConfig(
-                    roomId: "room-test-1",
-                    deviceId: Host.current().localizedName ?? "macos-host",
+                    roomId: roomId,
+                    deviceId: deviceId,
                     baseURL: endpoint.baseURL,
                     workspaceId: endpoint.workspaceId,
                     apiKey: endpoint.apiKey
                 )
-                appendLiveListenCaptureDebugLog("audio permission check begin")
-                try await service.ensureAudioCapturePermissionForUI()
-                appendLiveListenCaptureDebugLog("audio permission check ok")
+                appendLiveListenCaptureDebugLog("audio permission preflight begin")
+                try service.ensureAudioCapturePermissionForBackgroundStart()
+                appendLiveListenCaptureDebugLog("audio permission preflight ok")
+                try await publisher.connect(config: publisherConfig)
+                publisherStats = publisher.stats
+                publisherStatusText = publisher.statusText
+                publisherStarted = true
                 appendLiveListenCaptureDebugLog("capture begin before publisher source=\(selectedSource.name)")
                 let stream = try await service.capture(source: selectedSource, pcmConsumer: publisher)
                 appendLiveListenCaptureDebugLog("capture stream returned")
-                statusText = "Opening \(selectedSource.name)…"
+                statusText = "Waiting for \(selectedSource.name) audio…"
                 publisherStatusText = publisher.statusText
                 for try await update in stream {
-                    if !publisherStarted {
-                        appendLiveListenCaptureDebugLog("first capture update frames=\(update.meter.capturedFrames) nonSilent=\(update.meter.nonSilentSamples); publisher.start begin base=\(endpoint.baseURL.absoluteString) workspace=\(endpoint.workspaceId)")
-                        try await publisher.start(config: publisherConfig)
-                        appendLiveListenCaptureDebugLog("publisher.start ok after capture")
-                        publisherStarted = true
-                    }
                     meter = update.meter
-                    statusText = publisherStarted ? "Streaming \(selectedSource.name)…" : update.statusText
-                    publisherStats = publisher.stats
+                    let stats = publisher.stats
+                    publisherStats = stats
                     publisherStatusText = publisher.statusText
+                    statusText = Self.streamStatusText(
+                        sourceName: selectedSource.name,
+                        captureStatus: update.statusText,
+                        publisherStarted: publisherStarted,
+                        publisherStats: stats
+                    )
                 }
                 publisherStatusText = publisher.statusText
             } catch {
@@ -226,9 +400,124 @@ final class LiveListenCaptureModel: ObservableObject {
                 statusText = "Stream failed"
                 publisherStatusText = "Publisher failed"
             }
-            await publisher.stop()
+            publisher.stopStreaming()
             isCapturing = false
         }
+    }
+
+    func reconnectServer() {
+        guard endpoint != nil else {
+            publisherStatusText = "Configure a Live Listen endpoint in Settings"
+            return
+        }
+        publisherStatusText = "Manual reconnect requested"
+        Task { [weak self] in
+            do {
+                try await self?.publisher.reconnectNow()
+            } catch {
+                await MainActor.run {
+                    self?.errorMessage = error.localizedDescription
+                    self?.publisherStatusText = self?.publisher.statusText ?? "Reconnect failed"
+                    self?.publisherStats = self?.publisher.stats ?? LiveListenPublisherStats()
+                }
+            }
+        }
+    }
+
+    private func handlePublisherCommand(_ command: LiveListenPublisherCommand) {
+        switch command {
+        case let .start(preferredProvider, preferredBundleId):
+            if isCapturing { return }
+            selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
+            startNativeStream()
+        case .stop:
+            stopCapture()
+        }
+    }
+
+    private func connectPublisher(endpoint: LiveListenEndpointConfig, roomId: String, deviceId: String) async {
+        let config = LiveListenPublisherConfig(
+            roomId: roomId,
+            deviceId: deviceId,
+            baseURL: endpoint.baseURL,
+            workspaceId: endpoint.workspaceId,
+            apiKey: endpoint.apiKey
+        )
+        do {
+            try await publisher.connect(config: config)
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                publisherStatusText = publisher.statusText
+                publisherStats = publisher.stats
+            }
+        }
+    }
+
+    private func applyPublisherUpdate(stats: LiveListenPublisherStats, publisherStatusText: String) {
+        self.publisherStats = stats
+        self.publisherStatusText = publisherStatusText
+        if isCapturing && stats.connectionState == .failed {
+            appendLiveListenCaptureDebugLog("publisher failed during capture; stopping capture error=\(stats.lastErrorMessage ?? "-")")
+            service.stop()
+            meterTask?.cancel()
+            meterTask = nil
+            publisher.stopStreaming()
+            isCapturing = false
+            statusText = "Live Listen connection failed"
+            return
+        }
+        if isCapturing {
+            statusText = Self.streamStatusText(
+                sourceName: selectedSource?.name ?? "selected source",
+                captureStatus: statusText,
+                publisherStarted: true,
+                publisherStats: stats
+            )
+        }
+    }
+
+    private static func streamStatusText(
+        sourceName: String,
+        captureStatus: String,
+        publisherStarted: Bool,
+        publisherStats: LiveListenPublisherStats
+    ) -> String {
+        guard publisherStarted else { return captureStatus }
+        switch publisherStats.connectionState {
+        case .connecting:
+            return "Connecting Live Listen server…"
+        case .connected:
+            if publisherStats.isSending {
+                return "Sending \(sourceName) audio…"
+            }
+            return "Capturing \(sourceName)…"
+        case .reconnecting:
+            return "Reconnecting Live Listen server…"
+        case .failed:
+            return "Live Listen connection failed"
+        case .stopping:
+            return "Stopping stream…"
+        case .stopped:
+            return "Stream stopped"
+        case .idle:
+            return "Preparing stream…"
+        }
+    }
+
+    private static func mediaSignature(_ media: MediaInfo?) -> String {
+        guard let media else { return "none" }
+        return [
+            media.id,
+            media.providerId,
+            media.source,
+            media.title,
+            media.artist,
+            media.album ?? "",
+            media.link ?? "",
+            String(media.durationSeconds ?? 0),
+            media.isPlaying ? "playing" : "paused",
+        ].joined(separator: "|")
     }
 
 
@@ -249,7 +538,7 @@ final class LiveListenCaptureModel: ObservableObject {
         service.stop()
         meterTask?.cancel()
         meterTask = nil
-        Task { await publisher.stop() }
+        publisher.stopStreaming()
         isCapturing = false
         statusText = "Stopped"
         publisherStatusText = publisher.statusText
@@ -300,19 +589,33 @@ final class LiveListenCaptureService: @unchecked Sendable {
 
     @MainActor
     func ensureAudioCapturePermissionForUI() async throws {
-        NSApp.activate(ignoringOtherApps: true)
         let status = Self.preflightAudioCapturePermission()
         appendLiveListenCaptureServiceLog("audio-capture ui permission=\(status.rawValue)")
         if status == .authorized { return }
         if status == .denied {
             throw LiveListenCaptureError.audioCapturePermissionDenied
         }
+        NSApp.activate(ignoringOtherApps: true)
         if let granted = await Self.requestAudioCapturePermissionWithTimeout(seconds: 15) {
             appendLiveListenCaptureServiceLog("audio-capture ui permission requested granted=\(granted)")
             if granted { return }
             throw LiveListenCaptureError.audioCapturePermissionNotGranted
         }
         appendLiveListenCaptureServiceLog("audio-capture ui permission request timed out")
+        throw LiveListenCaptureError.audioCapturePermissionNotGranted
+    }
+
+    func audioCapturePermissionStatus() -> LiveListenAudioCapturePermissionStatus {
+        Self.preflightAudioCapturePermission()
+    }
+
+    func ensureAudioCapturePermissionForBackgroundStart() throws {
+        let status = Self.preflightAudioCapturePermission()
+        appendLiveListenCaptureServiceLog("audio-capture background permission=\(status.rawValue)")
+        if status == .authorized { return }
+        if status == .denied {
+            throw LiveListenCaptureError.audioCapturePermissionDenied
+        }
         throw LiveListenCaptureError.audioCapturePermissionNotGranted
     }
 

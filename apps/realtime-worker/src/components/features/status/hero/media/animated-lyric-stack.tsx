@@ -25,6 +25,10 @@ function lineKey(line: LyricLine) {
 function buildStackItems(cue: LyricCue): LyricStackItem[] {
   const items: LyricStackItem[] = [];
 
+  if (!cue.previous && !cue.current && !cue.next) {
+    return items;
+  }
+
   if (cue.previous) {
     items.push({
       key: lineKey(cue.previous),
@@ -33,28 +37,22 @@ function buildStackItems(cue: LyricCue): LyricStackItem[] {
     });
   }
 
-  items.push({
-    key: cue.current ? lineKey(cue.current) : "lyrics-placeholder",
-    text: cue.current?.text ?? "Lyrics start soon.",
-    role: "current",
-  });
+  const currentLine = cue.current ?? cue.next;
+  if (currentLine) {
+    items.push({
+      key: lineKey(currentLine),
+      text: currentLine.text,
+      role: "current",
+    });
+  }
 
-  if (cue.next) {
+  if (cue.next && cue.current) {
     items.push({
       key: lineKey(cue.next),
       text: cue.next.text,
       role: "next",
     });
   }
-
-  if (items.length === 0) {
-    items.push({
-      key: 'no-lyric',
-      text: '暂无歌词',
-      role: "current",
-    });
-  }
-
 
   return items;
 }
@@ -159,6 +157,8 @@ function resolveTextClassName(role: LyricRole) {
 export function AnimatedLyricStack(props: AnimatedLyricStackProps) {
   const shouldReduceMotion = useReducedMotion() ?? false;
   const items = useMemo(() => buildStackItems(props.cue), [props.cue]);
+
+  if (items.length === 0) return null;
 
   return (
     <div className="relative h-12 w-full overflow-hidden">

@@ -1,17 +1,16 @@
 import {
-  LiveListenHostHeartbeatRequestSchema,
-  LiveListenHostStartRequestSchema,
-  LiveListenHostStopRequestSchema,
+  LIVE_LISTEN_DEVICE_PROTOCOL_V1,
   type LiveListenAudioSession,
   type LiveListenClock,
   type LiveListenMedia,
   type LiveListenSnapshot,
   LiveListenSnapshotSchema,
-  LiveListenTokenResponseSchema,
   type LiveListenTokenResponse,
 } from "@pulse/realtime-protocol";
 
-import { liveListenDefaults } from "./live-listen";
+import { fetchLiveListenSnapshot, liveListenDefaults } from "./live-listen";
+
+let deviceSocket: WebSocket | null = null;
 
 export async function startLiveListenHost(init: {
   apiKey: string;
@@ -21,22 +20,29 @@ export async function startLiveListenHost(init: {
   audio?: LiveListenAudioSession;
   signal?: AbortSignal;
 }): Promise<LiveListenTokenResponse> {
-  const defaults = liveListenDefaults();
-  const payload = LiveListenHostStartRequestSchema.parse({
-    workspaceId: init.workspaceId ?? defaults.workspaceId,
-    roomId: init.roomId ?? defaults.roomId,
-    hostDeviceId: init.hostDeviceId,
-    requestedAt: new Date().toISOString(),
-    audio: init.audio,
-  });
-  const response = await fetch("/api/v1/live-listen/host/start", {
-    method: "POST",
-    headers: hostHeaders(init.apiKey),
-    body: JSON.stringify(payload),
-    signal: init.signal,
-  });
-  if (!response.ok) throw new Error(`live_listen_host_start_failed:${response.status}`);
-  return LiveListenTokenResponseSchema.parse(await response.json());
+  const socket = await openDeviceSession(init);
+  socket.send(JSON.stringify({
+    protocol: LIVE_LISTEN_DEVICE_PROTOCOL_V1,
+    type: "device.hello",
+    deviceId: init.hostDeviceId,
+    sentAt: new Date().toISOString(),
+    capabilities: {
+      binaryAudio: false,
+      localRingBuffer: false,
+    },
+    mediaState: {
+      permission: "allow",
+      playback: "playing",
+      capture: "no-capture",
+      media: {
+        provider: "local",
+        title: init.audio?.roomName ?? "Live Listen host audio",
+        playbackState: "playing",
+      },
+    },
+  }));
+  const snapshot = await fetchSnapshot(init);
+  return legacyTokenResponse(snapshot, init.hostDeviceId);
 }
 
 export async function heartbeatLiveListenHost(init: {
@@ -49,24 +55,20 @@ export async function heartbeatLiveListenHost(init: {
   clock?: LiveListenClock;
   signal?: AbortSignal;
 }): Promise<LiveListenSnapshot> {
-  const defaults = liveListenDefaults();
-  const payload = LiveListenHostHeartbeatRequestSchema.parse({
-    workspaceId: init.workspaceId ?? defaults.workspaceId,
-    roomId: init.roomId ?? defaults.roomId,
-    hostDeviceId: init.hostDeviceId,
+  const socket = await openDeviceSession(init);
+  socket.send(JSON.stringify({
+    protocol: LIVE_LISTEN_DEVICE_PROTOCOL_V1,
+    type: "media.updated",
+    deviceId: init.hostDeviceId,
     sentAt: new Date().toISOString(),
-    audio: init.audio,
-    media: init.media,
+    media: init.media ?? {
+      provider: "local",
+      title: init.audio?.roomName ?? "Live Listen host audio",
+      playbackState: "playing",
+    },
     clock: init.clock,
-  });
-  const response = await fetch("/api/v1/live-listen/host/heartbeat", {
-    method: "POST",
-    headers: hostHeaders(init.apiKey),
-    body: JSON.stringify(payload),
-    signal: init.signal,
-  });
-  if (!response.ok) throw new Error(`live_listen_host_heartbeat_failed:${response.status}`);
-  return LiveListenSnapshotSchema.parse(await response.json());
+  }));
+  return fetchSnapshot(init);
 }
 
 export async function stopLiveListenHost(init: {
@@ -77,27 +79,82 @@ export async function stopLiveListenHost(init: {
   reason?: string;
   signal?: AbortSignal;
 }): Promise<LiveListenSnapshot> {
-  const defaults = liveListenDefaults();
-  const payload = LiveListenHostStopRequestSchema.parse({
-    workspaceId: init.workspaceId ?? defaults.workspaceId,
-    roomId: init.roomId ?? defaults.roomId,
-    hostDeviceId: init.hostDeviceId,
-    stoppedAt: new Date().toISOString(),
-    reason: init.reason,
-  });
-  const response = await fetch("/api/v1/live-listen/host/stop", {
-    method: "POST",
-    headers: hostHeaders(init.apiKey),
-    body: JSON.stringify(payload),
-    signal: init.signal,
-  });
-  if (!response.ok) throw new Error(`live_listen_host_stop_failed:${response.status}`);
-  return LiveListenSnapshotSchema.parse(await response.json());
+  const socket = deviceSocket;
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({
+      protocol: LIVE_LISTEN_DEVICE_PROTOCOL_V1,
+      type: "stream.stopped",
+      streamId: "stream_unknown",
+      generation: 1,
+      reason: "manual_stop",
+      sentAt: new Date().toISOString(),
+    }));
+    socket.close(1000, init.reason ?? "manual_stop");
+  }
+  deviceSocket = null;
+  return fetchSnapshot(init);
 }
 
-function hostHeaders(apiKey: string) {
+async function openDeviceSession(init: {
+  apiKey: string;
+  workspaceId?: string;
+  roomId?: string;
+  hostDeviceId: string;
+  signal?: AbortSignal;
+}) {
+  if (deviceSocket && deviceSocket.readyState === WebSocket.OPEN) return deviceSocket;
+
+  const defaults = liveListenDefaults();
+  const params = new URLSearchParams();
+  params.set("workspaceId", init.workspaceId ?? defaults.workspaceId);
+  params.set("roomId", init.roomId ?? defaults.roomId);
+  params.set("deviceId", init.hostDeviceId);
+  params.set("apiKey", init.apiKey);
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/live-listen/device-session?${params}`);
+  deviceSocket = socket;
+  await new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      socket.close(1000, "aborted");
+      reject(new Error("live_listen_device_session_aborted"));
+    };
+    init.signal?.addEventListener("abort", abort, { once: true });
+    socket.addEventListener("open", () => {
+      init.signal?.removeEventListener("abort", abort);
+      resolve();
+    }, { once: true });
+    socket.addEventListener("error", () => {
+      init.signal?.removeEventListener("abort", abort);
+      reject(new Error("live_listen_device_session_ws_error"));
+    }, { once: true });
+    socket.addEventListener("close", () => {
+      if (deviceSocket === socket) deviceSocket = null;
+    });
+  });
+  return socket;
+}
+
+async function fetchSnapshot(init: {
+  workspaceId?: string;
+  roomId?: string;
+  signal?: AbortSignal;
+}) {
+  return LiveListenSnapshotSchema.parse(await fetchLiveListenSnapshot(init));
+}
+
+function legacyTokenResponse(snapshot: LiveListenSnapshot, participantId: string): LiveListenTokenResponse {
   return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
+    protocol: "live-listen.server.v1",
+    workspaceId: snapshot.workspaceId,
+    roomId: snapshot.roomId,
+    snapshot,
+    token: {
+      transport: "cloudflare-realtime",
+      sessionId: `pulse:${snapshot.workspaceId}:${snapshot.roomId}`,
+      participantId,
+      role: "host",
+      token: "device-session",
+      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    },
   };
 }

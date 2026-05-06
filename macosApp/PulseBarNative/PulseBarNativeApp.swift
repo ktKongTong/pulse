@@ -8,6 +8,7 @@ final class PulseBarNativeAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         monitor.start()
         focusPulseBarDashboardWindow()
+        monitor.requestLiveListenAudioCapturePermissionAtStartup()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

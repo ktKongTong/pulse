@@ -1,12 +1,13 @@
 import {
-  LiveListenListenerJoinRequestSchema,
-  LiveListenListenerLeaveRequestSchema,
+  LiveListenMediaSessionEnvelopeSchema,
   LiveListenSnapshotSchema,
-  LiveListenStreamEnvelopeSchema,
-  LiveListenTokenResponseSchema,
+  type LiveListenMediaSessionEnvelope,
   type LiveListenSnapshot,
-  type LiveListenStreamEnvelope,
-  type LiveListenTokenResponse,
+} from "@pulse/realtime-protocol";
+
+export type {
+  LiveListenMediaSessionEnvelope,
+  LiveListenSnapshot,
 } from "@pulse/realtime-protocol";
 
 const DEFAULT_WORKSPACE_ID = "koft";
@@ -32,70 +33,31 @@ export async function fetchLiveListenSnapshot(init?: {
   return LiveListenSnapshotSchema.parse(await response.json());
 }
 
-export async function joinLiveListen(init?: {
+export function openLiveListenMediaSession(init: {
   workspaceId?: string;
   roomId?: string;
-  participantId?: string;
-  signal?: AbortSignal;
-}): Promise<LiveListenTokenResponse> {
-  const defaults = liveListenDefaults();
-  const payload = LiveListenListenerJoinRequestSchema.parse({
-    workspaceId: init?.workspaceId ?? defaults.workspaceId,
-    roomId: init?.roomId ?? defaults.roomId,
-    participantId: init?.participantId ?? liveListenParticipantId(),
-    joinedAt: new Date().toISOString(),
-  });
-  const response = await fetch("/api/v1/live-listen/listener/join", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-    signal: init?.signal,
-  });
-  if (!response.ok) throw new Error(`live_listen_join_failed:${response.status}`);
-  return LiveListenTokenResponseSchema.parse(await response.json());
-}
-
-export async function leaveLiveListen(init?: {
-  workspaceId?: string;
-  roomId?: string;
-  participantId?: string;
-  signal?: AbortSignal;
-}): Promise<LiveListenSnapshot> {
-  const defaults = liveListenDefaults();
-  const payload = LiveListenListenerLeaveRequestSchema.parse({
-    workspaceId: init?.workspaceId ?? defaults.workspaceId,
-    roomId: init?.roomId ?? defaults.roomId,
-    participantId: init?.participantId ?? liveListenParticipantId(),
-    leftAt: new Date().toISOString(),
-  });
-  const response = await fetch("/api/v1/live-listen/listener/leave", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-    signal: init?.signal,
-  });
-  if (!response.ok) throw new Error(`live_listen_leave_failed:${response.status}`);
-  return LiveListenSnapshotSchema.parse(await response.json());
-}
-
-export function openLiveListenEvents(init: {
-  workspaceId?: string;
-  roomId?: string;
-  onMessage: (event: LiveListenStreamEnvelope) => void;
+  onMessage: (event: LiveListenMediaSessionEnvelope) => void;
   onError?: (event: Event) => void;
+  onClose?: (event: CloseEvent) => void;
+  onOpen?: (event: Event) => void;
 }) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const params = liveListenParams(init);
-  const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/live-listen/events?${params}`);
+  const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/live-listen/media-session?${params}`);
   socket.addEventListener("message", (event) => {
-    const parsed = LiveListenStreamEnvelopeSchema.safeParse(JSON.parse(String(event.data)));
+    if (typeof event.data !== "string") return;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    const parsed = LiveListenMediaSessionEnvelopeSchema.safeParse(payload);
     if (parsed.success) init.onMessage(parsed.data);
   });
   if (init.onError) socket.addEventListener("error", init.onError);
+  if (init.onClose) socket.addEventListener("close", init.onClose);
+  if (init.onOpen) socket.addEventListener("open", init.onOpen);
   return socket;
 }
 
@@ -106,6 +68,12 @@ export function liveListenParticipantId() {
   const next = `web-${crypto.randomUUID()}`;
   window.localStorage.setItem(key, next);
   return next;
+}
+
+export function liveListenResumeToken(token?: string) {
+  const key = "pulse.liveListen.resumeToken";
+  if (token) window.localStorage.setItem(key, token);
+  return window.localStorage.getItem(key) ?? undefined;
 }
 
 function liveListenParams(init?: { workspaceId?: string; roomId?: string }) {

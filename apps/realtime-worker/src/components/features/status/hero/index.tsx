@@ -1,11 +1,11 @@
 import { FocusSwitcher } from "./focus/focus-switcher";
 import { MediaState } from "./media/media-v2";
 import { useOwnerStatus } from "@pulse/realtime-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function StatusHero() {
-  const { data: ownerStatus } = useOwnerStatus();
-  const currentAppId = ownerStatus?.focus?.id ?? 'idle'
-  const currentAppLabel = ownerStatus?.focus?.name ?? 'Idle';
+  const ownerStatusQuery = useOwnerStatus();
+  const focus = ownerStatusQuery.data?.focus;
   return (
     <div className="flex flex-col gap-6 max-w-5xl items-center text-center w-full px-4 sm:px-6 md:px-10 pt-10 pb-6">
       <div className="relative w-full">
@@ -22,7 +22,11 @@ export function StatusHero() {
             想要理解
             <br/>这荒诞而迷人的世界
           </div>
-          <FocusSwitcher className="my-2 h-8 w-50" appId={currentAppId} appLabel={currentAppLabel} />
+          {ownerStatusQuery.loading ? (
+            <Skeleton className="my-2 h-8 w-50 rounded-full" />
+          ) : focus ? (
+            <FocusSwitcher className="my-2 h-8 w-50" appId={focus.id} appLabel={focus.name} />
+          ) : null}
 
           <MediaState className="hidden md:block" />
         </div>

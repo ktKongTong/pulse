@@ -8,10 +8,9 @@ const DEBUG_WINDOW_MS = 2_000;
 
 export function LiveListenDebugPanel() {
   const liveListen = useLiveListen();
-  const isConnected = liveListen.connectionState === "connected" || liveListen.connectionState === "listening";
   const receiverRawHistory = useAudioWaveform({
     audioTrack: liveListen.remoteAudioTrack,
-    enabled: isConnected,
+    enabled: liveListen.streaming,
     bins: 48,
   });
   const sender = useSenderWaveform();
@@ -37,14 +36,16 @@ export function LiveListenDebugPanel() {
           <audio ref={liveListen.audioRef} autoPlay playsInline />
           <button
             type="button"
-            disabled={!liveListen.canJoin || liveListen.connectionState === "joining"}
+            disabled={!liveListen.canJoin || liveListen.command === "joining"}
             onClick={liveListen.join}
             className="rounded-full bg-emerald-400 px-4 py-2 font-medium uppercase tracking-[0.16em] text-stone-950 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {liveListen.connectionState === "joining" ? "Joining" : isConnected ? "Connected" : "Join receiver"}
+            {liveListen.command === "joining" ? "Joining" : liveListen.streaming ? "Streaming" : "Join receiver"}
           </button>
-          <span>receiver state: {liveListen.connectionState}</span>
-          <span>snapshot: {liveListen.snapshot?.state ?? "offline"}</span>
+          <span>ws: {liveListen.ws}</span>
+          <span>streamable: {liveListen.streamable.value ? "true" : liveListen.streamable.reason}</span>
+          <span>streaming: {liveListen.streaming ? "true" : "false"}</span>
+          <span>audioFlow: {liveListen.snapshot?.audioFlow.state ?? "none"}</span>
           <span>bitrate: {formatNullable(liveListen.audioStats.bitrateKbps, "kbps")}</span>
           <span>jitter: {formatNullable(liveListen.audioStats.jitterMs, "ms")}</span>
           <span>lost: {liveListen.audioStats.packetsLost ?? "-"}</span>

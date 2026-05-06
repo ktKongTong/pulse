@@ -31,7 +31,7 @@ struct LiveListenCapturePane: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Live Listen Capture")
                 .font(.largeTitle.weight(.semibold))
-            Text("Capture Spotify, Apple Music, or app audio without changing the current output device. Native stream mode sends 1-second WAV chunks to the MediaRoom WebSocket relay; WebRTC is not used.")
+            Text("Capture Spotify, Apple Music, or app audio without changing the current output device. The native app keeps one server connection from the Settings endpoint; web listener demand controls when capture starts and stops.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -141,18 +141,26 @@ struct LiveListenCapturePane: View {
                     StatPill(title: "last chunk", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.lastChunkBytes), countStyle: .binary))
                     StatPill(title: "accepted", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.acceptedBytes), countStyle: .binary))
                     StatPill(title: "dropped", value: "\(model.publisherStats.droppedFrames)")
-                    StatPill(title: "transport", value: "WebSocket")
                 }
 
                 HStack(spacing: 18) {
-                    StatPill(title: "ws state", value: model.publisherStats.connectionState.rawValue)
-                    StatPill(title: "sending", value: model.publisherStats.isSending ? "yes" : "no")
+                    StatPill(title: "server", value: model.serverConnectionText)
+                    StatPill(title: "permission", value: model.mediaStreamPermission.rawValue)
+                    StatPill(title: "playback", value: model.mediaPlaybackStatus.rawValue)
+                    StatPill(title: "capture", value: model.captureActivityText)
+                }
+
+                HStack(spacing: 18) {
+                    StatPill(title: "next reconnect", value: model.nextReconnectText)
                     StatPill(title: "queue seq", value: queueRange(model.publisherStats))
                     StatPill(title: "last send", value: formatAge(model.publisherStats.lastSendAt))
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    DetailRow(title: "WS URL", value: model.publisherStats.webSocketURL ?? "-")
+                    DetailRow(title: "Endpoint", value: model.serverEndpointText)
+                    DetailRow(title: "Audio capture permission", value: model.audioCapturePermissionStatus.rawValue)
+                    DetailRow(title: "Current media", value: model.currentMediaLabel)
+                    DetailRow(title: "Playback reason", value: model.mediaPlaybackReason)
                     DetailRow(title: "Connected", value: formatAge(model.publisherStats.lastConnectedAt))
                     DetailRow(title: "Disconnected", value: formatAge(model.publisherStats.lastDisconnectedAt))
                     DetailRow(title: "Last error", value: model.publisherStats.lastErrorMessage ?? "-")
@@ -173,6 +181,11 @@ struct LiveListenCapturePane: View {
                 Text("串流由 Web 侧一起听请求触发，通过 server device control 自动 start/stop。这里是观测面板，不再提供手动 Start。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle("Allow Media Stream", isOn: Binding(
+                    get: { model.mediaStreamPermission == .allow },
+                    set: { model.setMediaStreamAllowed($0) }
+                ))
+                .toggleStyle(.switch)
                 HStack(spacing: 12) {
                     Button("Refresh Sources") { monitor.prepareLiveListenCapturePane() }
                         .disabled(model.isCapturing)
@@ -183,9 +196,15 @@ struct LiveListenCapturePane: View {
                     }
                     .disabled(model.isCapturing)
                     Button {
+                        model.reconnectServer()
+                    } label: {
+                        Label("Reconnect Server", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!model.canReconnectServer)
+                    Button {
                         monitor.stopDebugNativeLiveListenStream()
                     } label: {
-                        Label("Force Stop", systemImage: "stop.fill")
+                        Label("Stop Capture", systemImage: "stop.fill")
                     }
                     .disabled(!model.isCapturing)
                     if let url = model.lastSampleURL {

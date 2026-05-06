@@ -470,7 +470,7 @@ stream.stopped(no_playable_media)                  // 如果 capture 正在运�
 
 ```text
 Web 点击一起听
-Web 打开 /api/v1/live-listen/session
+Web 通过常驻 /api/v1/live-listen/media-session WS 发送 listen.request
 ```
 
 Server admission：
@@ -647,7 +647,7 @@ enabled  only if mediaPermission=allow and mediaPlayback=playing and ws=on
 disabled otherwise
 ```
 
-即使 Web UI 判断错误，server `/session` 入口仍必须用同样规则 reject。
+即使 Web UI 判断错误，server 在处理 `listen.request` 时仍必须用同样规则 reject。
 
 ## Invariants
 

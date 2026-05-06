@@ -153,7 +153,7 @@ live_listen_disabled 来自 owner/device policy，不来自 playback。
 device_offline 来自 nativeLink disconnected，不来自 playback 或 permission。
 ```
 
-Server `/session` 入口只能在 `admission.state = open` 时 accept。其他情况必须 reject，且不能改变 stream demand，也不能给 Native 发 `stream.start`。
+Server 只在 `media-session` WS 收到 `listen.request` 后尝试 accept listener。`admission.state !== open` 时必须返回 `session.rejected`，保持 WS 继续观测，且不能改变 stream demand，也不能给 Native 发 `stream.start`。
 
 ## 4. StreamDemand
 

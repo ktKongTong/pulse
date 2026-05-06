@@ -3,100 +3,33 @@ import { describe, expect, it } from "vitest";
 import app from "@/api/index";
 import type { Env } from "@/api/config/env";
 
-type StoredState = Record<string, unknown>;
-
 class MemoryLiveListenStub {
-  private state: StoredState = {
-    workspaceId: "pulse-demo",
-    roomId: "live-listen:owner",
-    state: "offline",
-    listenerCount: 0,
-    updatedAt: new Date(0).toISOString(),
-  };
-
   async getSnapshot() {
-    return this.state;
-  }
-
-  async startHost(payload: Record<string, unknown>) {
-    this.state = {
-      ...this.state,
-      state: "starting",
-      hostDeviceId: payload.hostDeviceId,
-      startedAt: payload.requestedAt,
-      updatedAt: payload.requestedAt,
-      audio: payload.audio ?? {
-        transport: "cloudflare-realtime",
-        sessionId: "pulse:pulse-demo:live-listen:owner",
-        mockToken: true,
-      },
-    };
     return {
-      protocol: "live-listen.v1",
-      roomId: "live-listen:owner",
+      protocol: "live-listen.server.v1",
       workspaceId: "pulse-demo",
-      snapshot: this.state,
-      token: {
-        transport: "cloudflare-realtime",
-        sessionId: "pulse:pulse-demo:live-listen:owner",
-        participantId: payload.hostDeviceId,
-        role: "host",
-        token: "mock.host",
-        expiresAt: "2026-04-29T00:15:00.000Z",
-      },
-    };
-  }
-
-  async heartbeatHost(payload: Record<string, unknown>) {
-    this.state = {
-      ...this.state,
-      state: "live",
-      updatedAt: payload.sentAt,
-      media: payload.media,
-      clock: payload.clock,
-    };
-    return this.state;
-  }
-
-  async stopHost(payload: Record<string, unknown>) {
-    this.state = {
-      ...this.state,
-      state: "ended",
-      updatedAt: payload.stoppedAt,
-    };
-    return this.state;
-  }
-
-  async joinListener(payload: Record<string, unknown>) {
-    this.state = {
-      ...this.state,
-      state: this.state.state === "starting" || this.state.state === "live" ? this.state.state : "starting",
-      hostDeviceId: this.state.hostDeviceId ?? "owner",
-      listenerCount: Number(this.state.listenerCount ?? 0) + 1,
-    };
-    return {
-      protocol: "live-listen.v1",
       roomId: "live-listen:owner",
-      workspaceId: "pulse-demo",
-      snapshot: this.state,
-      token: {
-        transport: "cloudflare-realtime",
-        sessionId: "pulse:pulse-demo:live-listen:owner",
-        participantId: payload.participantId,
-        role: "listener",
-        token: "mock.listener",
-        expiresAt: "2026-04-29T00:15:00.000Z",
+      listeners: { activeCount: 0, graceCount: 0, demand: "not-wanted" },
+      nativeLink: { state: "disconnected" },
+      admission: { state: "blocked", reason: "device_offline" },
+      media: { current: null, recent: [], playback: "paused" },
+      streamDemand: { state: "not-wanted", reason: "no-listeners", updatedAt: new Date(0).toISOString() },
+      audioFlow: {
+        state: "none",
+        latestSeq: 0,
+        availableFromSeq: 0,
       },
+      updatedAt: new Date(0).toISOString(),
     };
   }
 
-  async leaveListener(payload: Record<string, unknown>) {
-    this.state = {
-      ...this.state,
-      listenerCount: Math.max(0, Number(this.state.listenerCount ?? 0) - 1),
-      updatedAt: payload.leftAt,
-    };
-    return this.state;
+  fetch(request: Request) {
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("Expected websocket", { status: 426 });
+    }
+    const pair = new WebSocketPair();
+    const [client] = Object.values(pair);
+    return new Response(null, { status: 101, webSocket: client });
   }
 }
 
@@ -112,17 +45,7 @@ function env(): Env {
     AGGREGATE_FLUSH_SECONDS: "15",
     LIVE_LISTEN_ROOM: {
       idFromName: (name: string) => name,
-      get: () => Object.assign(stub, {
-        fetch: (request: Request) => {
-          if (request.headers.get("Upgrade") !== "websocket") {
-            return new Response("Expected websocket", { status: 426 });
-          }
-
-          const pair = new WebSocketPair();
-          const [client] = Object.values(pair);
-          return new Response(null, { status: 101, webSocket: client });
-        },
-      }),
+      get: () => stub,
     },
     ASSETS: {
       fetch: () => Response.json({ fallback: true }, { status: 404 }),
@@ -130,74 +53,33 @@ function env(): Env {
   } as unknown as Env;
 }
 
-function jsonRequest(path: string, body: unknown, init: RequestInit = {}) {
-  return new Request(`https://pulse.test${path}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin: "https://pulse.test",
-      ...init.headers,
-    },
-    body: JSON.stringify(body),
-  });
-}
-
 describe("live listen api", () => {
-  it("routes host start and heartbeat through live listen DO", async () => {
-    const testEnv = env();
-    const start = await app.fetch(
-      jsonRequest(
-        "/v1/live-listen/host/start",
-        {
-          workspaceId: "pulse-demo",
-          roomId: "live-listen:owner",
-          hostDeviceId: "macbook",
-          requestedAt: "2026-04-29T00:00:00.000Z",
-        },
-        { headers: { authorization: "Bearer device-secret" } },
-      ),
-      testEnv,
+  it("returns diagnostic state without changing room state", async () => {
+    const response = await app.fetch(
+      new Request("https://pulse.test/v1/live-listen/state?workspaceId=pulse-demo&roomId=live-listen:owner"),
+      env(),
     );
 
-    expect(start.status).toBe(200);
-    expect((await start.json() as { token: { role: string } }).token.role).toBe("host");
-
-    const heartbeat = await app.fetch(
-      jsonRequest(
-        "/v1/live-listen/host/heartbeat",
-        {
-          workspaceId: "pulse-demo",
-          roomId: "live-listen:owner",
-          hostDeviceId: "macbook",
-          sentAt: "2026-04-29T00:00:01.000Z",
-          media: { title: "Track" },
-          clock: {
-            mediaProgressSeconds: 1,
-            observedAt: "2026-04-29T00:00:01.000Z",
-            sequence: 1,
-          },
-        },
-        { headers: { authorization: "Bearer device-secret" } },
-      ),
-      testEnv,
-    );
-
-    expect(heartbeat.status).toBe(200);
-    expect((await heartbeat.json() as { state: string }).state).toBe("live");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      protocol: "live-listen.server.v1",
+      admission: { state: "blocked", reason: "device_offline" },
+      streamDemand: { state: "not-wanted" },
+    });
   });
 
-  it("requires websocket upgrade for live listen events", async () => {
+  it("requires websocket upgrade for media sessions", async () => {
     const response = await app.fetch(
-      new Request("https://pulse.test/v1/live-listen/events"),
+      new Request("https://pulse.test/v1/live-listen/media-session"),
       env(),
     );
 
     expect(response.status).toBe(426);
   });
 
-  it("routes live listen event websockets to the room DO", async () => {
+  it("routes media-session websockets to the room DO", async () => {
     const response = await app.fetch(
-      new Request("https://pulse.test/v1/live-listen/events", {
+      new Request("https://pulse.test/v1/live-listen/media-session", {
         headers: { Upgrade: "websocket", Origin: "https://pulse.ktlab.io" },
       }),
       env(),
@@ -207,9 +89,9 @@ describe("live listen api", () => {
     expect(response.webSocket).toBeDefined();
   });
 
-  it("allows live listen event websockets from configured secondary origins", async () => {
+  it("allows media-session websockets from configured secondary origins", async () => {
     const response = await app.fetch(
-      new Request("https://pulse.test/v1/live-listen/events", {
+      new Request("https://pulse.test/v1/live-listen/media-session", {
         headers: { Upgrade: "websocket", Origin: "https://pulse.koft.space" },
       }),
       env(),
@@ -219,9 +101,9 @@ describe("live listen api", () => {
     expect(response.webSocket).toBeDefined();
   });
 
-  it("rejects live listen event websockets from unconfigured origins", async () => {
+  it("rejects media-session websockets from unconfigured origins", async () => {
     const response = await app.fetch(
-      new Request("https://pulse.test/v1/live-listen/events", {
+      new Request("https://pulse.test/v1/live-listen/media-session", {
         headers: { Upgrade: "websocket", Origin: "https://evil.test" },
       }),
       env(),
@@ -231,13 +113,10 @@ describe("live listen api", () => {
     expect(await response.json()).toEqual({ error: "origin_not_allowed" });
   });
 
-  it("requires device bearer token for host routes", async () => {
+  it("requires device bearer token for native device sessions", async () => {
     const response = await app.fetch(
-      jsonRequest("/v1/live-listen/host/start", {
-        workspaceId: "pulse-demo",
-        roomId: "live-listen:owner",
-        hostDeviceId: "macbook",
-        requestedAt: "2026-04-29T00:00:00.000Z",
+      new Request("https://pulse.test/v1/live-listen/device-session", {
+        headers: { Upgrade: "websocket" },
       }),
       env(),
     );
@@ -245,52 +124,28 @@ describe("live listen api", () => {
     expect(response.status).toBe(401);
   });
 
-  it("allows same-origin listener joins and returns listener token", async () => {
-    const testEnv = env();
-    await app.fetch(
-      jsonRequest(
-        "/v1/live-listen/host/start",
-        {
-          workspaceId: "pulse-demo",
-          roomId: "live-listen:owner",
-          hostDeviceId: "macbook",
-          requestedAt: "2026-04-29T00:00:00.000Z",
-        },
-        { headers: { authorization: "Bearer device-secret" } },
-      ),
-      testEnv,
-    );
-
+  it("routes authenticated native device sessions to the room DO", async () => {
     const response = await app.fetch(
-      jsonRequest("/v1/live-listen/listener/join", {
-        workspaceId: "pulse-demo",
-        roomId: "live-listen:owner",
-        participantId: "visitor-1",
-        joinedAt: "2026-04-29T00:00:02.000Z",
-      }),
-      testEnv,
-    );
-
-    expect(response.status).toBe(200);
-    const body = await response.json() as { token: { role: string }; snapshot: { listenerCount: number } };
-    expect(body.token.role).toBe("listener");
-    expect(body.snapshot.listenerCount).toBe(1);
-  });
-
-  it("allows listener joins to request an inactive room start", async () => {
-    const response = await app.fetch(
-      jsonRequest("/v1/live-listen/listener/join", {
-        workspaceId: "pulse-demo",
-        roomId: "live-listen:owner",
-        participantId: "visitor-1",
-        joinedAt: "2026-04-29T00:00:02.000Z",
+      new Request("https://pulse.test/v1/live-listen/device-session", {
+        headers: { Upgrade: "websocket", authorization: "Bearer device-secret" },
       }),
       env(),
     );
 
-    expect(response.status).toBe(200);
-    const body = await response.json() as { snapshot: { state: string; listenerCount: number } };
-    expect(body.snapshot.state).toBe("starting");
-    expect(body.snapshot.listenerCount).toBe(1);
+    expect(response.status).toBe(101);
+    expect(response.webSocket).toBeDefined();
   });
+
+  it("routes observer websockets without counting as listener joins", async () => {
+    const response = await app.fetch(
+      new Request("https://pulse.test/v1/live-listen/observe", {
+        headers: { Upgrade: "websocket", Origin: "https://pulse.ktlab.io" },
+      }),
+      env(),
+    );
+
+    expect(response.status).toBe(101);
+    expect(response.webSocket).toBeDefined();
+  });
+
 });

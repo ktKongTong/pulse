@@ -37,19 +37,22 @@ observer telemetry
 Web Listener 只连接一个 WebSocket：
 
 ```text
-WS /api/v1/live-listen/session?workspaceId=koft&roomId=live-listen:owner
+WS /api/v1/live-listen/media-session?workspaceId=koft&roomId=live-listen:owner
 ```
 
 语义：
 
 ```text
-WS open   = Web 请求一起听
-accepted  = listener 注册成功，server 计入 listeners.activeCount
-rejected  = admission blocked，server 返回 reason 并关闭连接
-WS close  = activeCount 减少；如果仍在 grace 内，graceCount 增加
+WS open                 = Web 观测 owner media/session 状态
+media.snapshot.updated  = 当前 native/media/admission/audioFlow 快照
+listen.request          = Web 请求一起听
+session.accepted        = listener 注册成功，server 计入 listeners.activeCount
+session.rejected        = admission blocked，server 返回 reason，WS 不关闭
+listen.stop             = Web 主动停止一起听
+WS close                = 如果已 accepted，activeCount 减少；如果仍在 grace 内，graceCount 增加
 ```
 
-Web 不需要额外发送 join、leave，不需要额外订阅 events，也不需要额外连接媒体接收通道。Web UI 只暴露 `ws`、`streamable`、`streaming` 三个 media 状态事实。
+Web 不再打开第二条 listener WS；点击“一起听”只是在这条常驻 `media-session` WS 上发送 `listen.request`。Web UI 只暴露 `ws`、`streamable`、`streaming` 三个 media 状态事实。
 
 ### 1.2 Native 单房间连接
 
@@ -162,7 +165,7 @@ Native 断太久无法补齐          generation + 1
 ### Web Listener
 
 ```text
-WS /api/v1/live-listen/session?workspaceId=koft&roomId=live-listen:owner&participantId=listener_abc&resumeToken=resume_xxx&fromSeq=120
+WS /api/v1/live-listen/media-session?workspaceId=koft&roomId=live-listen:owner
 ```
 
 query：
@@ -170,11 +173,31 @@ query：
 ```text
 workspaceId     optional，默认 Worker env.WORKSPACE_ID
 roomId          optional，默认 live-listen:owner
-participantId   optional，首次连接可省略，server 生成
-resumeToken     optional，重连恢复用
-streamId        optional，重连恢复指定 stream
-sourceGeneration optional，重连恢复指定 generation
-fromSeq         optional，请求从哪个音频 seq 补发
+```
+
+一起听请求通过同一条 WS 的 client message 发送：
+
+```ts
+type LiveListenMediaSessionClientMessage =
+  | {
+      protocol: "live-listen.media-session.v1";
+      type: "listen.request";
+      participantId: string;
+      resumeToken?: string;
+      streamId?: string;
+      sourceGeneration?: number;
+      fromSeq?: number;
+    }
+  | {
+      protocol: "live-listen.media-session.v1";
+      type: "listen.stop";
+      participantId?: string;
+    }
+  | {
+      protocol: "live-listen.media-session.v1";
+      type: "ack";
+      seq: number;
+    };
 ```
 
 ### Pulse Native
@@ -231,7 +254,7 @@ Room 只有在 server `admission.state = open` 时才接受 session。其他情�
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "session.rejected",
   "reason": "device_offline",
   "snapshot": {
@@ -248,7 +271,7 @@ Room 只有在 server `admission.state = open` 时才接受 session。其他情�
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "session.rejected",
   "reason": "device_offline",
   "snapshot": {
@@ -270,7 +293,7 @@ UI 可以展示“设备离线，最近听过”。
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "session.rejected",
   "reason": "live_listen_disabled",
   "snapshot": {
@@ -286,7 +309,7 @@ UI 可以展示“设备离线，最近听过”。
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "session.rejected",
   "reason": "no_playable_media"
 }
@@ -296,7 +319,7 @@ UI 可以展示“设备离线，最近听过”。
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "session.rejected",
   "reason": "capture_permission_missing"
 }
@@ -306,7 +329,7 @@ UI 可以展示“设备离线，最近听过”。
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "session.accepted",
   "participantId": "listener_abc",
   "resumeToken": "resume_xxx",
@@ -340,15 +363,15 @@ audioFlow.state = starting
 
 然后向 Native 下发 `stream.start` 或 `stream.resume`。
 
-## 6. Web Listener session 协议
+## 6. Web Listener media-session 协议
 
 协议名：
 
 ```text
-live-listen.session.v1
+live-listen.media-session.v1
 ```
 
-Session event 类型：
+Media-session listener event 类型：
 
 ```ts
 type LiveListenSessionEvent =
@@ -367,17 +390,19 @@ type LiveListenSessionEvent =
 ### 6.1 首次连接
 
 ```text
-WS /api/v1/live-listen/session?workspaceId=koft&roomId=live-listen:owner
+WS /api/v1/live-listen/media-session?workspaceId=koft&roomId=live-listen:owner
 ```
 
 server：
 
-1. 检查 Room `admission`。
-2. 不可用则发送 `session.rejected` 并关闭。
-3. 可用则创建 `participantId` 和 `resumeToken`。
-4. 注册 listener，`listeners.activeCount += 1`。
-5. 返回 `session.accepted`。
-6. 如果需要，启动或恢复 Native stream。
+1. WS 建立后立即发送 `media.snapshot.updated`，只用于观测状态。
+2. Web 点击“一起听”后发送 `listen.request`。
+3. Server 检查 Room `admission`。
+4. 不可用则发送 `session.rejected`，但保持 `media-session` WS 继续观测。
+5. 可用则绑定 `participantId` 和 `resumeToken`。
+6. 注册 listener，`listeners.activeCount += 1`。
+7. 返回 `session.accepted`。
+8. 如果需要，启动或恢复 Native stream。
 
 ### 6.2 Web 短断
 
@@ -425,14 +450,28 @@ streaming=true
 ### 6.3 Web 重连恢复
 
 ```text
-WS /api/v1/live-listen/session?workspaceId=koft&roomId=live-listen:owner&participantId=listener_abc&resumeToken=resume_xxx&streamId=stream_abc&sourceGeneration=2&fromSeq=240
+WS /api/v1/live-listen/media-session?workspaceId=koft&roomId=live-listen:owner
+```
+
+WS 恢复到 `on` 后，Web 在同一条 `media-session` WS 上发送：
+
+```json
+{
+  "protocol": "live-listen.media-session.v1",
+  "type": "listen.request",
+  "participantId": "listener_abc",
+  "resumeToken": "resume_xxx",
+  "streamId": "stream_abc",
+  "sourceGeneration": 2,
+  "fromSeq": 240
+}
 ```
 
 如果恢复成功：
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "session.resumed",
   "participantId": "listener_abc",
   "streamId": "stream_abc",
@@ -456,7 +495,7 @@ Room 随后补发 ring buffer 内缺失的 chunk。
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "replay.miss",
   "streamId": "stream_abc",
   "generation": 2,
@@ -470,7 +509,7 @@ Room 随后补发 ring buffer 内缺失的 chunk。
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "audio.chunk",
   "workspaceId": "koft",
   "roomId": "live-listen:owner",
@@ -502,7 +541,7 @@ nextStartTime = start + decodedBuffer.duration;
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "stream.gap",
   "reason": "native_reconnect_buffer_miss",
   "streamId": "stream_abc",
@@ -1060,7 +1099,7 @@ Web Listener 收到：
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "stream.ended",
   "reason": "live_listen_disabled",
   "message": "The host disabled Live Listen."
@@ -1120,7 +1159,7 @@ Room 必须在新 generation 音频前发送 `stream.transition`。这个事件�
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "stream.transition",
   "reason": "generation_changed",
   "streamId": "stream_abc",
@@ -1133,7 +1172,7 @@ Room 必须在新 generation 音频前发送 `stream.transition`。这个事件�
 
 ```json
 {
-  "protocol": "live-listen.session.v1",
+  "protocol": "live-listen.media-session.v1",
   "type": "audio.chunk",
   "streamId": "stream_abc",
   "generation": 3,

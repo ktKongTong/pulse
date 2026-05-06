@@ -193,15 +193,22 @@ function patchOpusSenderSdp(opusFmtp: string) {
   const originalSetLocalDescription = RTCPeerConnection.prototype.setLocalDescription;
   if ((originalSetLocalDescription as { __pulseLiveListenPatched?: boolean }).__pulseLiveListenPatched) return;
 
-  const patchedSetLocalDescription: RTCPeerConnection["setLocalDescription"] = function setLocalDescription(description) {
+  const patchedSetLocalDescription: RTCPeerConnection["setLocalDescription"] = function setLocalDescription(
+    this: RTCPeerConnection,
+    description,
+  ) {
     if (description?.type === "offer" && description.sdp?.includes("opus/48000")) {
       const tunedDescription = new RTCSessionDescription({
         type: description.type,
         sdp: tuneOpusSdp(description.sdp, opusFmtp),
       });
-      return originalSetLocalDescription.call(this, tunedDescription);
+      return Reflect.apply(originalSetLocalDescription, this, [tunedDescription]) as ReturnType<
+        RTCPeerConnection["setLocalDescription"]
+      >;
     }
-    return originalSetLocalDescription.call(this, description);
+    return Reflect.apply(originalSetLocalDescription, this, [description]) as ReturnType<
+      RTCPeerConnection["setLocalDescription"]
+    >;
   };
 
   (patchedSetLocalDescription as { __pulseLiveListenPatched?: boolean }).__pulseLiveListenPatched = true;
@@ -222,8 +229,8 @@ function setPeerConnectionRelayPolicy(forceRelay: boolean) {
       const constructorRef = window.RTCPeerConnection as typeof RTCPeerConnection & {
         __pulseLiveListenForceRelay?: boolean;
       };
-      const nextConfiguration = constructorRef.__pulseLiveListenForceRelay
-        ? { ...(configuration ?? {}), iceTransportPolicy: "relay" satisfies RTCIceTransportPolicy }
+      const nextConfiguration: RTCConfiguration | undefined = constructorRef.__pulseLiveListenForceRelay
+        ? { ...(configuration ?? {}), iceTransportPolicy: "relay" }
         : configuration;
       return new OriginalPeerConnection(nextConfiguration);
     } as unknown as typeof RTCPeerConnection;

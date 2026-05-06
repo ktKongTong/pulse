@@ -25,6 +25,8 @@ struct LiveListenPublisherStats: Equatable, Sendable {
     var webSocketURL: String?
     var lastConnectedAt: Date?
     var lastDisconnectedAt: Date?
+    var nextReconnectAt: Date?
+    var reconnectDelaySeconds: Double?
     var lastSendAt: Date?
     var lastErrorMessage: String?
     var acceptedFrames: UInt64 = 0
@@ -41,17 +43,62 @@ struct LiveListenPublisherStats: Equatable, Sendable {
     var droppedChunks: UInt64 = 0
     var replayedChunks: UInt64 = 0
     var reconnectCount: UInt64 = 0
+    var reconnectAttempt: UInt64 = 0
     var chunksSent: UInt64 = 0
     var bytesSent: UInt64 = 0
     var sendBitrateKbps: Double?
     var lastChunkBytes: UInt64 = 0
 }
 
+enum LiveListenPublisherCommand: Sendable {
+    case start(preferredProvider: String?, preferredBundleId: String?)
+    case stop
+}
+
+enum LiveListenPublisherEvent: Sendable {
+    case statsChanged(LiveListenPublisherStats, String)
+    case commandReceived(LiveListenPublisherCommand)
+}
+
+final class LiveListenPublisherTelemetry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var latestStats = LiveListenPublisherStats()
+    private var latestStatusText = "Native WebSocket publisher idle"
+    var onSnapshotChanged: (@Sendable (LiveListenPublisherStats, String) -> Void)?
+
+    var stats: LiveListenPublisherStats {
+        lock.withLock { latestStats }
+    }
+
+    var statusText: String {
+        lock.withLock { latestStatusText }
+    }
+
+    func record(_ event: LiveListenPublisherEvent) {
+        switch event {
+        case let .statsChanged(stats, statusText):
+            lock.withLock {
+                latestStats = stats
+                latestStatusText = statusText
+            }
+            onSnapshotChanged?(stats, statusText)
+        case .commandReceived:
+            break
+        }
+    }
+}
+
 protocol LiveListenPublisher: LiveListenPCMConsumer {
     var statusText: String { get }
     var stats: LiveListenPublisherStats { get }
+    var telemetry: LiveListenPublisherTelemetry { get }
 
-    func start(config: LiveListenPublisherConfig) async throws
+    func connect(config: LiveListenPublisherConfig) async throws
+    func reconnectNow() async throws
+    func sendMediaUpdate(_ media: MediaInfo?)
+    func sendMediaStateUnavailable(reason: String, message: String?)
+    func stopStreaming()
+    func stopStreamingAndNotify(reason: String)
     func stop() async
 }
 
@@ -71,7 +118,13 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
     private var pendingChunks: [QueuedChunk] = []
     private var nextChunkSequence: UInt64 = 1
     private var isSending = false
+    private var streamActive = false
+    private var streamId: String?
+    private var generation: Int?
+    private var latestMedia: MediaInfo?
     private var reconnectScheduled = false
+    private var reconnectAttempt = 0
+    private var reconnectTask: Task<Void, Never>?
     private var mutableStats = LiveListenPublisherStats()
     private var mutableStatusText = "Native WebSocket publisher idle"
     private var chunkFrameCount: UInt32 = 48_000
@@ -79,41 +132,72 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
     private var lastBitrateSampleAt = Date()
     private var lastBitrateSampleBytes: UInt64 = 0
     private let maxQueuedChunks = 30
+    let telemetry = LiveListenPublisherTelemetry()
+    var onCommand: (@Sendable (LiveListenPublisherCommand) -> Void)?
 
     var statusText: String {
-        lock.withLock { mutableStatusText }
+        telemetry.statusText
     }
 
     var stats: LiveListenPublisherStats {
-        lock.withLock { mutableStats }
+        telemetry.stats
     }
 
-    func start(config: LiveListenPublisherConfig) async throws {
-        appendLiveListenPublisherDebugLog("ws publisher.start begin base=\(config.baseURL.absoluteString) room=room-test-1")
+    func connect(config: LiveListenPublisherConfig) async throws {
+        var oldHandles: (URLSessionWebSocketTask?, URLSession?) = (nil, nil)
+        let shouldConnect = lock.withLock {
+            if isRunning, currentConfig == config, webSocketTask != nil {
+                return false
+            }
+            oldHandles = (webSocketTask, session)
+            webSocketTask = nil
+            session = nil
+            return true
+        }
+        if !shouldConnect {
+            emitStatsChanged()
+            return
+        }
+        oldHandles.0?.cancel(with: .goingAway, reason: "publisher reconnecting".data(using: .utf8))
+        oldHandles.1?.invalidateAndCancel()
+
+        appendLiveListenPublisherDebugLog("ws publisher.connect begin base=\(config.baseURL.absoluteString) room=\(config.roomId)")
         lock.withLock {
             currentConfig = config
             pcmBuffer.removeAll(keepingCapacity: true)
             pendingChunks.removeAll(keepingCapacity: true)
             nextChunkSequence = 1
             isSending = false
+            streamActive = false
+            streamId = nil
+            generation = nil
             reconnectScheduled = false
+            reconnectAttempt = 0
+            reconnectTask?.cancel()
+            reconnectTask = nil
             mutableStats = LiveListenPublisherStats()
             mutableStats.connectionState = .connecting
             mutableStats.maxQueuedChunks = UInt64(maxQueuedChunks)
-            mutableStatusText = "Connecting WebSocket media room…"
+            mutableStatusText = "Connecting Live Listen server…"
             chunkFrameCount = config.sampleRate
             chunkByteCount = Int(config.sampleRate * config.channels) * MemoryLayout<Int16>.size
             lastBitrateSampleAt = Date()
             lastBitrateSampleBytes = 0
             isRunning = true
         }
+        emitStatsChanged()
 
-        try await connectWebSocket(config: config, countReconnect: false)
+        do {
+            try await connectWebSocket(config: config, countReconnect: false)
+        } catch {
+            recordConnectFailure(error)
+            scheduleReconnect(reason: error.localizedDescription)
+        }
     }
 
     func consume(_ frame: LiveListenPCMFrame) {
         let chunks: [QueuedChunk] = lock.withLock {
-            guard isRunning else {
+            guard isRunning, streamActive || mutableStats.connectionState == .reconnecting else {
                 mutableStats.droppedFrames += UInt64(frame.frameCount)
                 return []
             }
@@ -145,6 +229,7 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         }
 
         enqueueChunks(chunks)
+        emitStatsChanged()
     }
 
     func stop() async {
@@ -167,12 +252,166 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
             webSocketTask = nil
             self.session = nil
             isSending = false
+            streamActive = false
+            streamId = nil
+            generation = nil
             reconnectScheduled = false
+            reconnectAttempt = 0
+            reconnectTask?.cancel()
+            reconnectTask = nil
             return (task, session)
         }
 
         handles.0?.cancel(with: .normalClosure, reason: "publisher stopped".data(using: .utf8))
         handles.1?.invalidateAndCancel()
+        emitStatsChanged()
+    }
+
+    func reconnectNow() async throws {
+        let reconnect: (LiveListenPublisherConfig, URLSessionWebSocketTask?, URLSession?)? = lock.withLock {
+            guard let config = currentConfig else { return nil }
+            isRunning = true
+            let task = webSocketTask
+            let session = self.session
+            webSocketTask = nil
+            self.session = nil
+            streamActive = false
+            isSending = false
+            reconnectScheduled = false
+            reconnectAttempt = 0
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            mutableStats.connectionState = .reconnecting
+            mutableStats.nextReconnectAt = nil
+            mutableStats.reconnectDelaySeconds = nil
+            mutableStats.reconnectAttempt = 0
+            mutableStatusText = "Manual reconnect requested"
+            return (config, task, session)
+        }
+        guard let reconnect else { return }
+        reconnect.1?.cancel(with: .goingAway, reason: "manual reconnect".data(using: .utf8))
+        reconnect.2?.invalidateAndCancel()
+        emitStatsChanged()
+        do {
+            try await connectWebSocket(config: reconnect.0, countReconnect: true)
+        } catch {
+            recordConnectFailure(error)
+            scheduleReconnect(reason: error.localizedDescription)
+        }
+    }
+
+    func stopStreaming() {
+        lock.withLock {
+            streamActive = false
+            isSending = false
+            pcmBuffer.removeAll(keepingCapacity: true)
+            pendingChunks.removeAll(keepingCapacity: true)
+            mutableStats.isSending = false
+            mutableStats.queuedChunks = 0
+            mutableStats.queuedBytes = 0
+            mutableStats.queuedFirstSequence = nil
+            mutableStats.queuedLastSequence = nil
+            mutableStatusText = webSocketTask == nil ? "Native stream stopped" : "Native stream stopped; device session ready"
+        }
+        emitStatsChanged()
+    }
+
+    func stopStreamingAndNotify(reason: String) {
+        let payload: (URLSessionWebSocketTask, String, Int)? = lock.withLock {
+            guard let task = webSocketTask, let streamId, let generation else {
+                return nil
+            }
+            return (task, streamId, generation)
+        }
+        if let payload {
+            sendJSON([
+                "protocol": "live-listen.device.v1",
+                "type": "stream.stopped",
+                "streamId": payload.1,
+                "generation": payload.2,
+                "reason": reason,
+                "sentAt": ISO8601DateFormatter().string(from: Date()),
+            ], task: payload.0, label: "stream stopped")
+        }
+        stopStreaming()
+    }
+
+    func sendMediaUpdate(_ media: MediaInfo?) {
+        let snapshot: (URLSessionWebSocketTask, LiveListenPublisherConfig)? = lock.withLock {
+            latestMedia = media
+            guard let task = webSocketTask, let config = currentConfig else { return nil }
+            return (task, config)
+        }
+        guard let snapshot else { return }
+        let now = ISO8601DateFormatter().string(from: Date())
+        guard let media else {
+            sendJSON([
+                "protocol": "live-listen.device.v1",
+                "type": "media.state.updated",
+                "deviceId": snapshot.1.deviceId,
+                "sentAt": now,
+                "mediaState": [
+                    "permission": "allow",
+                    "playback": "paused",
+                    "capture": "no-capture",
+                    "reason": "no_playable_media",
+                ],
+            ], task: snapshot.0, label: "media state no playable media")
+            return
+        }
+        let mediaPayload = Self.liveListenMediaPayload(media)
+        sendJSON([
+            "protocol": "live-listen.device.v1",
+            "type": "media.updated",
+            "deviceId": snapshot.1.deviceId,
+            "sentAt": now,
+            "media": mediaPayload,
+            "clock": [
+                "mediaProgressSeconds": max(0, media.progressSeconds),
+                "observedAt": now,
+                "sequence": max(0, Int(Date().timeIntervalSince1970 * 1000)),
+            ],
+        ], task: snapshot.0, label: "media updated")
+        var mediaState: [String: Any] = [
+            "permission": "allow",
+            "playback": media.isPlaying ? "playing" : "paused",
+            "capture": "no-capture",
+            "media": mediaPayload,
+        ]
+        if !media.isPlaying {
+            mediaState["reason"] = "no_playable_media"
+            mediaState["message"] = "Current media is not playing."
+        }
+        sendJSON([
+            "protocol": "live-listen.device.v1",
+            "type": "media.state.updated",
+            "deviceId": snapshot.1.deviceId,
+            "sentAt": now,
+            "mediaState": mediaState,
+        ], task: snapshot.0, label: "media state \(media.isPlaying ? "playing" : "paused")")
+    }
+
+    func sendMediaStateUnavailable(reason: String, message: String? = nil) {
+        let snapshot: (URLSessionWebSocketTask, LiveListenPublisherConfig)? = lock.withLock {
+            guard let task = webSocketTask, let config = currentConfig else { return nil }
+            return (task, config)
+        }
+        guard let snapshot else { return }
+        let now = ISO8601DateFormatter().string(from: Date())
+        var mediaState: [String: Any] = [
+            "permission": "disallow",
+            "playback": "paused",
+            "capture": "no-capture",
+            "reason": reason,
+        ]
+        if let message { mediaState["message"] = message }
+        sendJSON([
+            "protocol": "live-listen.device.v1",
+            "type": "media.state.updated",
+            "deviceId": snapshot.1.deviceId,
+            "sentAt": now,
+            "mediaState": mediaState,
+        ], task: snapshot.0, label: "media state \(reason)")
     }
 
     nonisolated func urlSession(
@@ -185,6 +424,7 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
             mutableStats.connectionState = .connected
             mutableStats.lastConnectedAt = Date()
         }
+        emitStatsChanged()
     }
 
     nonisolated func urlSession(
@@ -193,21 +433,28 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
         reason: Data?
     ) {
-        appendLiveListenPublisherDebugLog("ws didClose code=\(closeCode.rawValue)")
-        lock.withLock {
-            mutableStats.lastDisconnectedAt = Date()
-            if isRunning && mutableStats.connectionState != .stopping && mutableStats.connectionState != .stopped {
-                mutableStats.connectionState = .reconnecting
-            }
-        }
+        let reasonText = reason.flatMap { String(data: $0, encoding: .utf8) }
+        appendLiveListenPublisherDebugLog("ws didClose code=\(closeCode.rawValue) reason=\(reasonText ?? "-")")
+        handleWebSocketDisconnected(
+            task: webSocketTask,
+            session: session,
+            error: nil,
+            reason: reasonText.map { "closed code=\(closeCode.rawValue) \($0)" } ?? "closed code=\(closeCode.rawValue)",
+            shouldAutoReconnect: Self.shouldAutoReconnect(closeCode: closeCode.rawValue)
+        )
     }
 
-    private func mediaRoomProducerURL(baseURL: URL, roomId: String) throws -> URL {
+    private func deviceSessionURL(config: LiveListenPublisherConfig) throws -> URL {
+        let baseURL = config.baseURL
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         guard components != nil else { throw LiveListenPublisherError.invalidWebSocketURL }
         components?.scheme = baseURL.scheme == "https" ? "wss" : "ws"
-        components?.path = "/api/v1/media-room/\(roomId)"
-        components?.queryItems = [URLQueryItem(name: "role", value: "producer")]
+        components?.path = "/api/v1/live-listen/device-session"
+        components?.queryItems = [
+            URLQueryItem(name: "workspaceId", value: config.workspaceId),
+            URLQueryItem(name: "roomId", value: config.roomId),
+            URLQueryItem(name: "deviceId", value: config.deviceId),
+        ]
         guard let url = components?.url else { throw LiveListenPublisherError.invalidWebSocketURL }
         return url
     }
@@ -228,25 +475,70 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
             case let .success(message):
                 if case let .string(text) = message {
                     self.appendLiveListenPublisherDebugLog("ws control \(text)")
-                    if self.shouldStopForControlMessage(text) {
-                        self.stopForRemoteReason("producer.stop")
-                        return
-                    }
+                    self.handleControlMessage(text, task: task)
                 }
                 self.receiveControlLoop(task)
             case let .failure(error):
                 self.appendLiveListenPublisherDebugLog("ws receive failed \(error.localizedDescription)")
+                self.handleWebSocketDisconnected(
+                    task: task,
+                    session: nil,
+                    error: error,
+                    reason: "receive failed",
+                    shouldAutoReconnect: true
+                )
             }
         }
     }
 
 
-    private func shouldStopForControlMessage(_ text: String) -> Bool {
+    private func handleControlMessage(_ text: String, task: URLSessionWebSocketTask) {
         guard let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return false
+            return
         }
-        return object["type"] as? String == "producer.stop"
+        if object["type"] as? String == "producer.stop" {
+            stopForRemoteReason("producer.stop")
+            return
+        }
+        guard object["type"] as? String == "command",
+              let commandId = object["commandId"] as? String,
+              let command = object["command"] as? [String: Any],
+              let commandType = command["type"] as? String else {
+            return
+        }
+        switch commandType {
+        case "stream.start", "stream.resume":
+            let nextStreamId = command["streamId"] as? String
+            let nextGeneration = command["generation"] as? Int
+            let firstSeq = Self.uint64Value(command["fromSeq"])
+            let capture = command["capture"] as? [String: Any]
+            let preferredProvider = capture?["preferredProvider"] as? String
+            let preferredBundleId = capture?["preferredBundleId"] as? String
+            lock.withLock {
+                streamActive = true
+                streamId = nextStreamId
+                generation = nextGeneration
+                mutableStatusText = commandType == "stream.resume" ? "Native stream resume accepted" : "Native stream start accepted"
+            }
+            sendAck(task: task, commandId: commandId, status: commandType == "stream.resume" ? "resumed" : "started", streamId: nextStreamId, generation: nextGeneration, firstSeq: firstSeq)
+            emitStatsChanged()
+            let publisherCommand = LiveListenPublisherCommand.start(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
+            telemetry.record(.commandReceived(publisherCommand))
+            onCommand?(publisherCommand)
+            flushPendingChunks()
+        case "stream.stop":
+            lock.withLock {
+                streamActive = false
+                mutableStatusText = "Native stream stopped by room"
+            }
+            sendAck(task: task, commandId: commandId, status: "stopped", streamId: command["streamId"] as? String ?? streamId, generation: generation, firstSeq: nil)
+            emitStatsChanged()
+            telemetry.record(.commandReceived(.stop))
+            onCommand?(.stop)
+        default:
+            sendAck(task: task, commandId: commandId, status: "rejected", streamId: command["streamId"] as? String, generation: command["generation"] as? Int, firstSeq: nil)
+        }
     }
 
     private func stopForRemoteReason(_ reason: String) {
@@ -266,25 +558,34 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
             self.session = nil
             currentConfig = nil
             isSending = false
+            streamActive = false
+            streamId = nil
+            generation = nil
             reconnectScheduled = false
             return (task, session)
         }
         handles.0?.cancel(with: .normalClosure, reason: reason.data(using: .utf8))
         handles.1?.invalidateAndCancel()
         appendLiveListenPublisherDebugLog("ws stopped by server reason=\(reason)")
+        emitStatsChanged()
     }
 
     private func connectWebSocket(config: LiveListenPublisherConfig, countReconnect: Bool) async throws {
-        let wsURL = try mediaRoomProducerURL(baseURL: config.baseURL, roomId: "room-test-1")
+        let wsURL = try deviceSessionURL(config: config)
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
-        let task = session.webSocketTask(with: wsURL)
+        var request = URLRequest(url: wsURL)
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        let task = session.webSocketTask(with: request)
         lock.withLock {
             self.session = session
             webSocketTask = task
             mutableStats.webSocketURL = wsURL.absoluteString
             mutableStats.connectionState = countReconnect ? .reconnecting : .connecting
             mutableStats.lastErrorMessage = nil
-            mutableStatusText = countReconnect ? "Reconnecting WebSocket media room…" : "Connecting WebSocket media room…"
+            mutableStats.isSending = false
+            isSending = false
+            streamActive = false
+            mutableStatusText = countReconnect ? "Reconnecting Live Listen device session…" : "Connecting Live Listen device session…"
             if countReconnect { mutableStats.reconnectCount += 1 }
         }
         task.resume()
@@ -293,11 +594,67 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         lock.withLock {
             mutableStats.connectionState = .connected
             mutableStats.lastConnectedAt = Date()
-            mutableStatusText = "Native WebSocket publisher connected"
+            mutableStatusText = "Native device session connected"
             reconnectScheduled = false
+            reconnectAttempt = 0
+            mutableStats.nextReconnectAt = nil
+            mutableStats.reconnectDelaySeconds = nil
+            mutableStats.reconnectAttempt = 0
+            reconnectTask = nil
         }
+        emitStatsChanged()
+        sendHello(task: task, config: config)
         receiveControlLoop(task)
-        flushPendingChunks()
+    }
+
+    private func handleWebSocketDisconnected(
+        task: URLSessionWebSocketTask?,
+        session closedSession: URLSession?,
+        error: Error?,
+        reason: String,
+        shouldAutoReconnect: Bool
+    ) {
+        var shouldReconnect = false
+        lock.withLock {
+            if let task, let currentTask = webSocketTask, currentTask !== task {
+                return
+            }
+            if let task, webSocketTask === task {
+                webSocketTask = nil
+            }
+            if let closedSession, session === closedSession {
+                session = nil
+            } else if task != nil {
+                session?.invalidateAndCancel()
+                session = nil
+            }
+            streamActive = false
+            isSending = false
+            mutableStats.isSending = false
+            if !shouldAutoReconnect {
+                pcmBuffer.removeAll(keepingCapacity: true)
+                pendingChunks.removeAll(keepingCapacity: true)
+                updateQueueStatsLocked()
+            }
+            mutableStats.lastDisconnectedAt = Date()
+            if let error {
+                mutableStats.lastErrorMessage = error.localizedDescription
+            } else {
+                mutableStats.lastErrorMessage = reason
+            }
+            if shouldAutoReconnect && isRunning && mutableStats.connectionState != .stopping && mutableStats.connectionState != .stopped {
+                mutableStats.connectionState = .reconnecting
+                mutableStatusText = "Live Listen server disconnected; reconnecting…"
+                shouldReconnect = true
+            } else if mutableStats.connectionState != .stopped {
+                mutableStats.connectionState = .failed
+                mutableStatusText = "Live Listen server disconnected"
+            }
+        }
+        if shouldReconnect {
+            scheduleReconnect(reason: reason)
+        }
+        emitStatsChanged()
     }
 
     private func enqueueChunks(_ chunks: [QueuedChunk]) {
@@ -315,16 +672,17 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
             mutableStatusText = webSocketTask == nil
                 ? "Queueing chunks while WebSocket reconnects"
                 : "Queued WebSocket audio chunks"
-            shouldFlush = webSocketTask != nil && !isSending
+            shouldFlush = webSocketTask != nil && streamActive && !isSending
         }
         if shouldFlush { flushPendingChunks() }
+        emitStatsChanged()
     }
 
     private func flushPendingChunks() {
         let next: QueuedChunk?
         let task: URLSessionWebSocketTask?
         lock.lock()
-        guard isRunning, !isSending, let currentTask = webSocketTask, !pendingChunks.isEmpty else {
+        guard isRunning, streamActive, !isSending, let currentTask = webSocketTask, !pendingChunks.isEmpty else {
             lock.unlock()
             return
         }
@@ -372,33 +730,57 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
             self.lock.unlock()
 
             if shouldReconnect {
-                self.scheduleReconnect()
+                self.scheduleReconnect(reason: "send failed")
             } else if shouldContinue {
                 self.flushPendingChunks()
             }
+            self.emitStatsChanged()
         }
     }
 
-    private func scheduleReconnect() {
-        let config: LiveListenPublisherConfig? = lock.withLock {
+    private func scheduleReconnect(reason: String) {
+        let scheduled: (LiveListenPublisherConfig, UInt64, UInt64)? = lock.withLock {
             guard isRunning, !reconnectScheduled, let config = currentConfig else { return nil }
+            let delay = Self.reconnectDelaySeconds(forAttempt: reconnectAttempt)
+            reconnectAttempt += 1
             reconnectScheduled = true
+            mutableStats.reconnectAttempt = UInt64(reconnectAttempt)
+            mutableStats.reconnectDelaySeconds = Double(delay)
+            mutableStats.nextReconnectAt = Date().addingTimeInterval(TimeInterval(delay))
             mutableStats.connectionState = .reconnecting
-            mutableStatusText = "WebSocket disconnected; reconnect scheduled"
-            return config
+            mutableStatusText = "Reconnect scheduled in \(delay)s: \(reason)"
+            return (config, delay, UInt64(reconnectAttempt))
         }
-        guard let config else { return }
-        Task.detached { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
+        guard let scheduled else { return }
+        emitStatsChanged()
+        let task = Task.detached { [weak self] in
+            try? await Task.sleep(for: .seconds(scheduled.1))
             guard let self else { return }
+            if Task.isCancelled { return }
             do {
-                try await self.connectWebSocket(config: config, countReconnect: true)
+                try await self.connectWebSocket(config: scheduled.0, countReconnect: true)
             } catch {
                 self.appendLiveListenPublisherDebugLog("ws reconnect failed \(error.localizedDescription)")
-                self.lock.withLock { self.reconnectScheduled = false }
-                self.scheduleReconnect()
+                self.lock.withLock {
+                    self.reconnectScheduled = false
+                    self.mutableStats.lastErrorMessage = error.localizedDescription
+                }
+                self.scheduleReconnect(reason: error.localizedDescription)
             }
         }
+        lock.withLock {
+            reconnectTask = task
+        }
+    }
+
+    private func recordConnectFailure(_ error: Error) {
+        lock.withLock {
+            mutableStats.connectionState = .reconnecting
+            mutableStats.lastDisconnectedAt = Date()
+            mutableStats.lastErrorMessage = error.localizedDescription
+            mutableStatusText = "Live Listen server unavailable; reconnecting…"
+        }
+        emitStatsChanged()
     }
 
     private func updateQueueStatsLocked() {
@@ -417,6 +799,95 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         mutableStats.sendBitrateKbps = Double(deltaBytes * 8) / elapsed / 1000
         lastBitrateSampleAt = now
         lastBitrateSampleBytes = mutableStats.bytesSent
+    }
+
+    private static func reconnectDelaySeconds(forAttempt attempt: Int) -> UInt64 {
+        let schedule: [UInt64] = [1, 2, 5, 10, 30, 60]
+        return schedule[min(attempt, schedule.count - 1)]
+    }
+
+    private static func shouldAutoReconnect(closeCode: Int) -> Bool {
+        switch closeCode {
+        case 1000, 1003, 1008:
+            return false
+        default:
+            return true
+        }
+    }
+
+    private func emitStatsChanged() {
+        let snapshot = lock.withLock { (mutableStats, mutableStatusText) }
+        telemetry.record(.statsChanged(snapshot.0, snapshot.1))
+    }
+
+    private func sendHello(task: URLSessionWebSocketTask, config: LiveListenPublisherConfig) {
+        let now = ISO8601DateFormatter().string(from: Date())
+        let media = lock.withLock { latestMedia }
+        let mediaState: [String: Any]
+        if let media, media.isPlaying {
+            mediaState = [
+                "permission": "allow",
+                "playback": "playing",
+                "capture": "no-capture",
+                "media": Self.liveListenMediaPayload(media),
+            ]
+        } else {
+            mediaState = [
+                "permission": "allow",
+                "playback": "paused",
+                "capture": "no-capture",
+                "reason": "no_playable_media",
+            ]
+        }
+        var payload: [String: Any] = [
+            "protocol": "live-listen.device.v1",
+            "type": "device.hello",
+            "deviceId": config.deviceId,
+            "sentAt": now,
+            "lastSeq": max(0, nextChunkSequence - 1),
+            "capabilities": [
+                "binaryAudio": true,
+                "localRingBuffer": true,
+                "localRingBufferSeconds": 30,
+            ],
+            "mediaState": mediaState,
+        ]
+        if let streamId { payload["lastStreamId"] = streamId }
+        if let generation { payload["lastGeneration"] = generation }
+        sendJSON(payload, task: task, label: "device hello")
+    }
+
+    private func sendAck(
+        task: URLSessionWebSocketTask,
+        commandId: String,
+        status: String,
+        streamId: String?,
+        generation: Int?,
+        firstSeq: UInt64?
+    ) {
+        var payload: [String: Any] = [
+            "protocol": "live-listen.device.v1",
+            "type": "ack",
+            "commandId": commandId,
+            "status": status,
+            "sentAt": ISO8601DateFormatter().string(from: Date()),
+        ]
+        if let streamId { payload["streamId"] = streamId }
+        if let generation { payload["generation"] = generation }
+        if let firstSeq { payload["firstSeq"] = firstSeq }
+        sendJSON(payload, task: task, label: "ack commandId=\(commandId)")
+    }
+
+    private func sendJSON(_ payload: [String: Any], task: URLSessionWebSocketTask, label: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let text = String(data: data, encoding: .utf8) else { return }
+        task.send(.string(text)) { [weak self] error in
+            if let error {
+                self?.appendLiveListenPublisherDebugLog("\(label) failed \(error.localizedDescription)")
+            } else if label == "device hello" || label.hasPrefix("media state") {
+                self?.appendLiveListenPublisherDebugLog("\(label) sent \(text)")
+            }
+        }
     }
 
     private func appendLiveListenPublisherDebugLog(_ message: String) {
@@ -450,6 +921,37 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
         data.append(pcm16)
         return data
     }
+
+    private static func uint64Value(_ value: Any?) -> UInt64? {
+        if let value = value as? UInt64 { return value }
+        if let value = value as? Int, value >= 0 { return UInt64(value) }
+        if let value = value as? NSNumber, value.int64Value >= 0 { return value.uint64Value }
+        return nil
+    }
+
+    private static func liveListenMediaPayload(_ media: MediaInfo) -> [String: Any] {
+        var payload: [String: Any] = [
+            "providerId": media.providerId,
+            "itemType": media.itemType,
+            "trackId": media.id,
+            "title": media.title,
+            "artist": media.artist,
+            "playbackState": media.isPlaying ? "playing" : "paused",
+        ]
+        if let provider = liveListenProvider(media) { payload["provider"] = provider }
+        if let album = media.album, !album.isEmpty { payload["album"] = album }
+        if let artwork = media.artworkURL?.absoluteString, URL(string: artwork) != nil { payload["artworkUrl"] = artwork }
+        if let duration = media.durationSeconds, duration > 0 { payload["durationSeconds"] = duration }
+        if let link = media.link, URL(string: link) != nil { payload["linkUrl"] = link }
+        return payload
+    }
+
+    private static func liveListenProvider(_ media: MediaInfo) -> String? {
+        let raw = "\(media.providerId) \(media.source)".lowercased()
+        if raw.contains("spotify") { return "spotify" }
+        if raw.contains("music") { return "apple-music" }
+        return "other"
+    }
 }
 
 private extension Data {
@@ -477,9 +979,9 @@ enum LiveListenPublisherError: LocalizedError {
         case .missingApiKey:
             return "Missing device API key for Live Listen publisher."
         case .invalidWebSocketURL:
-            return "Invalid MediaRoom WebSocket URL."
+            return "Invalid Live Listen device-session WebSocket URL."
         case .webSocketNotConnected:
-            return "MediaRoom WebSocket did not connect."
+            return "Live Listen device-session WebSocket did not connect."
         }
     }
 }

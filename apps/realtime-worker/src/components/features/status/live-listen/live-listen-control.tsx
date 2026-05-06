@@ -4,31 +4,29 @@ import { Button } from "@/components/ui/button";
 
 export function LiveListenControl({ className }: { className?: string }) {
   const liveListen = useLiveListen();
-  const isListening = liveListen.connectionState === "listening";
-  const isConnected = liveListen.connectionState === "connected" || isListening;
-  const disabled = liveListen.connectionState === "joining";
+  const disabled = liveListen.command === "joining" || (!liveListen.streaming && !liveListen.canJoin);
 
   return (
     <div className={cn("flex items-center gap-2 text-xs", className)}>
       <Button
         disabled={disabled}
-        onClick={isConnected ? liveListen.leave : liveListen.join}
+        onClick={liveListen.streaming ? liveListen.leave : liveListen.join}
         variant={'link'}
         size={'xs'}
         className={cn(
           "",
-          isConnected && "border-emerald-500/40 bg-emerald-50 text-emerald-700",
+          liveListen.streaming && "border-emerald-500/40 bg-emerald-50 text-emerald-700",
         )}
       >
-        {liveListen.connectionState === "joining"
+        {liveListen.command === "joining"
           ? "Joining"
-          : isListening
+          : liveListen.streaming
             ? "Listening"
-            : liveListen.connectionState === "connected"
-              ? "Connected"
+            : liveListen.ws === "half-off"
+              ? "Reconnecting"
               : "一起听"}
       </Button>
-      {liveListen.connectionState !== "idle" ? (
+      {liveListen.streaming || liveListen.ws !== "off" ? (
         <span
           className="text-[10px] uppercase tracking-[0.14em] text-stone-400"
           title={`queued=${liveListen.stats.queuedSeconds.toFixed(2)}s; bytes=${liveListen.stats.receivedBytes}; last=${liveListen.stats.lastChunkBytes}`}
