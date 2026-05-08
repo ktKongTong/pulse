@@ -89,9 +89,25 @@ internal class PulseBarEndpointReporter {
 
     fun updateConfig(config: PulseBarConfig) {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
-        val enabledEndpoints = config.enabledReporterEndpoints()
-        probeEndpoints = enabledEndpoints
-        enabledEndpoints.forEach { endpoint ->
+        val connectedEndpoints = config.connectedReporterEndpoints()
+        probeEndpoints = connectedEndpoints
+        config.endpoints.filter { !it.enabled }.forEach { endpoint ->
+            syncStates[endpoint.id] = EndpointSyncSnapshot(
+                status = "disabled",
+                serverStatus = "unknown",
+                clientStatus = "unknown",
+                lastStatus = "skip:endpoint_disabled"
+            )
+        }
+        config.endpoints.filter { it.enabled && it.disconnected }.forEach { endpoint ->
+            syncStates[endpoint.id] = EndpointSyncSnapshot(
+                status = "disconnected",
+                serverStatus = "unknown",
+                clientStatus = "available",
+                lastStatus = "skip:endpoint_disconnected"
+            )
+        }
+        connectedEndpoints.forEach { endpoint ->
             if (!endpoint.isConfigured()) {
                 markConfigurationBlocked(endpoint)
                 syncStates[endpoint.id] = EndpointSyncSnapshot(
@@ -177,10 +193,21 @@ internal class PulseBarEndpointReporter {
         }
 
         val eventKind = if (shouldSendSnapshot) "snapshot" else "heartbeat"
+        val disconnectedIds = config.endpoints.filter { it.enabled && it.disconnected }.map { it.id }.toSet()
         enabledEndpoints.filter { it.isConfigured() && !isConfigurationBlocked(it) }.forEach { endpoint ->
+            val isDisconnected = endpoint.id in disconnectedIds
+            if (isDisconnected) {
+                syncStates[endpoint.id] = EndpointSyncSnapshot(
+                    status = "disconnected",
+                    serverStatus = "unknown",
+                    clientStatus = "available",
+                    lastStatus = "skip:endpoint_disconnected"
+                )
+            }
             enqueue(
                 endpoint = endpoint,
-                entry = buildJournalEntry(endpoint, snapshot, eventKind)
+                entry = buildJournalEntry(endpoint, snapshot, eventKind),
+                requestReplay = !isDisconnected
             )
         }
         rememberPublishedSnapshot(snapshot, signature, nowMillis)
@@ -189,7 +216,7 @@ internal class PulseBarEndpointReporter {
 
     fun sync(config: PulseBarConfig, forceReplay: Boolean = false) {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
-        val enabledEndpoints = config.enabledReporterEndpoints()
+        val enabledEndpoints = config.connectedReporterEndpoints()
         if (enabledEndpoints.isEmpty()) return
         enabledEndpoints.forEach { endpoint ->
             if (!endpoint.isConfigured()) {
@@ -218,7 +245,7 @@ internal class PulseBarEndpointReporter {
 
     fun readSyncState(config: PulseBarConfig): PulseBarSyncState {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
-        config.enabledReporterEndpoints().forEach { endpoint ->
+        config.connectedReporterEndpoints().forEach { endpoint ->
             drainPendingForRead(endpoint)
         }
         val endpointStates = config.endpoints.map { endpoint ->
@@ -236,6 +263,7 @@ internal class PulseBarEndpointReporter {
             val checkpoint = rawJournal.readCheckpoint(endpoint.id)
             val serverStatus = when {
                 !endpoint.enabled -> "unknown"
+                endpoint.disconnected -> "unknown"
                 else -> runtimeState.serverStatus
             }
             val clientStatus = when {
@@ -244,11 +272,15 @@ internal class PulseBarEndpointReporter {
                 isConfigurationBlocked(reporterEndpoint) -> "unavailable"
                 else -> runtimeState.clientStatus
             }
-            val status = combinedStatus(
-                enabled = endpoint.enabled,
-                serverStatus = serverStatus,
-                clientStatus = clientStatus
-            )
+            val status = if (endpoint.enabled && endpoint.disconnected) {
+                "disconnected"
+            } else {
+                combinedStatus(
+                    enabled = endpoint.enabled,
+                    serverStatus = serverStatus,
+                    clientStatus = clientStatus
+                )
+            }
             PulseBarEndpointSyncState(
                 id = endpoint.id,
                 name = endpoint.name,
@@ -295,7 +327,7 @@ internal class PulseBarEndpointReporter {
 
     fun retry(snapshot: PulseBarSnapshot, config: PulseBarConfig): Boolean {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
-        val enabledEndpoints = config.enabledReporterEndpoints()
+        val enabledEndpoints = config.connectedReporterEndpoints()
         if (enabledEndpoints.isEmpty()) {
             syncStates["default-endpoint"] = EndpointSyncSnapshot(
                 status = "disabled",
@@ -310,7 +342,7 @@ internal class PulseBarEndpointReporter {
 
     fun resetIfDisabled(config: PulseBarConfig) {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
-        val enabledEndpointIds = config.endpoints.filter { it.enabled }.map { it.id }.toSet()
+        val enabledEndpointIds = config.endpoints.filter { it.enabled && !it.disconnected }.map { it.id }.toSet()
         if (enabledEndpointIds.isEmpty()) {
             lastSignature = null
             lastPublishedAtMillis = null
@@ -318,13 +350,13 @@ internal class PulseBarEndpointReporter {
             lastEndpointFingerprints = emptySet()
         }
         config.endpoints.forEach { endpoint ->
-            if (!endpoint.enabled) {
+            if (!endpoint.enabled || endpoint.disconnected) {
                 clearConfigurationBlocked(endpoint.id)
                 syncStates[endpoint.id] = EndpointSyncSnapshot(
-                    status = "disabled",
+                    status = if (endpoint.enabled) "disconnected" else "disabled",
                     serverStatus = "unknown",
-                    clientStatus = "unknown",
-                    lastStatus = "skip:endpoint_disabled"
+                    clientStatus = if (endpoint.enabled) "available" else "unknown",
+                    lastStatus = if (endpoint.enabled) "skip:endpoint_disconnected" else "skip:endpoint_disabled"
                 )
                 lastReplayIssuedAtMillis.remove(endpoint.id)
             }
@@ -346,7 +378,11 @@ internal class PulseBarEndpointReporter {
 
     private fun recoverConfigurationState(endpoint: ReporterEndpoint) {
         val current = stateFor(endpoint.id)
-        if (!current.isConfigurationError() && current.lastStatus != "skip:missing_workspace_site_or_api_key") {
+        if (
+            !current.isConfigurationError() &&
+            !current.isInactiveState() &&
+            current.lastStatus != "skip:missing_workspace_site_or_api_key"
+        ) {
             return
         }
         val serverStatus = current.serverStatus.takeUnless { it == "checking" } ?: "unknown"
@@ -491,7 +527,7 @@ internal class PulseBarEndpointReporter {
         }
     }
 
-    private fun enqueue(endpoint: ReporterEndpoint, entry: RawJournalEntry) {
+    private fun enqueue(endpoint: ReporterEndpoint, entry: RawJournalEntry, requestReplay: Boolean = true) {
         if (isConfigurationBlocked(endpoint)) {
             recordReplayDiagnostic(endpoint.id, "enqueue blocked: configuration_blocked")
             writeHttpLog("skip kind=enqueue endpoint=${endpoint.id} reason=configuration_blocked")
@@ -501,7 +537,9 @@ internal class PulseBarEndpointReporter {
         val pendingCount = rawJournal.pendingCount(endpoint.id)
         recordReplayDiagnostic(endpoint.id, "enqueue seq=${entry.seq} kind=${entry.kind} pending=$pendingCount")
         writeHttpLog("event kind=enqueue endpoint=${endpoint.id} entryKind=${entry.kind} seq=${entry.seq} pending=$pendingCount")
-        requestReplay(endpoint.id, reason = "enqueue")
+        if (requestReplay) {
+            requestReplay(endpoint.id, reason = "enqueue")
+        }
     }
 
     private fun buildReplayBody(endpoint: ReporterEndpoint, entries: List<RawJournalEntry>): JsonObject {
@@ -564,6 +602,8 @@ internal class PulseBarEndpointReporter {
                     }
                     val body = buildReplayBody(endpoint, batch)
                     val bodyText = json.encodeToString(JsonObject.serializer(), body)
+                    defaults.setObject(bodyText, debugBodyKey(endpoint.id))
+                    defaults.synchronize()
                     val attemptAtIso8601 = nativeIso8601Now()
                     syncStates[endpoint.id] = stateFor(endpoint.id).copy(
                         lastAttemptAtIso8601 = attemptAtIso8601,
@@ -1072,6 +1112,12 @@ private data class EndpointSyncSnapshot(
 private fun EndpointSyncSnapshot.isConfigurationError(): Boolean =
     status == "misconfigured" || status == "configuration_error" || clientStatus == "unavailable"
 
+private fun EndpointSyncSnapshot.isInactiveState(): Boolean =
+    status == "disabled" ||
+        status == "disconnected" ||
+        lastStatus == "skip:endpoint_disabled" ||
+        lastStatus == "skip:endpoint_disconnected"
+
 private fun combinedStatus(enabled: Boolean, serverStatus: String, clientStatus: String): String {
     if (!enabled) return "disabled"
     return when {
@@ -1109,13 +1155,13 @@ private fun derivedServerStatusFromCombined(status: String): String =
         "healthy", "configuration_error" -> "available"
         "server_unavailable", "degraded" -> "unavailable"
         "checking_server" -> "checking"
-        "local_unavailable" -> "unknown"
+        "local_unavailable", "disconnected" -> "unknown"
         else -> "unknown"
     }
 
 private fun derivedClientStatusFromCombined(status: String): String =
     when (status) {
-        "healthy", "server_unavailable", "checking_server", "local_unavailable" -> "available"
+        "healthy", "server_unavailable", "checking_server", "local_unavailable", "disconnected" -> "available"
         "configuration_error", "misconfigured", "degraded" -> "unavailable"
         else -> "unknown"
     }
@@ -1137,6 +1183,21 @@ private fun String.toJsonObjectOrNull(): JsonObject? =
 private fun PulseBarConfig.enabledReporterEndpoints(): List<ReporterEndpoint> =
     endpoints
         .filter { it.enabled }
+        .map { endpoint ->
+            ReporterEndpoint(
+                id = endpoint.id,
+                name = endpoint.name,
+                transportName = endpoint.transportName,
+                endpointUrl = endpoint.endpointUrl,
+                workspaceId = endpoint.workspaceId,
+                siteId = endpoint.siteId,
+                apiKey = endpoint.apiKey
+            )
+        }
+
+private fun PulseBarConfig.connectedReporterEndpoints(): List<ReporterEndpoint> =
+    endpoints
+        .filter { it.enabled && !it.disconnected }
         .map { endpoint ->
             ReporterEndpoint(
                 id = endpoint.id,

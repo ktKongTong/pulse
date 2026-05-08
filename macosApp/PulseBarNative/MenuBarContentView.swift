@@ -1,93 +1,147 @@
 import AppKit
 import SwiftUI
 
+struct MediaGlassBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+                .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        } else {
+            content
+                .background(.regularMaterial, in: .rect(cornerRadius: 16))
+        }
+    }
+}
 struct MenuBarContentView: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header
+        VStack(alignment: .leading, spacing: 0) {
+            topSection
 
-            if let snapshot = monitor.snapshot {
-                PulseBarCurrentAppCard(snapshot: snapshot)
+            if monitor.snapshot != nil {
+                Divider()
+                    .padding(.vertical, 10)
             }
 
             if let media = monitor.snapshot?.media {
-                PulseBarMediaCard(
-                    media: media,
-                    onPrevious: { monitor.mediaCommand(.PREVIOUS) },
-                    onTogglePlayPause: { monitor.mediaCommand(.TOGGLE_PLAY_PAUSE) },
-                    onNext: { monitor.mediaCommand(.NEXT) },
-                    onSeek: { target in
-                        monitor.seekMedia(to: target)
-                    }
-                )
+                mediaSection(media)
+                Divider()
+                    .padding(.vertical, 10)
             }
 
-            todayStats
-
-            footerActions
+            bottomSection
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(width: 392, height: 620)
+        .modifier(
+            MediaGlassBackground()
+        )
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center) {
-                Text("PulseBar")
-                    .font(.title3.weight(.semibold))
+    private var topSection: some View {
+        HStack(alignment: .center, spacing: 10) {
+            if let snapshot = monitor.snapshot {
+                AppIconView(bundleId: snapshot.bundleId, size: 40)
+                Text(snapshot.appName)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Image(systemName: "app.badge")
+                    .font(.system(size: 20, weight: .semibold))
+                    .frame(width: 40, height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.secondary.opacity(0.10))
+                    )
+                Text("No Focus")
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.secondary)
-                if monitor.interactionPendingCount > 0 {
-                    Text("\(monitor.interactionPendingCount)")
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.16)))
-                        .foregroundStyle(Color.accentColor)
-                }
-                Spacer()
-                HStack(spacing: 8) {
-                    PulseBarIconButton(systemName: "square.grid.2x2.fill") {
-                        showDashboard(.dashboard)
-                    }
-                    PulseBarIconButton(
-                        systemName: monitor.isPaused || !monitor.isMonitoring ? "play.fill" : "pause.fill",
-                        isPrimary: true
-                    ) {
-                        monitor.togglePaused()
-                    }
-                    PulseBarIconButton(systemName: "gearshape.fill") {
-                        showDashboard(.settings)
-                    }
-                }
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            Button {
+                showDashboard(.connection)
+            } label: {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .foregroundStyle(.secondary)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.secondary.opacity(0.08))
+                    )
+            }
+            .buttonStyle(.plain)
         }
     }
 
-    private var footerActions: some View {
-        VStack(spacing: 10) {
-            Divider()
-            HStack(spacing: 10) {
-                Button(monitor.isMonitoring ? "Stop Monitoring" : "Start Monitoring") {
-                    if monitor.isMonitoring {
-                        monitor.stop()
-                    } else {
-                        monitor.start()
-                    }
+    private func mediaSection(_ media: MediaInfo) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            ZStack(alignment: .bottomTrailing) {
+                AsyncImage(url: media.artworkURL) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(.quaternary)
+                        .overlay(Image(systemName: "music.note").font(.system(size: 16)).foregroundStyle(.secondary))
                 }
-                .buttonStyle(.bordered)
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                Spacer()
-
-                Button("Quit PulseBar") {
-                    NSApp.terminate(nil)
+                if media.source.lowercased() == "spotify" {
+                    ProviderIconBadge(bundleId: "com.spotify.client")
+                } else if media.source.lowercased() == "music" {
+                    ProviderIconBadge(bundleId: "com.apple.Music")
                 }
-                .buttonStyle(.bordered)
             }
+
+            VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(media.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(media.artist)
+                        .font(.system(size: 10, weight: .light))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                HStack(spacing: 6) {
+                    MediaTransportButton(systemName: "backward.fill", action: { monitor.mediaCommand(.PREVIOUS) })
+                    Spacer(minLength: 0)
+                    MediaTransportButton(systemName: media.isPlaying ? "pause.fill" : "play.fill", isPrimary: true, action: {
+                        monitor.mediaCommand(.TOGGLE_PLAY_PAUSE)
+                    })
+                    Spacer(minLength: 0)
+                    MediaTransportButton(systemName: "forward.fill", action: { monitor.mediaCommand(.NEXT) })
+                }
+                .frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 6) {
+                    MediaSeekBar(
+                        progressSeconds: media.progressSeconds,
+                        durationSeconds: Double(media.durationSeconds ?? 0),
+                        accentColor: .accentColor,
+                        onSeek: { monitor.seekMedia(to: $0) }
+                    )
+                    .frame(height: 3)
+
+                    HStack {
+                        Text(pulseClock(Int(media.progressSeconds.rounded())))
+                        Spacer()
+                        Text(remainingClockText(media))
+                    }
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(height: 108)
     }
 
     private func showDashboard(_ section: DashboardSection) {
@@ -96,45 +150,23 @@ struct MenuBarContentView: View {
         focusPulseBarDashboardWindow()
     }
 
-    private var todayStats: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Divider()
-            HStack {
-                Text("Today")
-                    .font(.headline)
-                Spacer()
-                Text(formatDuration(monitor.todayTotalSeconds))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-
-            if monitor.todayStats.isEmpty {
-                Text("No tracked usage yet.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(monitor.todayStats) { row in
-                            UsageRowView(
-                                row: row,
-                                totalSeconds: monitor.todayTotalSeconds
-                            )
-                        }
+    private var bottomSection: some View {
+        Group {
+            if !monitor.todayStats.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(monitor.todayStats.prefix(2))) { row in
+                        UsageRowView(row: row, totalSeconds: monitor.todayTotalSeconds)
                     }
                 }
-                .frame(maxHeight: 320)
             }
         }
     }
 
-    private func formatDuration(_ seconds: Int) -> String {
-        let h = seconds / 3600
-        let m = (seconds % 3600) / 60
-        let s = seconds % 60
-        if h > 0 { return String(format: "%dh %02dm", h, m) }
-        if m > 0 { return String(format: "%dm %02ds", m, s) }
-        return "\(s)s"
+    private func remainingClockText(_ media: MediaInfo) -> String {
+        let duration = media.durationSeconds ?? 0
+        let progress = Int(media.progressSeconds.rounded())
+        let remaining = max(0, duration - progress)
+        return "-\(pulseClock(remaining))"
     }
 }
 
@@ -170,6 +202,87 @@ struct PulseBarCurrentAppCard: View {
     }
 }
 
+private struct UsageRowView: View {
+    let row: UsageRow
+    let totalSeconds: Int
+
+    private var percentage: Int {
+        guard totalSeconds > 0 else { return 0 }
+        return Int((Double(row.totalSeconds) / Double(totalSeconds) * 100).rounded())
+    }
+
+    private var ratio: Double {
+        guard totalSeconds > 0 else { return 0 }
+        return min(max(Double(row.totalSeconds) / Double(totalSeconds), 0), 1)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            AppIconView(bundleId: row.bundleId, size: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(row.label)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    Spacer(minLength: 12)
+                    Text(durationText)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.secondary.opacity(0.12))
+                            Capsule()
+                                .fill(Color.accentColor)
+                                .frame(width: max(10, geometry.size.width * ratio))
+                        }
+                    }
+                    .frame(height: 4)
+                    Text("\(percentage)%")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+            }
+        }
+    }
+
+    private var durationText: String {
+        let h = row.totalSeconds / 3600
+        let m = (row.totalSeconds % 3600) / 60
+        let s = row.totalSeconds % 60
+        if h > 0 { return String(format: "%dh %02dm", h, m) }
+        if m > 0 { return String(format: "%dm %02ds", m, s) }
+        return "\(s)s"
+    }
+}
+
+private struct MediaTransportButton: View {
+    let systemName: String
+    var isPrimary: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: isPrimary ? 20 : 15, weight: .semibold))
+                .foregroundStyle(Color.primary.opacity(isPrimary ? 0.9 : 0.75))
+                .frame(width: isPrimary ? 30 : 22, height: isPrimary ? 30 : 22)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+    }
+}
+
+private extension String {
+    func takeIfNotBlank() -> String? {
+        isEmpty ? nil : self
+    }
+}
+
 struct PulseBarMediaCard: View {
     let media: MediaInfo
     let onPrevious: () -> Void
@@ -188,12 +301,12 @@ struct PulseBarMediaCard: View {
                     AsyncImage(url: media.artworkURL) { image in
                         image.resizable().scaledToFill()
                     } placeholder: {
-                        RoundedRectangle(cornerRadius: 16)
+                        RoundedRectangle(cornerRadius: 10)
                             .fill(.quaternary)
                             .overlay(Image(systemName: "music.note").foregroundStyle(.secondary))
                     }
-                    .frame(width: 78, height: 78)
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .frame(width: 92, height: 92)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
 
                     if media.source.lowercased() == "spotify" {
                         ProviderIconBadge(bundleId: "com.spotify.client")
@@ -217,7 +330,7 @@ struct PulseBarMediaCard: View {
                             .truncationMode(.tail)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                        VStack(alignment: .trailing, spacing: 6) {
+                        VStack(alignment: .listRowSeparatorLeading, spacing: 6) {
                             HStack(spacing: 8) {
                                 PulseBarIconButton(systemName: "backward.fill", action: onPrevious)
                                 PulseBarIconButton(
@@ -246,7 +359,7 @@ struct PulseBarMediaCard: View {
                 accentColor: .accentColor,
                 onSeek: onSeek
             )
-            .frame(height: 12)
+            .frame(height: 4)
         }
     }
 }
@@ -346,47 +459,35 @@ private struct MediaSeekBar: View {
     @State private var isDragging = false
     @State private var lastSeekAt: Date? = nil
 
-    private let trackHeight: CGFloat = 6
-    private let thumbWidth: CGFloat = 4
-    private let thumbHeight: CGFloat = 26
-    private let thumbGap: CGFloat = 8
+    private let trackHeight: CGFloat = 4
+    private let thumbWidth: CGFloat = 5
+    private let thumbHeight: CGFloat = 16
+    private let thumbGap: CGFloat = 4
 
     var body: some View {
         GeometryReader { geometry in
             let width = max(geometry.size.width, 1)
             let displayed = dragProgress ?? visualProgress
             let normalized = durationSeconds > 0 ? min(max(displayed / durationSeconds, 0), 1) : 0
-            let thumbCenterX = width * normalized
-            let leftWidth = max(0, thumbCenterX - thumbGap)
-            let rightStart = min(width, thumbCenterX + thumbGap)
-            let rightWidth = max(0, width - rightStart)
-
             ZStack {
-                HStack(spacing: 0) {
-                    if leftWidth > 0 {
-                        RoundedRectangle(cornerRadius: trackHeight / 2)
-                            .fill(accentColor.opacity(0.95))
-                            .frame(width: leftWidth, height: trackHeight)
-                    } else {
-                        Color.clear.frame(width: 0, height: trackHeight)
-                    }
+                Capsule()
+                    .fill(Color.secondary.opacity(0.14))
+                    .frame(width: width, height: trackHeight)
 
-                    Color.clear.frame(width: thumbGap * 2, height: trackHeight)
-
-                    if rightWidth > 0 {
-                        RoundedRectangle(cornerRadius: trackHeight / 2)
-                            .fill(Color.secondary.opacity(0.15))
-                            .frame(width: rightWidth, height: trackHeight)
-                    } else {
-                        Color.clear.frame(width: 0, height: trackHeight)
-                    }
+                HStack {
+                    Capsule()
+                        .fill(accentColor.opacity(0.95))
+                        .frame(width: max(0, width * normalized), height: trackHeight)
+                    Spacer(minLength: 0)
                 }
                 .frame(width: width, height: trackHeight)
 
-                RoundedRectangle(cornerRadius: thumbWidth / 2)
-                    .fill(accentColor.opacity(0.95))
-                    .frame(width: thumbWidth, height: thumbHeight)
-                    .offset(x: thumbCenterX - width / 2)
+                if isDragging {
+                    RoundedRectangle(cornerRadius: thumbWidth / 2)
+                        .fill(accentColor.opacity(0.95))
+                        .frame(width: thumbWidth, height: thumbHeight)
+                        .offset(x: width * normalized - width / 2)
+                }
             }
             .contentShape(Rectangle())
             .gesture(
@@ -416,52 +517,6 @@ private struct MediaSeekBar: View {
                 visualProgress = newValue
             }
         }
-    }
-}
-
-private struct UsageRowView: View {
-    let row: UsageRow
-    let totalSeconds: Int
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            AppIconView(bundleId: row.bundleId, size: 24)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.label)
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(durationText)
-                    .font(.system(.subheadline, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Text(percentageText)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(width: 72, alignment: .trailing)
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var durationText: String {
-        let h = row.totalSeconds / 3600
-        let m = (row.totalSeconds % 3600) / 60
-        let s = row.totalSeconds % 60
-        if h > 0 { return String(format: "%dh %02dm", h, m) }
-        if m > 0 { return String(format: "%dm %02ds", m, s) }
-        return "\(s)s"
-    }
-
-    private var percentageText: String {
-        guard totalSeconds > 0 else { return "0%" }
-        let percent = Int((Double(row.totalSeconds) / Double(totalSeconds) * 100).rounded())
-        return "\(percent)%"
     }
 }
 
@@ -526,10 +581,4 @@ func pulseProgressText(_ media: MediaInfo) -> String {
     let progress = Int(media.progressSeconds.rounded())
     let duration = media.durationSeconds ?? 0
     return "\(pulseClock(progress)) / \(pulseClock(duration))"
-}
-
-private extension String {
-    func takeIfNotBlank() -> String? {
-        isEmpty ? nil : self
-    }
 }

@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 import Foundation
-import PulseBarShared
+@preconcurrency import PulseBarShared
 import SharedBridge_PulseBarShared
 
 @MainActor
@@ -13,14 +13,15 @@ final class NativeMonitorModel: ObservableObject {
     @Published private(set) var interactionPendingCount: Int = 0
     @Published private(set) var interactionLastStatus: String?
     @Published private(set) var syncState: SyncStatusInfo?
+    @Published private(set) var connectingEndpointIDs: Set<String> = []
     @Published private(set) var isMonitoring = false
     @Published var settingsDraft = SettingsDraft()
     @Published var isPaused = false
-    @Published var dashboardSelection: DashboardSection = .dashboard
+    @Published var dashboardSelection: DashboardSection = .connection
 
     private var loopTask: Task<Void, Never>?
     private var liveListenDebugTriggerTask: Task<Void, Never>?
-    private let bridge = PulseBarBridge()
+    private let bridgeWorker = NativeBridgeWorker()
     let liveListenCaptureModel = LiveListenCaptureModel()
     private var liveListenDebugStartObserver: NSObjectProtocol?
     private var liveListenDebugStopObserver: NSObjectProtocol?
@@ -28,8 +29,9 @@ final class NativeMonitorModel: ObservableObject {
     private var lastStatsRefreshAt: Date = .distantPast
     private var lastInteractionRefreshAt: Date = .distantPast
     private var lastSyncRefreshAt: Date = .distantPast
+    private var refreshInFlight = false
 
-    private static let iso8601Formatter = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let iso8601Formatter = ISO8601DateFormatter()
     private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -37,7 +39,7 @@ final class NativeMonitorModel: ObservableObject {
     }()
 
     @_silgen_name("Kotlin_native_internal_ref_disposeExternalRCRef")
-    private static func disposeExternalRCRef(_ ref: UnsafeMutableRawPointer?)
+    nonisolated private static func disposeExternalRCRef(_ ref: UnsafeMutableRawPointer?)
 
     init() {
         installLiveListenDebugTriggerLoopIfNeeded()
@@ -54,6 +56,150 @@ final class NativeMonitorModel: ObservableObject {
         let statsRefreshedAt: Date?
         let interactionRefreshedAt: Date?
         let syncRefreshedAt: Date?
+
+        static let empty = RefreshPayload(
+            snapshot: nil,
+            todayStats: nil,
+            todayTotalSeconds: nil,
+            interactionItems: nil,
+            interactionPendingCount: nil,
+            interactionLastStatus: nil,
+            syncState: nil,
+            statsRefreshedAt: nil,
+            interactionRefreshedAt: nil,
+            syncRefreshedAt: nil
+        )
+    }
+
+    private final class NativeBridgeWorker: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "io.github.kt.pulsebar.native.bridge", qos: .utility)
+        private var bridge: PulseBarBridge!
+
+        init() {
+            queue.sync {
+                bridge = PulseBarBridge()
+            }
+        }
+
+        func readSettingsDraft(_ completion: @escaping @MainActor (SettingsDraft) -> Void) {
+            queue.async {
+                let draft = NativeMonitorModel.mapConfig(self.bridge.readConfig())
+                DispatchQueue.main.async {
+                    completion(draft)
+                }
+            }
+        }
+
+        func updateConfig(from draft: SettingsDraft, completion: (@MainActor () -> Void)? = nil) {
+            queue.async {
+                self.bridge.updateConfig(config: NativeMonitorModel.makeConfig(from: draft))
+                if let completion {
+                    DispatchQueue.main.async {
+                        completion()
+                    }
+                }
+            }
+        }
+
+        func retry(completion: @escaping @MainActor () -> Void) {
+            queue.async {
+                _ = self.bridge.retryEndpoint()
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+        }
+
+        func refresh(
+            today: String,
+            now: Date,
+            shouldRefreshStats: Bool,
+            shouldRefreshInteraction: Bool,
+            shouldRefreshSync: Bool,
+            completion: @escaping @MainActor (RefreshPayload) -> Void
+        ) {
+            queue.async {
+                let payload = autoreleasepool { () -> RefreshPayload in
+                    let snapshot = NativeMonitorModel.mapSnapshotObject(self.bridge.readMenuState().snapshot)
+
+                    var todayStats: [UsageRow]?
+                    var todayTotalSeconds: Int?
+                    var statsRefreshedAt: Date?
+                    if shouldRefreshStats {
+                        let stats = NativeMonitorModel.mapStatsPage(self.bridge.readStats(dayIso: today, limit: 100))
+                        todayStats = stats.items
+                        todayTotalSeconds = stats.totalSeconds
+                        statsRefreshedAt = now
+                    }
+
+                    var interactionItems: [InteractionItem]?
+                    var interactionPendingCount: Int?
+                    var interactionLastStatus: String?
+                    var interactionRefreshedAt: Date?
+                    if shouldRefreshInteraction {
+                        let interactionState = NativeMonitorModel.mapInteractionStateObject(self.bridge.readInteractionState())
+                        interactionItems = interactionState.items
+                        interactionPendingCount = interactionState.pendingCount
+                        interactionLastStatus = interactionState.lastStatus
+                        interactionRefreshedAt = now
+                    }
+
+                    var syncState: SyncStatusInfo?
+                    var syncRefreshedAt: Date?
+                    if shouldRefreshSync {
+                        syncState = NativeMonitorModel.mapSyncStateObject(self.bridge.readSyncState())
+                        syncRefreshedAt = now
+                    }
+
+                    return RefreshPayload(
+                        snapshot: snapshot,
+                        todayStats: todayStats,
+                        todayTotalSeconds: todayTotalSeconds,
+                        interactionItems: interactionItems,
+                        interactionPendingCount: interactionPendingCount,
+                        interactionLastStatus: interactionLastStatus,
+                        syncState: syncState,
+                        statsRefreshedAt: statsRefreshedAt,
+                        interactionRefreshedAt: interactionRefreshedAt,
+                        syncRefreshedAt: syncRefreshedAt
+                    )
+                }
+
+                DispatchQueue.main.async {
+                    completion(payload)
+                }
+            }
+        }
+
+        func mediaCommand(_ command: PulseBarPlaybackCommand) {
+            queue.async {
+                _ = self.bridge.mediaCommand(command: command)
+            }
+        }
+
+        func seekMedia(to progressSeconds: Double) {
+            queue.async {
+                _ = self.bridge.seekMedia(progressSeconds: progressSeconds)
+            }
+        }
+
+        func acceptInteraction(_ requestId: String, completion: @escaping @MainActor () -> Void) {
+            queue.async {
+                _ = self.bridge.acceptInteraction(requestId: requestId)
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+        }
+
+        func dismissInteraction(_ requestId: String, completion: @escaping @MainActor () -> Void) {
+            queue.async {
+                _ = self.bridge.dismissInteraction(requestId: requestId)
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+        }
     }
 
     func start() {
@@ -64,10 +210,15 @@ final class NativeMonitorModel: ObservableObject {
             isPaused = false
             return
         }
-        settingsDraft = Self.mapConfig(bridge.readConfig())
         isMonitoring = true
         isPaused = false
-        refresh()
+        bridgeWorker.readSettingsDraft { [weak self] draft in
+            guard let self else { return }
+            self.settingsDraft = draft
+            self.liveListenCaptureModel.updateEndpoints(self.liveListenEndpoints)
+            self.refresh(forceStatsRefresh: true)
+        }
+        refresh(forceStatsRefresh: true)
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
         loopTask = Task {
             while !Task.isCancelled {
@@ -134,7 +285,7 @@ final class NativeMonitorModel: ObservableObject {
         let endpoints = liveListenEndpoints
         appendLiveListenDebugLog("start debug stream endpoints=\(endpoints.map { $0.baseURL.absoluteString }.joined(separator: ",")) source=\(liveListenCaptureModel.selectedSource?.name ?? "nil")")
         liveListenCaptureModel.updateEndpoints(endpoints)
-        dashboardSelection = .liveListen
+        dashboardSelection = .connection
         liveListenCaptureModel.startNativeStream()
     }
 
@@ -209,73 +360,38 @@ final class NativeMonitorModel: ObservableObject {
         refresh()
     }
 
-    func refresh() {
+    func refreshMenuBarContent() {
+        if !isMonitoring {
+            start()
+            return
+        }
+        isPaused = false
+        refresh(forceStatsRefresh: true)
+    }
+
+    func refresh(forceStatsRefresh: Bool = false) {
+        guard !refreshInFlight else { return }
         let now = Date()
         let today = Self.todayIsoString()
-        let payload = autoreleasepool { () -> RefreshPayload in
-            guard let bridgeRef = Self.externalRCRef(of: bridge as AnyObject) else {
-                return RefreshPayload(
-                    snapshot: nil,
-                    todayStats: nil,
-                    todayTotalSeconds: nil,
-                    interactionItems: nil,
-                    interactionPendingCount: nil,
-                    interactionLastStatus: nil,
-                    syncState: nil,
-                    statsRefreshedAt: nil,
-                    interactionRefreshedAt: nil,
-                    syncRefreshedAt: nil
-                )
-            }
-            let snapshot = Self.readSnapshot(bridgeRef: bridgeRef)
+        let shouldRefreshStats = forceStatsRefresh || shouldRefreshStats(now: now)
+        let shouldRefreshInteraction = now.timeIntervalSince(lastInteractionRefreshAt) >= 2
+        let shouldRefreshSync = now.timeIntervalSince(lastSyncRefreshAt) >= 2
+        refreshInFlight = true
 
-            var todayStats: [UsageRow]?
-            var todayTotalSeconds: Int?
-            var statsRefreshedAt: Date?
-            if shouldRefreshStats(now: now) {
-                let stats = Self.readStats(
-                    bridgeRef: bridgeRef,
-                    dayIso: today,
-                    limit: 100
-                )
-                todayStats = stats.items
-                todayTotalSeconds = stats.totalSeconds
-                statsRefreshedAt = now
-            }
-
-            var interactionItems: [InteractionItem]?
-            var interactionPendingCount: Int?
-            var interactionLastStatus: String?
-            var interactionRefreshedAt: Date?
-            if now.timeIntervalSince(lastInteractionRefreshAt) >= 2 {
-                let interactionState = Self.readInteractionState(bridgeRef: bridgeRef)
-                interactionItems = interactionState.items
-                interactionPendingCount = interactionState.pendingCount
-                interactionLastStatus = interactionState.lastStatus
-                interactionRefreshedAt = now
-            }
-
-            var syncState: SyncStatusInfo?
-            var syncRefreshedAt: Date?
-            if now.timeIntervalSince(lastSyncRefreshAt) >= 2 {
-                syncState = Self.readSyncState(bridgeRef: bridgeRef)
-                syncRefreshedAt = now
-            }
-
-            return RefreshPayload(
-                snapshot: snapshot,
-                todayStats: todayStats,
-                todayTotalSeconds: todayTotalSeconds,
-                interactionItems: interactionItems,
-                interactionPendingCount: interactionPendingCount,
-                interactionLastStatus: interactionLastStatus,
-                syncState: syncState,
-                statsRefreshedAt: statsRefreshedAt,
-                interactionRefreshedAt: interactionRefreshedAt,
-                syncRefreshedAt: syncRefreshedAt
-            )
+        bridgeWorker.refresh(
+            today: today,
+            now: now,
+            shouldRefreshStats: shouldRefreshStats,
+            shouldRefreshInteraction: shouldRefreshInteraction,
+            shouldRefreshSync: shouldRefreshSync
+        ) { [weak self] payload in
+            guard let self else { return }
+            self.refreshInFlight = false
+            self.applyRefreshPayload(payload)
         }
+    }
 
+    private func applyRefreshPayload(_ payload: RefreshPayload) {
         applySnapshotIfNeeded(payload.snapshot)
         liveListenCaptureModel.updateCurrentMedia(payload.snapshot?.media)
 
@@ -311,18 +427,21 @@ final class NativeMonitorModel: ObservableObject {
             if self.syncState != syncState {
                 self.syncState = syncState
             }
+            clearFinishedConnectingEndpoints(syncState)
             lastSyncRefreshAt = refreshedAt
         }
     }
 
     func saveConfig() {
-        bridge.updateConfig(config: Self.makeConfig(from: settingsDraft))
+        bridgeWorker.updateConfig(from: settingsDraft)
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
+        lastSyncRefreshAt = .distantPast
+        Task { @MainActor in refresh() }
     }
 
     var liveListenEndpoints: [LiveListenEndpointConfig] {
         let enabled = settingsDraft.endpoints.compactMap { endpoint -> LiveListenEndpointConfig? in
-            guard endpoint.enabled else { return nil }
+            guard endpoint.enabled && !endpoint.disconnected else { return nil }
             return LiveListenEndpointConfig.fromEndpointDraft(endpoint)
         }
         if !enabled.isEmpty { return enabled }
@@ -341,35 +460,73 @@ final class NativeMonitorModel: ObservableObject {
 
     func removeEndpoint(_ endpointID: String) {
         settingsDraft.endpoints.removeAll { $0.id == endpointID }
+        saveConfig()
+    }
+
+    func setEndpointEnabled(_ endpointID: String, enabled: Bool) {
+        guard let index = settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
+            return
+        }
+        settingsDraft.endpoints[index].enabled = enabled
+        saveConfig()
+    }
+
+    func disconnectEndpoint(_ endpointID: String) {
+        guard let index = settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
+            return
+        }
+        settingsDraft.endpoints[index].disconnected = true
+        connectingEndpointIDs.remove(endpointID)
+        saveConfig()
+    }
+
+    func connectEndpoint(_ endpointID: String) {
+        guard let index = settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
+            return
+        }
+        settingsDraft.endpoints[index].disconnected = false
+        connectingEndpointIDs.insert(endpointID)
+        saveConfig()
+        retryEndpoint(endpointID: endpointID)
     }
 
     func mediaCommand(_ command: PulseBarPlaybackCommand) {
-        _ = bridge.mediaCommand(command: command)
+        bridgeWorker.mediaCommand(command)
     }
 
     func seekMedia(to progressSeconds: Double) {
-        _ = bridge.seekMedia(progressSeconds: progressSeconds)
+        bridgeWorker.seekMedia(to: progressSeconds)
     }
 
     func acceptInteraction(_ requestId: String) {
-        _ = bridge.acceptInteraction(requestId: requestId)
         lastInteractionRefreshAt = .distantPast
-        Task { @MainActor in refresh() }
+        bridgeWorker.acceptInteraction(requestId) { [weak self] in
+            self?.refresh()
+        }
     }
 
     func dismissInteraction(_ requestId: String) {
-        _ = bridge.dismissInteraction(requestId: requestId)
         lastInteractionRefreshAt = .distantPast
-        Task { @MainActor in refresh() }
+        bridgeWorker.dismissInteraction(requestId) { [weak self] in
+            self?.refresh()
+        }
     }
 
-    func retryEndpoint() {
-        _ = bridge.retryEndpoint()
+    func retryEndpoint(endpointID: String? = nil) {
+        if let endpointID {
+            connectingEndpointIDs.insert(endpointID)
+        }
         lastSyncRefreshAt = .distantPast
-        Task { @MainActor in refresh() }
+        bridgeWorker.retry { [weak self] in
+            if let endpointID {
+                self?.connectingEndpointIDs.remove(endpointID)
+            }
+            self?.lastSyncRefreshAt = .distantPast
+            self?.refresh()
+        }
     }
 
-    private static func mapMedia(
+    nonisolated private static func mapMedia(
         providerId: String,
         source: String,
         itemType: String,
@@ -411,7 +568,7 @@ final class NativeMonitorModel: ObservableObject {
         )
     }
 
-    private static func mapUsageRow(
+    nonisolated private static func mapUsageRow(
         key: String,
         label: String,
         bundleId: String,
@@ -426,7 +583,7 @@ final class NativeMonitorModel: ObservableObject {
         )
     }
 
-    private static func mapInteractionItem(
+    nonisolated private static func mapInteractionItem(
         requestId: String,
         status: String,
         provider: String,
@@ -453,10 +610,11 @@ final class NativeMonitorModel: ObservableObject {
         )
     }
 
-    private static func mapEndpointDraft(
+    nonisolated private static func mapEndpointDraft(
         id: String,
         name: String,
         enabled: Bool,
+        disconnected: Bool,
         transport: TransportOption,
         endpointURL: String,
         workspaceId: String,
@@ -468,6 +626,7 @@ final class NativeMonitorModel: ObservableObject {
             id: id,
             name: name,
             enabled: enabled,
+            disconnected: disconnected,
             transport: transport,
             endpointUrl: endpointURL,
             workspaceId: workspaceId,
@@ -477,7 +636,7 @@ final class NativeMonitorModel: ObservableObject {
         )
     }
 
-    private static func mapEndpointSyncState(
+    nonisolated private static func mapEndpointSyncState(
         id: String,
         name: String,
         enabled: Bool,
@@ -517,7 +676,7 @@ final class NativeMonitorModel: ObservableObject {
         )
     }
 
-    private static func mapSyncState(
+    nonisolated private static func mapSyncState(
         enabled: Bool,
         enabledEndpointCount: Int,
         totalEndpointCount: Int,
@@ -543,7 +702,7 @@ final class NativeMonitorModel: ObservableObject {
         dayFormatter.string(from: Date())
     }
 
-    private static func resolvedDisplayName(appName: String, bundleId: String) -> String {
+    nonisolated private static func resolvedDisplayName(appName: String, bundleId: String) -> String {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId),
            let bundle = Bundle(url: url) {
             let preferredName =
@@ -556,9 +715,121 @@ final class NativeMonitorModel: ObservableObject {
         return appName
     }
 
+    nonisolated private static func mapSnapshotObject(_ snapshot: PulseBarSnapshot?) -> LiveSnapshot? {
+        guard let snapshot else { return nil }
+        let media = snapshot.media.map { media in
+            mapMedia(
+                providerId: media.providerId,
+                source: media.source,
+                itemType: media.itemType,
+                title: media.title,
+                artist: media.artist,
+                album: media.album,
+                albumArtist: media.albumArtist,
+                artworkURL: media.artworkUrl,
+                progressSeconds: media.progressSeconds,
+                durationSeconds: Int(media.durationSeconds),
+                linkURL: media.linkUrl,
+                trackId: media.trackId,
+                isPlaying: media.isPlaying,
+                trackNumber: media.trackNumber.map(NSNumber.init(value:)),
+                discNumber: media.discNumber.map(NSNumber.init(value:)),
+                collectionId: media.collectionId,
+                collectionTitle: media.collectionTitle,
+                collectionLinkURL: media.collectionLinkUrl
+            )
+        }
+        return LiveSnapshot(
+            appName: resolvedDisplayName(appName: snapshot.appName, bundleId: snapshot.bundleId),
+            bundleId: snapshot.bundleId,
+            pageTitle: snapshot.pageTitle,
+            observedAt: iso8601Formatter.date(from: snapshot.observedAtIso8601) ?? Date(),
+            media: media
+        )
+    }
+
+    nonisolated private static func mapStatsPage(_ page: PulseBarStatsPage) -> (items: [UsageRow], totalSeconds: Int) {
+        (
+            page.items.map { row in
+                mapUsageRow(
+                    key: row.key,
+                    label: row.label,
+                    bundleId: row.bundleId,
+                    totalSeconds: Int(row.totalSeconds)
+                )
+            },
+            Int(page.totalSeconds)
+        )
+    }
+
+    nonisolated private static func mapInteractionStateObject(
+        _ state: PulseBarInteractionState
+    ) -> (items: [InteractionItem], pendingCount: Int, lastStatus: String?) {
+        (
+            state.items.map { item in
+                mapInteractionItem(
+                    requestId: item.requestId,
+                    status: item.status,
+                    provider: item.provider,
+                    uri: item.uri,
+                    title: item.title,
+                    issuedAtIso8601: item.issuedAtIso8601,
+                    updatedAtIso8601: item.updatedAtIso8601,
+                    targetDeviceId: item.targetDeviceId,
+                    errorCode: item.errorCode,
+                    errorMessage: item.errorMessage
+                )
+            },
+            Int(state.pendingCount),
+            state.lastStatus
+        )
+    }
+
+    nonisolated private static func mapSyncStateObject(_ state: PulseBarSyncState) -> SyncStatusInfo {
+        mapSyncState(
+            enabled: state.enabled,
+            enabledEndpointCount: Int(state.enabledEndpointCount),
+            totalEndpointCount: Int(state.totalEndpointCount),
+            status: state.status,
+            lastStatus: state.lastStatus,
+            pendingCount: Int(state.pendingCount),
+            needsAttention: state.needsAttention,
+            endpoints: state.endpoints.map { endpoint in
+                mapEndpointSyncState(
+                    id: endpoint.id,
+                    name: endpoint.name,
+                    enabled: endpoint.enabled,
+                    transportName: endpoint.transportName,
+                    endpointURL: endpoint.endpointUrl,
+                    status: endpoint.status,
+                    lastStatus: endpoint.lastStatus,
+                    pendingCount: Int(endpoint.pendingCount),
+                    needsAttention: endpoint.needsAttention,
+                    lastAttemptAtIso8601: endpoint.lastAttemptAtIso8601,
+                    lastProbeAtIso8601: endpoint.lastProbeAtIso8601,
+                    lastSuccessAtIso8601: endpoint.lastSuccessAtIso8601,
+                    lastFailureAtIso8601: endpoint.lastFailureAtIso8601,
+                    lastErrorMessage: endpoint.lastErrorMessage,
+                    diagnosticMessage: endpoint.diagnosticMessage,
+                    acknowledgedSeqMax: Int(endpoint.acknowledgedSeqMax),
+                    acknowledgedAtIso8601: endpoint.acknowledgedAtIso8601
+                )
+            }
+        )
+    }
+
     private func shouldRefreshStats(now: Date) -> Bool {
         guard now.timeIntervalSince(lastStatsRefreshAt) >= 5 else { return false }
         return NSApp.isActive
+    }
+
+    private func clearFinishedConnectingEndpoints(_ syncState: SyncStatusInfo) {
+        guard !connectingEndpointIDs.isEmpty else { return }
+        for endpoint in syncState.endpoints where connectingEndpointIDs.contains(endpoint.id) {
+            if endpoint.status != "disabled" && endpoint.status != "disconnected" {
+                connectingEndpointIDs.remove(endpoint.id)
+            }
+        }
     }
 
     private func applySnapshotIfNeeded(_ nextSnapshot: LiveSnapshot?) {
@@ -628,7 +899,7 @@ final class NativeMonitorModel: ObservableObject {
         let collectionLink: String?
     }
 
-    private static func externalRCRef(of object: AnyObject) -> UnsafeMutableRawPointer? {
+    nonisolated private static func externalRCRef(of object: AnyObject) -> UnsafeMutableRawPointer? {
         let selector = NSSelectorFromString("externalRCRef")
         typealias Function = @convention(c) (AnyObject, Selector) -> UnsafeMutableRawPointer?
         let implementation = object.method(for: selector)
@@ -636,7 +907,7 @@ final class NativeMonitorModel: ObservableObject {
         return function(object, selector)
     }
 
-    private static func withDisposedExternalRef<T>(
+    nonisolated private static func withDisposedExternalRef<T>(
         _ ref: UnsafeMutableRawPointer?,
         _ body: (UnsafeMutableRawPointer) -> T
     ) -> T? {
@@ -645,7 +916,7 @@ final class NativeMonitorModel: ObservableObject {
         return body(ref)
     }
 
-    private static func readSnapshot(bridgeRef: UnsafeMutableRawPointer?) -> LiveSnapshot? {
+    nonisolated private static func readSnapshot(bridgeRef: UnsafeMutableRawPointer?) -> LiveSnapshot? {
         guard let bridgeRef else { return nil }
         let menuStateRef = io_github_kt_pulsebar_export_PulseBarBridge_readMenuState(bridgeRef)
         return withDisposedExternalRef(menuStateRef) { menuStateRef in
@@ -692,7 +963,7 @@ final class NativeMonitorModel: ObservableObject {
         } ?? nil
     }
 
-    private static func readStats(
+    nonisolated private static func readStats(
         bridgeRef: UnsafeMutableRawPointer?,
         dayIso: String,
         limit: Int32
@@ -723,7 +994,7 @@ final class NativeMonitorModel: ObservableObject {
         } ?? ([], 0)
     }
 
-    private static func readInteractionState(
+    nonisolated private static func readInteractionState(
         bridgeRef: UnsafeMutableRawPointer?
     ) -> (items: [InteractionItem], pendingCount: Int, lastStatus: String?) {
         guard let bridgeRef else { return ([], 0, nil) }
@@ -755,7 +1026,7 @@ final class NativeMonitorModel: ObservableObject {
         } ?? ([], 0, nil)
     }
 
-    private static func readSyncState(bridgeRef: UnsafeMutableRawPointer?) -> SyncStatusInfo? {
+    nonisolated private static func readSyncState(bridgeRef: UnsafeMutableRawPointer?) -> SyncStatusInfo? {
         guard let bridgeRef else { return nil }
         let syncRef = io_github_kt_pulsebar_export_PulseBarBridge_readSyncState(bridgeRef)
         return withDisposedExternalRef(syncRef) { syncRef in
@@ -801,7 +1072,7 @@ final class NativeMonitorModel: ObservableObject {
         min(max(settingsDraft.appPollingMillis, 750), 5_000)
     }
 
-    private static func mapConfig(_ config: PulseBarConfig) -> SettingsDraft {
+    nonisolated private static func mapConfig(_ config: PulseBarConfig) -> SettingsDraft {
         guard let configRef = externalRCRef(of: config as AnyObject) else {
             return SettingsDraft()
         }
@@ -814,6 +1085,7 @@ final class NativeMonitorModel: ObservableObject {
                         id: io_github_kt_pulsebar_export_PulseBarEndpointConfig_id_get(endpointRef),
                         name: io_github_kt_pulsebar_export_PulseBarEndpointConfig_name_get(endpointRef),
                         enabled: io_github_kt_pulsebar_export_PulseBarEndpointConfig_enabled_get(endpointRef),
+                        disconnected: io_github_kt_pulsebar_export_PulseBarEndpointConfig_disconnected_get(endpointRef),
                         transport: mapTransportName(io_github_kt_pulsebar_export_PulseBarEndpointConfig_transportName_get(endpointRef)),
                         endpointURL: io_github_kt_pulsebar_export_PulseBarEndpointConfig_endpointUrl_get(endpointRef),
                         workspaceId: io_github_kt_pulsebar_export_PulseBarEndpointConfig_workspaceId_get(endpointRef),
@@ -838,19 +1110,20 @@ final class NativeMonitorModel: ObservableObject {
         } ?? SettingsDraft()
     }
 
-    private static func makeConfig(from draft: SettingsDraft) -> PulseBarConfig {
+    nonisolated private static func makeConfig(from draft: SettingsDraft) -> PulseBarConfig {
         let endpoints = draft.endpoints.map { endpoint in
             PulseBarEndpointConfig(
                 id: endpoint.id,
                 name: endpoint.name,
                 enabled: endpoint.enabled,
-                transport: .WEBSOCKET,
-                transportName: TransportOption.websocket.rawValue,
+                disconnected: endpoint.disconnected,
+                transport: mapTransport(endpoint.transport),
+                transportName: endpoint.transport.rawValue,
                 endpointUrl: endpoint.endpointUrl,
                 workspaceId: endpoint.workspaceId,
                 siteId: endpoint.siteId,
                 apiKey: endpoint.apiKey,
-                batchWindowSeconds: 15
+                batchWindowSeconds: Int32(endpoint.batchWindowSeconds)
             )
         }
         return PulseBarConfig(
@@ -869,7 +1142,7 @@ final class NativeMonitorModel: ObservableObject {
         )
     }
 
-    private static func mapTransport(_ transport: PulseBarTransport) -> TransportOption {
+    nonisolated private static func mapTransport(_ transport: PulseBarTransport) -> TransportOption {
         switch transport {
         case .WEBHOOK:
             return .webhook
@@ -880,7 +1153,7 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
-    private static func mapTransportName(_ transport: String) -> TransportOption {
+    nonisolated private static func mapTransportName(_ transport: String) -> TransportOption {
         switch transport {
         case "WEBHOOK":
             return .webhook
@@ -891,7 +1164,7 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
-    private static func mapTransport(_ transport: TransportOption) -> PulseBarTransport {
+    nonisolated private static func mapTransport(_ transport: TransportOption) -> PulseBarTransport {
         switch transport {
         case .webhook:
             return .WEBHOOK
@@ -902,7 +1175,7 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
-    private static func mapInteractionModeName(_ raw: String) -> InteractionExecutionMode {
+    nonisolated private static func mapInteractionModeName(_ raw: String) -> InteractionExecutionMode {
         switch raw {
         case "AUTO_ENQUEUE":
             return .autoEnqueue
@@ -911,7 +1184,7 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
-    private static func mapInteractionMode(_ mode: InteractionExecutionMode) -> PulseBarInteractionExecutionMode {
+    nonisolated private static func mapInteractionMode(_ mode: InteractionExecutionMode) -> PulseBarInteractionExecutionMode {
         switch mode {
         case .autoEnqueue:
             return .AUTO_ENQUEUE
@@ -920,7 +1193,7 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
-    private static func mapInteractionPlaybackModeName(_ raw: String) -> InteractionPlaybackMode {
+    nonisolated private static func mapInteractionPlaybackModeName(_ raw: String) -> InteractionPlaybackMode {
         switch raw {
         case "PLAY_NOW":
             return .playNow
@@ -929,7 +1202,7 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
-    private static func mapInteractionPlaybackMode(_ mode: InteractionPlaybackMode) -> PulseBarInteractionPlaybackMode {
+    nonisolated private static func mapInteractionPlaybackMode(_ mode: InteractionPlaybackMode) -> PulseBarInteractionPlaybackMode {
         switch mode {
         case .playNow:
             return .PLAY_NOW

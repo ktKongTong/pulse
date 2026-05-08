@@ -16,6 +16,7 @@ actual class PulseBarBridge actual constructor() {
                     id = "default-endpoint",
                     name = "Primary endpoint",
                     enabled = false,
+                    disconnected = false,
                     transport = PulseBarTransport.WEBSOCKET,
                     transportName = PulseBarTransport.WEBSOCKET.name,
                     endpointUrl = "",

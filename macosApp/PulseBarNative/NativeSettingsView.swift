@@ -1,10 +1,11 @@
+import AppKit
 import SwiftUI
 
 struct NativeSettingsView: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
 
     var body: some View {
-        SettingsEditorContent(showTitle: true)
+        GlobalSettingsPane()
             .environmentObject(monitor)
     }
 }
@@ -14,38 +15,33 @@ struct PulseBarDashboardView: View {
 
     var body: some View {
         NavigationSplitView {
-            VStack(alignment: .leading, spacing: 16) {
-                DashboardSidebarHeader()
-                    .environmentObject(monitor)
-
+            VStack(alignment: .leading, spacing: 0) {
                 List(
                     DashboardSection.allCases,
                     selection: Binding(
                         get: { monitor.dashboardSelection },
-                        set: { monitor.dashboardSelection = $0 ?? .dashboard }
+                        set: { monitor.dashboardSelection = $0 ?? .connection }
                     )
                 ) { section in
                     Label(section.title, systemImage: section.symbol)
                         .tag(section)
                 }
                 .listStyle(.sidebar)
+
+                SidebarMediaSummary(media: monitor.snapshot?.media)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 16)
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 18)
-            .navigationSplitViewColumnWidth(min: 220, ideal: 250)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 248)
         } detail: {
             Group {
                 switch monitor.dashboardSelection {
-                case .dashboard:
-                    DashboardOverviewPane()
-                case .activity:
-                    DashboardActivityPane()
-                case .sync:
-                    DashboardSyncPane()
-                case .liveListen:
-                    LiveListenCapturePane()
+                case .connection:
+                    ConnectionPane()
+                case .reporting:
+                    ReportingPane()
                 case .settings:
-                    SettingsEditorContent(showTitle: false)
+                    GlobalSettingsPane()
                 }
             }
             .environmentObject(monitor)
@@ -55,729 +51,941 @@ struct PulseBarDashboardView: View {
     }
 }
 
-private struct DashboardSidebarHeader: View {
-    @EnvironmentObject private var monitor: NativeMonitorModel
+private struct SidebarMediaSummary: View {
+    let media: MediaInfo?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center) {
-                Text("PulseBar")
-                    .font(.title.weight(.bold))
-                Spacer()
-                Circle()
-                    .fill(monitor.isPaused ? Color.orange : Color.green)
-                    .frame(width: 8, height: 8)
-            }
+            Divider()
+            if let media {
+                HStack(spacing: 10) {
+                    AsyncImage(url: media.artworkURL) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(.quaternary)
+                            .overlay(Image(systemName: "music.note").foregroundStyle(.secondary))
+                    }
+                    .frame(width: 34, height: 34)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
 
-            Text("Native monitor dashboard")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(media.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(media.artist)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .foregroundStyle(.secondary)
+                    Text("No media")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(Color.secondary.opacity(0.08))
+    }
+}
+
+private struct ConnectionPane: View {
+    @EnvironmentObject private var monitor: NativeMonitorModel
+    @State private var selectedEndpointID: String?
+    @State private var editingEndpointID: String?
+    @State private var deleteCandidate: EndpointSettingsDraft?
+
+    private var endpoints: [EndpointSettingsDraft] {
+        monitor.settingsDraft.endpoints
+    }
+
+    private var selectedEndpoint: EndpointSettingsDraft? {
+        guard let selectedEndpointID else { return endpoints.first }
+        return endpoints.first { $0.id == selectedEndpointID } ?? endpoints.first
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            connectionList
+                .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+                .background(Color(nsColor: .controlBackgroundColor))
+
+            Divider()
+
+            if let endpoint = selectedEndpoint {
+                ConnectionDetailPane(
+                    endpoint: endpoint,
+                    edit: { editingEndpointID = endpoint.id },
+                    delete: { deleteCandidate = endpoint }
+                )
+                .environmentObject(monitor)
+            } else {
+                EmptyConnectionPane {
+                    addEndpoint()
+                }
+            }
+        }
+        .onAppear(perform: ensureSelection)
+        .onChange(of: monitor.settingsDraft.endpoints) { _, _ in ensureSelection() }
+        .sheet(
+            isPresented: Binding(
+                get: { editingEndpointID != nil },
+                set: { if !$0 { editingEndpointID = nil } }
+            )
+        ) {
+            if let editingEndpointID {
+                EndpointEditorSheet(endpointID: editingEndpointID)
+                    .environmentObject(monitor)
+                    .frame(width: 560, height: 620)
+            }
+        }
+        .alert(
+            "Delete Connection?",
+            isPresented: Binding(
+                get: { deleteCandidate != nil },
+                set: { if !$0 { deleteCandidate = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let id = deleteCandidate?.id {
+                    monitor.removeEndpoint(id)
+                }
+                deleteCandidate = nil
+            }
+            Button("Cancel", role: .cancel) {
+                deleteCandidate = nil
+            }
+        } message: {
+            Text("This removes the endpoint configuration from PulseBar.")
+        }
+    }
+
+    private var connectionList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Connection")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                Button {
+                    addEndpoint()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+
+            Divider()
+
+            List(selection: $selectedEndpointID) {
+                ForEach(endpoints) { endpoint in
+                    ConnectionListItem(
+                        endpoint: endpoint,
+                        status: connectionStatus(endpoint)
+                    )
+                    .tag(endpoint.id)
+                }
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private func addEndpoint() {
+        monitor.addEndpoint()
+        selectedEndpointID = monitor.settingsDraft.endpoints.last?.id
+        editingEndpointID = selectedEndpointID
+    }
+
+    private func ensureSelection() {
+        if selectedEndpointID == nil || !endpoints.contains(where: { $0.id == selectedEndpointID }) {
+            selectedEndpointID = endpoints.first?.id
+        }
+    }
+
+    private func connectionStatus(_ endpoint: EndpointSettingsDraft) -> ConnectionRuntimeStatus {
+        if monitor.connectingEndpointIDs.contains(endpoint.id) {
+            return .reconnecting
+        }
+        return ConnectionRuntimeStatus.resolve(
+            endpoint: endpoint,
+            sync: monitor.syncState?.endpoints.first { $0.id == endpoint.id },
+            manuallyDisconnected: endpoint.disconnected
         )
     }
 }
 
-private struct DashboardOverviewPane: View {
-    @EnvironmentObject private var monitor: NativeMonitorModel
+private struct ConnectionListItem: View {
+    let endpoint: EndpointSettingsDraft
+    let status: ConnectionRuntimeStatus
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                DashboardPageHeader(
-                    title: "Dashboard",
-                    subtitle: "Live focus, media, and usage without the tray constraints."
-                ) {
-                    HStack(spacing: 10) {
-                        DashboardBadge(title: "Today", value: durationString(monitor.todayTotalSeconds))
-                        DashboardBadge(
-                            title: "Status",
-                            value: monitor.isPaused ? "Paused" : "Monitoring"
-                        )
-                    }
-                }
-
-                if let snapshot = monitor.snapshot {
-                    PulseBarCurrentAppCard(snapshot: snapshot)
-                }
-
-                if let media = monitor.snapshot?.media {
-                    DashboardSectionSurface {
-                        PulseBarMediaCard(
-                            media: media,
-                            onPrevious: { monitor.mediaCommand(.PREVIOUS) },
-                            onTogglePlayPause: { monitor.mediaCommand(.TOGGLE_PLAY_PAUSE) },
-                            onNext: { monitor.mediaCommand(.NEXT) },
-                            onSeek: { target in
-                                monitor.seekMedia(to: target)
-                            }
-                        )
-                    }
-                }
-
-                DashboardSectionSurface {
-                    VStack(alignment: .leading, spacing: 18) {
-                        HStack {
-                            Text("Interactions")
-                                .font(.title3.weight(.bold))
-                            Spacer()
-                            Text("\(monitor.interactionPendingCount) pending")
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if monitor.interactionItems.isEmpty {
-                            Text("No pending web recommendations.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            VStack(spacing: 12) {
-                                ForEach(monitor.interactionItems) { item in
-                                    InteractionRow(item: item) {
-                                        monitor.acceptInteraction(item.requestId)
-                                    } onDismiss: {
-                                        monitor.dismissInteraction(item.requestId)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                DashboardSectionSurface {
-                    VStack(alignment: .leading, spacing: 18) {
-                        HStack {
-                            Text("Today")
-                                .font(.title3.weight(.bold))
-                            Spacer()
-                            Text(durationString(monitor.todayTotalSeconds))
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-
-                        VStack(spacing: 14) {
-                            ForEach(Array(monitor.todayStats.prefix(10))) { row in
-                                DashboardUsageRow(row: row, totalSeconds: monitor.todayTotalSeconds)
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(28)
-        }
-    }
-}
-
-private struct DashboardActivityPane: View {
-    @EnvironmentObject private var monitor: NativeMonitorModel
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                DashboardPageHeader(
-                    title: "Activity",
-                    subtitle: "Detailed breakdown for the current day."
-                ) {
-                    Text(durationString(monitor.todayTotalSeconds))
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-
-                if let snapshot = monitor.snapshot {
-                    DashboardSectionSurface {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Current Session")
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            PulseBarCurrentAppCard(snapshot: snapshot)
-                        }
-                    }
-                }
-
-                DashboardSectionSurface {
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text("Today Breakdown")
-                            .font(.title3.weight(.bold))
-
-                        VStack(spacing: 14) {
-                            ForEach(monitor.todayStats) { row in
-                                DashboardUsageRow(row: row, totalSeconds: monitor.todayTotalSeconds)
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(28)
-        }
-    }
-}
-
-private struct DashboardSyncPane: View {
-    @EnvironmentObject private var monitor: NativeMonitorModel
-
-    private var configuredEndpointCount: Int {
-        monitor.syncState?.totalEndpointCount ?? monitor.settingsDraft.endpoints.count
+    private var displayName: String {
+        endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var enabledEndpointCount: Int {
-        monitor.syncState?.enabledEndpointCount ?? monitor.settingsDraft.endpoints.filter { $0.enabled }.count
+    private var endpointLabel: String {
+        endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                DashboardPageHeader(
-                    title: "Sync",
-                    subtitle: "Local capture always writes SQLite first. Server probe only gates replay."
-                ) {
-                    Button(enabledEndpointCount > 1 ? "Replay Enabled Endpoints" : "Replay Endpoint") {
-                        monitor.retryEndpoint()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!(monitor.syncState?.enabled ?? (enabledEndpointCount > 0)))
-                }
-
-                DashboardSectionSurface {
-                    VStack(alignment: .leading, spacing: 18) {
-                        HStack {
-                            Text("Endpoints")
-                                .font(.title3.weight(.bold))
-                            Spacer()
-                            Text("\(enabledEndpointCount)/\(configuredEndpointCount) enabled")
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if let sync = monitor.syncState {
-                            SyncStatusBadge(sync: sync)
-                            DashboardKeyValueRow(key: "Server Probe", value: axisStatusLabel(derivedServerStatus(sync.status)))
-                            DashboardKeyValueRow(key: "Ingest Config", value: axisStatusLabel(derivedClientStatus(sync.status)))
-                            DashboardKeyValueRow(key: "SQLite Queue", value: "\(sync.pendingCount) pending")
-                            DashboardKeyValueRow(
-                                key: "Delivery",
-                                value: syncStatusDetail(sync.status, sync.lastStatus, nil)
-                            )
-                        }
-
-                        if let sync = monitor.syncState, !sync.endpoints.isEmpty {
-                            VStack(spacing: 14) {
-                                ForEach(sync.endpoints) { endpoint in
-                                    EndpointSyncCard(endpoint: endpoint)
-                                }
-                            }
-                        } else if !monitor.settingsDraft.endpoints.isEmpty {
-                            Text("Status will appear after the next refresh.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("No endpoints configured.")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                DashboardSectionSurface {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Sampling")
-                            .font(.headline.weight(.semibold))
-                        DashboardKeyValueRow(key: "Idle", value: "\(monitor.settingsDraft.idleThresholdSeconds)s")
-                        DashboardKeyValueRow(key: "Stability", value: "\(monitor.settingsDraft.changeStabilityMillis)ms")
-                        DashboardKeyValueRow(key: "Heartbeat", value: "\(monitor.settingsDraft.heartbeatSeconds)s")
-                        DashboardKeyValueRow(key: "App", value: "\(monitor.settingsDraft.appPollingMillis)ms")
-                        DashboardKeyValueRow(key: "Page", value: "\(monitor.settingsDraft.pagePollingMillis)ms")
-                        DashboardKeyValueRow(key: "Media", value: "\(monitor.settingsDraft.mediaPollingMillis)ms")
-                    }
-                }
-            }
-            .padding(28)
-        }
-    }
-}
-
-private struct SyncStatusBadge: View {
-    let sync: SyncStatusInfo
 
     var body: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(statusColor)
-                .frame(width: 10, height: 10)
-            Text(statusLabel)
-                .font(.subheadline.weight(.semibold))
-            if sync.needsAttention {
-                Text("Attention needed")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
+                .fill(status.color)
+                .frame(width: 8, height: 8)
 
-    private var statusLabel: String {
-        syncStatusLabel(sync.status)
-    }
-
-    private var statusColor: Color {
-        syncStatusColor(sync.status)
-    }
-}
-
-private struct EndpointSyncCard: View {
-    let endpoint: EndpointSyncStatusInfo
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(endpoint.name)
-                        .font(.headline)
-                    Text(endpoint.endpointURL.isEmpty ? "Server not configured" : endpoint.endpointURL)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayName.isEmpty ? (endpointLabel.isEmpty ? "Untitled endpoint" : endpointLabel) : displayName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                if !displayName.isEmpty, !endpointLabel.isEmpty {
+                    Text(endpointLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                Spacer()
-                EndpointSyncBadge(endpoint: endpoint)
-            }
-
-            DashboardKeyValueRow(key: "Server Probe", value: axisStatusLabel(derivedServerStatus(endpoint.status)))
-            DashboardKeyValueRow(key: "Ingest Config", value: axisStatusLabel(derivedClientStatus(endpoint.status)))
-            DashboardKeyValueRow(key: "SQLite Queue", value: "\(endpoint.pendingCount) pending")
-            DashboardKeyValueRow(key: "Ack Seq", value: "\(endpoint.acknowledgedSeqMax)")
-            DashboardKeyValueRow(
-                key: "Delivery",
-                value: syncStatusDetail(endpoint.status, endpoint.lastStatus, endpoint.lastErrorMessage)
-            )
-            if let diagnostic = endpoint.diagnosticMessage, !diagnostic.isEmpty {
-                DashboardKeyValueRow(key: "Diagnostic", value: diagnostic)
-            }
-            DashboardKeyValueRow(key: "Last Probe", value: formatSyncDate(endpoint.lastProbeAt))
-            DashboardKeyValueRow(key: "Last Success", value: formatSyncDate(endpoint.lastSuccessAt))
-            DashboardKeyValueRow(key: "Last Failure", value: formatSyncDate(endpoint.lastFailureAt))
-            if let error = endpoint.lastErrorMessage, !error.isEmpty {
-                DashboardKeyValueRow(key: "Error", value: error)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white.opacity(0.58))
+        .padding(.vertical, 6)
+    }
+}
+
+private struct ConnectionDetailPane: View {
+    @EnvironmentObject private var monitor: NativeMonitorModel
+
+    let endpoint: EndpointSettingsDraft
+    let edit: () -> Void
+    let delete: () -> Void
+
+    private var sync: EndpointSyncStatusInfo? {
+        monitor.syncState?.endpoints.first { $0.id == endpoint.id }
+    }
+
+    private var liveListenEndpoint: LiveListenEndpointPublisherStatus? {
+        monitor.liveListenCaptureModel.endpointPublisherStats.first { $0.id == endpoint.id }
+    }
+
+    private var status: ConnectionRuntimeStatus {
+        if monitor.connectingEndpointIDs.contains(endpoint.id) {
+            return .reconnecting
+        }
+        return ConnectionRuntimeStatus.resolve(
+            endpoint: endpoint,
+            sync: sync,
+            manuallyDisconnected: endpoint.disconnected
         )
     }
-}
 
-private struct EndpointSyncBadge: View {
-    let endpoint: EndpointSyncStatusInfo
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(syncStatusColor(endpoint.status))
-                .frame(width: 9, height: 9)
-            Text(endpoint.enabled ? syncStatusLabel(endpoint.status) : "Disabled")
-                .font(.subheadline.weight(.semibold))
-        }
+    private var isConnecting: Bool {
+        monitor.connectingEndpointIDs.contains(endpoint.id)
     }
-}
 
-private struct SettingsEditorContent: View {
-    @EnvironmentObject private var monitor: NativeMonitorModel
-    @State private var saved = false
-
-    let showTitle: Bool
+    private var title: String {
+        let name = endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        let url = endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        return url.isEmpty ? "Untitled endpoint" : url
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                DashboardPageHeader(
-                    title: showTitle ? "PulseBar Settings" : "Settings",
-                    subtitle: "Monitoring, endpoint delivery, and sampling controls."
-                ) {
-                    HStack(spacing: 12) {
-                        if saved {
-                            Text("Saved")
-                                .font(.subheadline.weight(.medium))
+            VStack(alignment: .leading, spacing: 28) {
+                header
+
+                VStack(alignment: .leading, spacing: 22) {
+                    DetailSection("Connection Status") {
+                        KeyValueGrid(rows: [
+                            ("Status", status.title),
+                            ("Enabled", endpoint.enabled ? "Enabled" : "Disabled"),
+                            ("Reason", disconnectedReason),
+                            ("Last probe", formatSyncDate(sync?.lastProbeAt)),
+                            ("Last success", formatSyncDate(sync?.lastSuccessAt)),
+                            ("Last failure", formatSyncDate(sync?.lastFailureAt)),
+                        ])
+                    }
+
+                    DetailSection("Streaming") {
+                        KeyValueGrid(rows: [
+                            ("Focus", monitor.snapshot?.appName ?? "No active sample"),
+                            ("Media", monitor.snapshot?.media.map { "\($0.title) - \($0.artist)" } ?? "No media"),
+                            ("Delivery", deliveryDetail),
+                            ("Live Listen", liveListenStatusText),
+                            ("Capture source", monitor.liveListenCaptureModel.selectedSource?.name ?? "No source"),
+                        ])
+
+                        if endpoint.disconnected {
+                            Text("Live Listen stopped manually for this connection.")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
-                        }
-                        Button("Save Changes") {
-                            monitor.saveConfig()
-                            saved = true
-                        }
-                        .buttonStyle(.borderedProminent)
-                        }
-                }
-
-                VStack(alignment: .leading, spacing: 18) {
-                    SettingsCard(title: "Runtime", subtitle: "Current app and monitor behavior.") {
-                        VStack(alignment: .leading, spacing: 14) {
-                            if let snapshot = monitor.snapshot {
-                                PulseBarCurrentAppCard(snapshot: snapshot)
-                            }
-
-                            ToggleRow(
-                                title: "Pause monitoring",
-                                subtitle: "Stops sampling and endpoint delivery until resumed.",
-                                isOn: Binding(
-                                    get: { monitor.isPaused },
-                                    set: { _ in
-                                        monitor.togglePaused()
-                                        saved = false
-                                    }
-                                )
-                            )
-                        }
-                    }
-
-                    SettingsCard(title: "Server Connections", subtitle: "Configure the Pulse server used by native reporting and Live Listen media streaming.") {
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Configured servers")
-                                        .font(.headline)
-                                    Text("Each server keeps its own URL, auth, workspace, site, and enabled state.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("Add Endpoint") {
-                                    monitor.addEndpoint()
-                                    saved = false
-                                }
-                                .buttonStyle(.bordered)
-                            }
-
-                            if monitor.settingsDraft.endpoints.isEmpty {
-                                Text("No servers configured yet.")
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                VStack(spacing: 14) {
-                                    ForEach(Array(monitor.settingsDraft.endpoints.enumerated()), id: \.element.id) { index, endpoint in
-                                        EndpointEditorCard(
-                                            index: index,
-                                            canRemove: true
-                                        ) {
-                                            monitor.removeEndpoint(endpoint.id)
-                                            saved = false
-                                        } enabled: {
-                                            endpointBinding(id: endpoint.id, fallback: endpoint.enabled, \.enabled)
-                                        } name: {
-                                            endpointBinding(id: endpoint.id, fallback: endpoint.name, \.name)
-                                        } endpointURL: {
-                                            endpointBinding(id: endpoint.id, fallback: endpoint.endpointUrl, \.endpointUrl)
-                                        } workspaceId: {
-                                            endpointBinding(id: endpoint.id, fallback: endpoint.workspaceId, \.workspaceId)
-                                        } siteId: {
-                                            endpointBinding(id: endpoint.id, fallback: endpoint.siteId, \.siteId)
-                                        } apiKey: {
-                                            endpointBinding(id: endpoint.id, fallback: endpoint.apiKey, \.apiKey)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                SettingsCard(title: "Sampling", subtitle: "Tune responsiveness, heartbeats, and probe cadence.") {
-                    VStack(spacing: 14) {
-                        PresetNumericRow(
-                            title: "Idle threshold",
-                            subtitle: "Mark user away after this long without input.",
-                            unit: "s",
-                            value: draftBinding(\.idleThresholdSeconds),
-                            presets: [60, 300, 600, 1800]
-                        )
-                        PresetNumericRow(
-                            title: "Change stability",
-                            subtitle: "Wait before committing unstable app or page changes.",
-                            unit: "ms",
-                            value: draftBinding(\.changeStabilityMillis),
-                            presets: [300, 600, 1200, 2000]
-                        )
-                        PresetNumericRow(
-                            title: "Heartbeat",
-                            subtitle: "Push the stable state again at this interval.",
-                            unit: "s",
-                            value: draftBinding(\.heartbeatSeconds),
-                            presets: [15, 30, 60, 120]
-                        )
-                        PresetNumericRow(
-                            title: "App polling",
-                            subtitle: "How often to probe the frontmost app.",
-                            unit: "ms",
-                            value: draftBinding(\.appPollingMillis),
-                            presets: [250, 500, 1000, 2000]
-                        )
-                        PresetNumericRow(
-                            title: "Page polling",
-                            subtitle: "How often to refresh browser page metadata.",
-                            unit: "ms",
-                            value: draftBinding(\.pagePollingMillis),
-                            presets: [500, 1000, 2000, 5000]
-                        )
-                        PresetNumericRow(
-                            title: "Media polling",
-                            subtitle: "How often to refresh media playback details.",
-                            unit: "ms",
-                            value: draftBinding(\.mediaPollingMillis),
-                            presets: [500, 1000, 2000, 8000]
-                        )
-                    }
-                }
-
-                SettingsCard(title: "Interactions", subtitle: "Handle recommendations initiated from the web side.") {
-                    VStack(alignment: .leading, spacing: 16) {
-                        ToggleRow(
-                            title: "Allow web interactions",
-                            subtitle: "When disabled, device-side interaction requests are rejected.",
-                            isOn: draftBinding(\.allowWebInteractions)
-                        )
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Execution mode")
-                                .font(.subheadline.weight(.semibold))
-                            Picker("Execution mode", selection: draftBinding(\.interactionExecutionMode)) {
-                                ForEach(InteractionExecutionMode.allCases) { option in
-                                    Text(option.title).tag(option)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                        }
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Recommendation action")
-                                .font(.subheadline.weight(.semibold))
-                            Picker("Recommendation action", selection: draftBinding(\.interactionPlaybackMode)) {
-                                ForEach(InteractionPlaybackMode.allCases) { option in
-                                    Text(option.title).tag(option)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                        }
-
-                        if let item = monitor.interactionItems.first {
-                            InteractionRow(item: item) {
-                                monitor.acceptInteraction(item.requestId)
-                            } onDismiss: {
-                                monitor.dismissInteraction(item.requestId)
-                            }
+                        } else if let error = monitor.liveListenCaptureModel.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+                           !error.isEmpty {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        } else if let liveListenEndpoint {
+                            Text(liveListenEndpoint.statusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         } else {
-                            Text("No pending requests.")
-                                .foregroundStyle(.secondary)
-                        }
-
-                        monitor.interactionLastStatus.map {
-                            Text($0)
+                            Text(monitor.liveListenCaptureModel.publisherStatusText)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    DetailSection("Local Cache") {
+                        KeyValueGrid(rows: [
+                            ("Pending count", "\(sync?.pendingCount ?? monitor.syncState?.pendingCount ?? 0)"),
+                        ])
+                    }
                 }
             }
-            .padding(28)
+            .padding(32)
+            .frame(maxWidth: 920, alignment: .leading)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                        .font(.largeTitle.weight(.semibold))
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(status.color)
+                            .frame(width: 9, height: 9)
+                        Text(status.title)
+                            .font(.headline.weight(.semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(2)
+                        if disconnectedReason != "-" {
+                            Text(disconnectedReason)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .layoutPriority(1)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                HStack(spacing: 10) {
+                    Button(connectionActionTitle) {
+                        if status == .connected {
+                            monitor.disconnectEndpoint(endpoint.id)
+                        } else {
+                            monitor.connectEndpoint(endpoint.id)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!endpoint.enabled || isConnecting)
+
+                    Button(endpoint.enabled ? "Disable" : "Enable") {
+                        monitor.setEndpointEnabled(endpoint.id, enabled: !endpoint.enabled)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Menu {
+                        Button("Edit", action: edit)
+                        Button("Delete", role: .destructive, action: delete)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                }
+            }
+
+            Text(endpoint.endpointUrl.isEmpty ? "Endpoint identifier not configured" : endpoint.endpointUrl)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var disconnectedReason: String {
+        if isConnecting {
+            return "-"
+        }
+        if !endpoint.enabled {
+            return "Endpoint disabled"
+        }
+        if endpoint.disconnected {
+            return "Disconnected manually"
+        }
+        guard let sync else {
+            return endpoint.endpointUrl.isEmpty ? "Missing endpoint URL" : "-"
+        }
+        if isStaleInactiveSync(sync) {
+            return "-"
+        }
+        switch sync.status {
+        case "healthy", "probing", "checking_server", "idle":
+            return "-"
+        case "local_unavailable":
+            return "Local server unavailable"
+        case "server_unavailable":
+            return "Server unavailable"
+        case "misconfigured", "configuration_error":
+            return "Configuration needs attention"
+        default:
+            return connectionStatusDetail(sync.status, sync.lastErrorMessage)
+        }
+    }
+
+    private var connectionActionTitle: String {
+        if isConnecting {
+            return "Connecting…"
+        }
+        switch status {
+        case .connected:
+            return "Disconnect"
+        case .reconnecting:
+            return "Reconnect"
+        case .disconnected:
+            return "Connect"
+        }
+    }
+
+    private var deliveryDetail: String {
+        if isConnecting {
+            return "Connecting"
+        }
+        if !endpoint.enabled {
+            return "Endpoint disabled"
+        }
+        if endpoint.disconnected {
+            return "Disconnected manually"
+        }
+        if let sync, isStaleInactiveSync(sync) {
+            return "Connecting"
+        }
+        return deliveryStatusDetail(
+            status: sync?.status,
+            lastStatus: sync?.lastStatus,
+            lastErrorMessage: sync?.lastErrorMessage,
+            pendingCount: sync?.pendingCount ?? 0
+        )
+    }
+
+    private var liveListenStatusText: String {
+        if endpoint.disconnected {
+            return "Stopped manually"
+        }
+        if !endpoint.enabled {
+            return "Endpoint disabled"
+        }
+
+        let model = monitor.liveListenCaptureModel
+        if let liveListenEndpoint {
+            if liveListenEndpoint.stats.connectionState == .connected, model.isCapturing {
+                return liveListenEndpoint.stats.isSending ? "Sending audio packets" : model.statusText
+            }
+            return liveListenEndpoint.statusText
+        }
+        if let error = model.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+            return error
+        }
+        return model.publisherStatusText
+    }
+
+    private func isStaleInactiveSync(_ sync: EndpointSyncStatusInfo) -> Bool {
+        sync.status == "disabled" ||
+            sync.status == "disconnected" ||
+            sync.lastStatus == "skip:endpoint_disabled" ||
+            sync.lastStatus == "skip:endpoint_disconnected"
+    }
+}
+
+private struct EmptyConnectionPane: View {
+    let add: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("No connections")
+                .font(.title2.weight(.semibold))
+            Button("Add Connection", action: add)
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct EndpointEditorSheet: View {
+    @EnvironmentObject private var monitor: NativeMonitorModel
+    @Environment(\.dismiss) private var dismiss
+
+    let endpointID: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("Edit Connection")
+                .font(.title.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 16) {
+                LabeledField(title: "Name", text: endpointBinding(\.name))
+                LabeledField(title: "Endpoint URL", text: endpointBinding(\.endpointUrl))
+                LabeledField(title: "Workspace ID", text: endpointBinding(\.workspaceId))
+                LabeledField(title: "Site ID", text: endpointBinding(\.siteId))
+                LabeledSecureField(title: "API Key", text: endpointBinding(\.apiKey))
+                NumericField(title: "Batch Window", unit: "s", value: endpointBinding(\.batchWindowSeconds))
+            }
+
+            Spacer()
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                Button("Save") {
+                    monitor.saveConfig()
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(28)
+    }
+
+    private func endpointBinding<T>(_ keyPath: WritableKeyPath<EndpointSettingsDraft, T>) -> Binding<T> {
+        Binding(
+            get: {
+                guard let endpoint = monitor.settingsDraft.endpoints.first(where: { $0.id == endpointID }) else {
+                    return EndpointSettingsDraft.defaultPrimary()[keyPath: keyPath]
+                }
+                return endpoint[keyPath: keyPath]
+            },
+            set: { value in
+                guard let index = monitor.settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
+                    return
+                }
+                monitor.settingsDraft.endpoints[index][keyPath: keyPath] = value
+            }
+        )
+    }
+}
+
+private struct ReportingPane: View {
+    @State private var apps: [InstalledReportingApp] = []
+    @State private var selectedID: String = InstalledReportingApp.other.id
+    @AppStorage("pulsebar.reporting.disabledBundleIds") private var disabledBundleIDsRaw = ""
+
+    private var disabledBundleIDs: Set<String> {
+        Set(disabledBundleIDsRaw.split(separator: ",").map(String.init))
+    }
+
+    private var selectedApp: InstalledReportingApp {
+        apps.first { $0.id == selectedID } ?? .other
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Reporting")
+                    .font(.title2.weight(.semibold))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 18)
+                Divider()
+                List(selection: $selectedID) {
+                    ForEach(apps) { app in
+                        ReportingAppListItem(
+                            app: app,
+                            enabled: isEnabled(app)
+                        )
+                        .tag(app.id)
+                    }
+                }
+                .listStyle(.plain)
+            }
+            .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+            .background(Color(nsColor: .controlBackgroundColor))
+
+            Divider()
+
+            ReportingDetailPane(
+                app: selectedApp,
+                enabled: isEnabled(selectedApp),
+                toggle: { setEnabled(!isEnabled(selectedApp), for: selectedApp) }
+            )
+        }
+        .onAppear {
+            apps = InstalledAppCatalog.load()
+            if !apps.contains(where: { $0.id == selectedID }) {
+                selectedID = apps.first?.id ?? InstalledReportingApp.other.id
+            }
+        }
+    }
+
+    private func isEnabled(_ app: InstalledReportingApp) -> Bool {
+        if app.isOther { return true }
+        return !disabledBundleIDs.contains(app.bundleID)
+    }
+
+    private func setEnabled(_ enabled: Bool, for app: InstalledReportingApp) {
+        guard !app.isOther else { return }
+        var next = disabledBundleIDs
+        if enabled {
+            next.remove(app.bundleID)
+        } else {
+            next.insert(app.bundleID)
+        }
+        disabledBundleIDsRaw = next.sorted().joined(separator: ",")
+    }
+}
+
+private struct ReportingAppListItem: View {
+    let app: InstalledReportingApp
+    let enabled: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if app.isOther {
+                Image(systemName: "tray.full")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .foregroundStyle(.secondary)
+            } else {
+                AppIconView(bundleId: app.bundleID, size: 28)
+            }
+
+            Text(app.name)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+
+            Spacer()
+
+            Text(enabled ? "Enabled" : "Disabled")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(enabled ? Color.green : Color.secondary)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct ReportingDetailPane: View {
+    let app: InstalledReportingApp
+    let enabled: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(alignment: .center, spacing: 14) {
+                if app.isOther {
+                    Image(systemName: "tray.full")
+                        .font(.system(size: 24, weight: .semibold))
+                        .frame(width: 42, height: 42)
+                        .foregroundStyle(.secondary)
+                } else {
+                    AppIconView(bundleId: app.bundleID, size: 42)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(app.name)
+                        .font(.largeTitle.weight(.semibold))
+                    Text(enabled ? "Enabled" : "Disabled")
+                        .font(.headline)
+                        .foregroundStyle(enabled ? Color.green : Color.secondary)
+                }
+
+                Spacer()
+
+                Button(enabled ? "Disable" : "Enable", action: toggle)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(app.isOther)
+            }
+
+            Spacer()
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct GlobalSettingsPane: View {
+    @EnvironmentObject private var monitor: NativeMonitorModel
+    @AppStorage("pulsebar.launchAtLogin") private var launchAtLogin = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 30) {
+                Text("Settings")
+                    .font(.largeTitle.weight(.semibold))
+
+                DetailSection("Sampling") {
+                    NumericField(
+                        title: "App Sampling Interval",
+                        unit: "ms",
+                        value: draftBinding(\.appPollingMillis)
+                    )
+                }
+
+                DetailSection("Detection") {
+                    NumericField(
+                        title: "Switch Detection Stability",
+                        unit: "ms",
+                        value: draftBinding(\.changeStabilityMillis)
+                    )
+                }
+
+                DetailSection("System") {
+                    Toggle("Launch at Login", isOn: $launchAtLogin)
+                        .toggleStyle(.switch)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Save Changes") {
+                        monitor.saveConfig()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(32)
+            .frame(maxWidth: 760, alignment: .leading)
         }
     }
 
     private func draftBinding<T>(_ keyPath: WritableKeyPath<SettingsDraft, T>) -> Binding<T> {
         Binding(
             get: { monitor.settingsDraft[keyPath: keyPath] },
-            set: {
-                monitor.settingsDraft[keyPath: keyPath] = $0
-                saved = false
-            }
-        )
-    }
-
-    private func endpointBinding<T>(
-        id endpointID: String,
-        fallback: T,
-        _ keyPath: WritableKeyPath<EndpointSettingsDraft, T>
-    ) -> Binding<T> {
-        Binding(
-            get: {
-                monitor.settingsDraft.endpoints.first { $0.id == endpointID }?[keyPath: keyPath] ?? fallback
-            },
-            set: {
-                guard let index = monitor.settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
-                    return
-                }
-                monitor.settingsDraft.endpoints[index][keyPath: keyPath] = $0
-                saved = false
-            }
+            set: { monitor.settingsDraft[keyPath: keyPath] = $0 }
         )
     }
 }
 
-private struct EndpointEditorCard: View {
-    let index: Int
-    let canRemove: Bool
-    let onRemove: () -> Void
-    @Binding var enabled: Bool
-    @Binding var name: String
-    @Binding var endpointURL: String
-    @Binding var workspaceId: String
-    @Binding var siteId: String
-    @Binding var apiKey: String
+private enum ConnectionRuntimeStatus: Equatable {
+    case connected
+    case disconnected
+    case reconnecting
 
-    init(
-        index: Int,
-        canRemove: Bool,
-        onRemove: @escaping () -> Void,
-        enabled: @escaping () -> Binding<Bool>,
-        name: @escaping () -> Binding<String>,
-        endpointURL: @escaping () -> Binding<String>,
-        workspaceId: @escaping () -> Binding<String>,
-        siteId: @escaping () -> Binding<String>,
-        apiKey: @escaping () -> Binding<String>
-    ) {
-        self.index = index
-        self.canRemove = canRemove
-        self.onRemove = onRemove
-        self._enabled = enabled()
-        self._name = name()
-        self._endpointURL = endpointURL()
-        self._workspaceId = workspaceId()
-        self._siteId = siteId()
-        self._apiKey = apiKey()
+    var title: String {
+        switch self {
+        case .connected: return "connected"
+        case .disconnected: return "disconnected"
+        case .reconnecting: return "reconnecting"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .connected: return .green
+        case .disconnected: return .red
+        case .reconnecting: return .yellow
+        }
+    }
+
+    static func resolve(
+        endpoint: EndpointSettingsDraft,
+        sync: EndpointSyncStatusInfo?,
+        manuallyDisconnected: Bool
+    ) -> ConnectionRuntimeStatus {
+        if manuallyDisconnected || !endpoint.enabled {
+            return .disconnected
+        }
+        guard let sync else {
+            return endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .disconnected : .reconnecting
+        }
+        if sync.status == "disabled" ||
+            sync.status == "disconnected" ||
+            sync.lastStatus == "skip:endpoint_disabled" ||
+            sync.lastStatus == "skip:endpoint_disconnected" {
+            return .reconnecting
+        }
+        switch sync.status {
+        case "healthy":
+            return .connected
+        case "probing", "checking_server", "idle":
+            return .reconnecting
+        default:
+            return .disconnected
+        }
+    }
+}
+
+private struct DetailSection<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(name.isEmpty ? "Endpoint \(index + 1)" : name)
-                        .font(.headline)
-                    Text("Pulse server URL and credentials.")
-                        .font(.caption)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct KeyValueGrid: View {
+    let rows: [(String, String)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(rows, id: \.0) { row in
+                HStack(alignment: .top, spacing: 18) {
+                    Text(row.0)
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if canRemove {
-                    Button("Remove", action: onRemove)
-                        .buttonStyle(.bordered)
+                        .frame(width: 130, alignment: .leading)
+                    Text(row.1)
+                        .font(.subheadline)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-
-            ToggleRow(
-                title: "Enabled",
-                subtitle: "Disabled servers stay saved but are not used by native reporting or Live Listen.",
-                isOn: $enabled
-            )
-
-            LabeledField(
-                title: "Name",
-                subtitle: "Shown in Sync status and settings.",
-                text: $name
-            )
-
-            LabeledField(
-                title: "Server URL",
-                subtitle: "Base Pulse server URL. Reporting and Live Listen paths are derived from this URL.",
-                text: $endpointURL
-            )
-
-            LabeledField(
-                title: "Workspace ID",
-                subtitle: "Must match the Worker WORKSPACE_ID.",
-                text: $workspaceId
-            )
-
-            LabeledField(
-                title: "Site ID",
-                subtitle: "Must match the Worker SITE_ID used by this site.",
-                text: $siteId
-            )
-
-            LabeledSecureField(
-                title: "API Key",
-                subtitle: "Required bearer token for device ingest.",
-                text: $apiKey
-            )
         }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white.opacity(0.58))
-        )
     }
 }
 
-private func syncStatusLabel(_ status: String) -> String {
+private struct LabeledField: View {
+    let title: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            TextField(title, text: $text)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+}
+
+private struct LabeledSecureField: View {
+    let title: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            SecureField(title, text: $text)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+}
+
+private struct NumericField: View {
+    let title: String
+    let unit: String
+    @Binding var value: Int
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 18) {
+            Text(title)
+                .font(.headline)
+            Spacer()
+            TextField(title, value: $value, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 110)
+                .multilineTextAlignment(.trailing)
+            Text(unit)
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct InstalledReportingApp: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let bundleID: String
+    let isOther: Bool
+
+    static let other = InstalledReportingApp(
+        id: "__pulsebar_other__",
+        name: "Other",
+        bundleID: "__pulsebar_other__",
+        isOther: true
+    )
+}
+
+private enum InstalledAppCatalog {
+    static func load() -> [InstalledReportingApp] {
+        var appsByBundleID: [String: InstalledReportingApp] = [InstalledReportingApp.other.bundleID: .other]
+        let paths = [
+            "/Applications",
+            "/System/Applications",
+            "/System/Applications/Utilities",
+            NSHomeDirectory() + "/Applications",
+        ]
+
+        for path in paths {
+            let url = URL(fileURLWithPath: path)
+            guard let contents = try? FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.isApplicationKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for appURL in contents where appURL.pathExtension == "app" {
+                guard let bundle = Bundle(url: appURL),
+                      let bundleID = bundle.bundleIdentifier else {
+                    continue
+                }
+                let name =
+                    bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ??
+                    bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ??
+                    appURL.deletingPathExtension().lastPathComponent
+                appsByBundleID[bundleID] = InstalledReportingApp(
+                    id: bundleID,
+                    name: name,
+                    bundleID: bundleID,
+                    isOther: false
+                )
+            }
+        }
+
+        let sorted = appsByBundleID.values
+            .filter { !$0.isOther }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return [.other] + sorted
+    }
+}
+
+private func connectionStatusDetail(_ status: String?, _ lastErrorMessage: String?) -> String {
+    guard let status else { return "-" }
+    if let lastErrorMessage, !lastErrorMessage.isEmpty {
+        return lastErrorMessage
+    }
     switch status {
-    case "healthy":
-        return "Healthy"
-    case "probing", "checking_server":
-        return "Checking Server"
-    case "misconfigured", "configuration_error":
-        return "Configuration Error"
-    case "server_unavailable":
-        return "Server Unavailable"
     case "local_unavailable":
-        return "Local Offline"
-    case "disabled":
-        return "Disabled"
-    case "idle":
-        return "Idle"
+        return "Local server unavailable"
+    case "server_unavailable":
+        return "Server unavailable"
+    case "misconfigured", "configuration_error":
+        return "Configuration needs attention"
     case "degraded":
-        return "Degraded"
+        return "Delivery degraded"
     default:
-        return status
-            .replacingOccurrences(of: "_", with: " ")
-            .capitalized
+        return "-"
     }
 }
 
-private func syncStatusColor(_ status: String) -> Color {
-    switch status {
-    case "healthy":
-        return .green
-    case "probing", "checking_server":
-        return .orange
-    case "disabled", "idle":
-        return .secondary
-    default:
-        return .red
-    }
-}
-
-private func axisStatusLabel(_ status: String) -> String {
-    switch status {
-    case "available":
-        return "Available"
-    case "unavailable":
-        return "Unavailable"
-    case "checking":
-        return "Checking"
-    default:
-        return "Unknown"
-    }
-}
-
-private func derivedServerStatus(_ status: String) -> String {
-    switch status {
-    case "healthy", "configuration_error":
-        return "available"
-    case "server_unavailable", "degraded":
-        return "unavailable"
-    case "checking_server":
-        return "checking"
-    default:
-        return "unknown"
-    }
-}
-
-private func derivedClientStatus(_ status: String) -> String {
-    switch status {
-    case "healthy", "server_unavailable", "checking_server", "local_unavailable":
-        return "available"
-    case "configuration_error", "misconfigured", "degraded":
-        return "unavailable"
-    default:
-        return "unknown"
-    }
-}
-
-private func syncStatusDetail(_ status: String, _ lastStatus: String?, _ lastErrorMessage: String?) -> String {
+private func deliveryStatusDetail(
+    status: String?,
+    lastStatus: String?,
+    lastErrorMessage: String?,
+    pendingCount: Int
+) -> String {
+    guard let status else { return "-" }
     if let lastStatus {
         switch lastStatus {
         case "skip:missing_workspace_site_or_api_key":
@@ -785,7 +993,7 @@ private func syncStatusDetail(_ status: String, _ lastStatus: String?, _ lastErr
         case "skip:endpoint_disabled":
             return "Endpoint disabled"
         case "skip:no_change":
-            return "No changes to send"
+            return pendingCount > 0 ? "Waiting to deliver queued events" : "No new events"
         case "replay:unauthorized":
             return "API Key is invalid"
         case "replay:workspace_mismatch":
@@ -799,7 +1007,7 @@ private func syncStatusDetail(_ status: String, _ lastStatus: String?, _ lastErr
         case "replay:error":
             return lastErrorMessage ?? "Temporary delivery error"
         case "replay:local_unavailable":
-            return lastErrorMessage ?? "Local network unavailable; probe is paused"
+            return lastErrorMessage ?? "Local network unavailable"
         case let value where value.hasPrefix("replay:attempt:"):
             return "Sending queued events"
         default:
@@ -813,371 +1021,27 @@ private func syncStatusDetail(_ status: String, _ lastStatus: String?, _ lastErr
 
     switch status {
     case "healthy":
-        return "Ready to send"
-    case "probing":
-        return "Checking server health"
-    case "misconfigured":
+        return pendingCount > 0 ? "Delivering queued events" : "Ready"
+    case "probing", "checking_server":
+        return "Checking server"
+    case "idle":
+        return pendingCount > 0 ? "Waiting for server check" : "Ready"
+    case "misconfigured", "configuration_error":
         return "Endpoint configuration needs attention"
     case "server_unavailable":
         return "Server unavailable; new events stay in SQLite"
     case "local_unavailable":
-        return "Local network unavailable; server probe is paused"
-    case "checking_server":
-        return "Checking server before replay"
+        return "Local network unavailable"
     case "disabled":
         return "Endpoint disabled"
+    case "degraded":
+        return "Delivery degraded"
     default:
-        return "—"
+        return status.replacingOccurrences(of: "_", with: " ").capitalized
     }
-}
-
-private struct InteractionRow: View {
-    let item: InteractionItem
-    let onAccept: () -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title ?? item.uri)
-                        .font(.headline)
-                        .lineLimit(2)
-                    Text("\(item.provider) · \(item.status)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(item.uri)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 6) {
-                    Text(item.issuedAt.formatted(date: .omitted, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    item.targetDeviceId.map {
-                        Text($0)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-            }
-
-            HStack(spacing: 10) {
-                Button("Accept", action: onAccept)
-                    .buttonStyle(.borderedProminent)
-                Button("Dismiss", action: onDismiss)
-                    .buttonStyle(.bordered)
-            }
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color.white.opacity(0.65))
-        )
-    }
-}
-
-private struct DashboardPageHeader<Trailing: View>: View {
-    let title: String
-    let subtitle: String
-    let trailing: Trailing
-
-    init(title: String, subtitle: String, @ViewBuilder trailing: () -> Trailing) {
-        self.title = title
-        self.subtitle = subtitle
-        self.trailing = trailing()
-    }
-
-    var body: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.largeTitle.weight(.bold))
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            trailing
-        }
-    }
-}
-
-private extension DashboardPageHeader where Trailing == EmptyView {
-    init(title: String, subtitle: String) {
-        self.title = title
-        self.subtitle = subtitle
-        self.trailing = EmptyView()
-    }
-}
-
-private struct DashboardSectionSurface<Content: View>: View {
-    let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(Color.secondary.opacity(0.08))
-            )
-    }
-}
-
-private struct DashboardBadge: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.headline.weight(.semibold))
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            Capsule()
-                .fill(Color.secondary.opacity(0.10))
-        )
-    }
-}
-
-private struct DashboardKeyValueRow: View {
-    let key: String
-    let value: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            Text(key)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 110, alignment: .leading)
-            Text(value)
-                .font(.subheadline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-        }
-    }
-}
-
-private struct DashboardUsageRow: View {
-    let row: UsageRow
-    let totalSeconds: Int
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            AppIconView(bundleId: row.bundleId, size: 30)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(row.label)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(row.bundleId)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(durationString(row.totalSeconds))
-                    .font(.headline.monospacedDigit())
-                Text(percentageString(row.totalSeconds, total: totalSeconds))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-private struct SettingsCard<Content: View>: View {
-    let title: String
-    let subtitle: String
-    let content: Content
-
-    init(title: String, subtitle: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.subtitle = subtitle
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.title3.weight(.bold))
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            content
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(Color.secondary.opacity(0.08))
-        )
-    }
-}
-
-private struct ToggleRow: View {
-    let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Toggle("", isOn: $isOn)
-                .labelsHidden()
-        }
-    }
-}
-
-private struct LabeledField: View {
-    let title: String
-    let subtitle: String
-    @Binding var text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField(title, text: $text)
-                .textFieldStyle(.roundedBorder)
-        }
-    }
-}
-
-private struct LabeledSecureField: View {
-    let title: String
-    let subtitle: String
-    @Binding var text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            SecureField(title, text: $text)
-                .textFieldStyle(.roundedBorder)
-        }
-    }
-}
-
-private struct PresetNumericRow: View {
-    let title: String
-    let subtitle: String
-    let unit: String
-    @Binding var value: Int
-    let presets: [Int]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.headline)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                HStack(spacing: 8) {
-                    TextField(title, value: $value, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 92)
-                        .multilineTextAlignment(.trailing)
-                    Text(unit)
-                        .font(.headline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 74), spacing: 8, alignment: .leading)],
-                alignment: .leading,
-                spacing: 8
-            ) {
-                ForEach(presets, id: \.self) { preset in
-                    QuickValueChip(
-                        label: "\(preset)\(unit)",
-                        selected: value == preset
-                    ) {
-                        value = preset
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct QuickValueChip: View {
-    let label: String
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(selected ? .white : .primary)
-        .background(
-            Capsule()
-                .fill(selected ? Color.accentColor : Color.white.opacity(0.7))
-        )
-    }
-}
-
-private func durationString(_ seconds: Int) -> String {
-    let h = seconds / 3600
-    let m = (seconds % 3600) / 60
-    let s = seconds % 60
-    if h > 0 { return String(format: "%dh %02dm", h, m) }
-    if m > 0 { return String(format: "%dm %02ds", m, s) }
-    return "\(s)s"
-}
-
-private func percentageString(_ seconds: Int, total: Int) -> String {
-    guard total > 0 else { return "0%" }
-    let percent = Int((Double(seconds) / Double(total) * 100).rounded())
-    return "\(percent)%"
 }
 
 private func formatSyncDate(_ date: Date?) -> String {
-    guard let date else { return "—" }
+    guard let date else { return "-" }
     return date.formatted(date: .omitted, time: .standard)
 }

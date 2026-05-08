@@ -202,16 +202,28 @@ final class LiveListenCaptureModel: ObservableObject {
         publisherFanout.updatePublishers(endpoints.compactMap { publishers[$0.id] })
         updateAggregatePublisherState()
 
-        if endpoints.isEmpty && !isCapturing {
+        if endpoints.isEmpty {
+            if isCapturing {
+                appendLiveListenCaptureDebugLog("stopping capture because no live listen endpoints remain")
+                service.stop()
+                meterTask?.cancel()
+                meterTask = nil
+                isCapturing = false
+                statusText = "Stopped"
+            }
             publisherStatusText = "Configure a Live Listen endpoint in Settings"
             for publisher in publishers.values {
                 Task { await publisher.stop() }
             }
-        } else if !isCapturing {
+            updateAggregatePublisherState()
+            return
+        }
+
+        if !isCapturing {
             publisherStatusText = "Publisher idle"
-            Task { [weak self] in
-                await self?.connectPublishers(roomId: "live-listen:owner", deviceId: "owner")
-            }
+        }
+        Task { [weak self] in
+            await self?.connectPublishers(roomId: "live-listen:owner", deviceId: "owner")
         }
     }
 

@@ -33,6 +33,7 @@ class PulseBarEndpointConfig(
     val id: String,
     val name: String,
     val enabled: Boolean,
+    val disconnected: Boolean,
     val transport: PulseBarTransport,
     val transportName: String,
     val endpointUrl: String,

@@ -83,30 +83,24 @@ struct SyncStatusInfo: Equatable {
 }
 
 enum DashboardSection: String, CaseIterable, Identifiable {
-    case dashboard
-    case activity
-    case sync
-    case liveListen
+    case connection
+    case reporting
     case settings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .dashboard: return "Dashboard"
-        case .activity: return "Activity"
-        case .sync: return "Sync"
-        case .liveListen: return "Live Listen"
+        case .connection: return "Connection"
+        case .reporting: return "Reporting"
         case .settings: return "Settings"
         }
     }
 
     var symbol: String {
         switch self {
-        case .dashboard: return "square.grid.2x2.fill"
-        case .activity: return "chart.bar.doc.horizontal.fill"
-        case .sync: return "antenna.radiowaves.left.and.right"
-        case .liveListen: return "waveform"
+        case .connection: return "antenna.radiowaves.left.and.right"
+        case .reporting: return "app.badge"
         case .settings: return "slider.horizontal.3"
         }
     }
@@ -173,6 +167,7 @@ struct EndpointSettingsDraft: Identifiable, Equatable {
     var id: String
     var name: String
     var enabled: Bool
+    var disconnected: Bool
     var transport: TransportOption
     var endpointUrl: String
     var workspaceId: String
@@ -185,6 +180,7 @@ struct EndpointSettingsDraft: Identifiable, Equatable {
             id: UUID().uuidString.lowercased(),
             name: "Endpoint \(index + 1)",
             enabled: false,
+            disconnected: false,
             transport: .websocket,
             endpointUrl: "",
             workspaceId: "",

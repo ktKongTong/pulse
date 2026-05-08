@@ -327,6 +327,7 @@ internal class PulseBarPreferencesStore {
             id = migratedId,
             name = defaults.stringForKey(LEGACY_ENDPOINT_NAME_KEY) ?: DEFAULT_ENDPOINT_NAME,
             enabled = defaults.boolForKey(LEGACY_ENDPOINT_ENABLED_KEY),
+            disconnected = false,
             transport = transportFromName(transportName),
             transportName = transportName,
             endpointUrl = endpointUrl,
@@ -345,6 +346,7 @@ internal class PulseBarPreferencesStore {
             id = id,
             name = name,
             enabled = false,
+            disconnected = false,
             transport = PulseBarTransport.WEBSOCKET,
             transportName = PulseBarTransport.WEBSOCKET.name,
             endpointUrl = "",
@@ -373,6 +375,7 @@ internal class PulseBarPreferencesStore {
                 id = resolvedId,
                 name = endpoint.name.trim().ifBlank { fallbackName },
                 enabled = endpoint.enabled,
+                disconnected = endpoint.disconnected,
                 transport = transportFromName(endpoint.transportName),
                 transportName = endpoint.transportName.ifBlank { PulseBarTransport.WEBSOCKET.name },
                 endpointUrl = endpoint.endpointUrl.trim(),
@@ -413,6 +416,7 @@ internal class PulseBarPreferencesStore {
             put("id", id)
             put("name", name)
             put("enabled", enabled)
+            put("disconnected", disconnected)
             put("transport", transportName)
             put("url", endpointUrl)
             put("workspaceId", workspaceId)
@@ -427,6 +431,7 @@ internal class PulseBarPreferencesStore {
             id = this["id"]?.jsonPrimitive?.content.orEmpty(),
             name = this["name"]?.jsonPrimitive?.content.orEmpty(),
             enabled = this["enabled"]?.jsonPrimitive?.content == "true",
+            disconnected = this["disconnected"]?.jsonPrimitive?.content == "true",
             transport = transportFromName(transportName),
             transportName = transportName,
             endpointUrl = this["url"]?.jsonPrimitive?.content.orEmpty(),
