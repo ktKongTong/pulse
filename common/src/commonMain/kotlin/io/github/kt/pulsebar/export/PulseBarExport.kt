@@ -166,6 +166,15 @@ class PulseBarSyncState(
     val endpoints: List<PulseBarEndpointSyncState>
 )
 
+/**
+ * Handle returned by every `observe*` method on [PulseBarBridge]. Swift
+ * callers invoke [cancel] from their Combine teardown / view lifecycle to
+ * release the underlying coroutine collector.
+ */
+interface PulseBarCancellable {
+    fun cancel()
+}
+
 expect class PulseBarBridge() {
     fun readMenuState(): PulseBarMenuState
     fun readConfig(): PulseBarConfig
@@ -197,4 +206,30 @@ expect class PulseBarBridge() {
      * saved).
      */
     fun forceTick()
+
+    /**
+     * Subscribe to menu-state updates. The callback is invoked immediately
+     * with the current cached value and then every time the bridge's tick
+     * loop publishes a new one. Returns a [PulseBarCancellable] the caller
+     * must invoke on teardown.
+     */
+    fun observeMenuState(onUpdate: (PulseBarMenuState) -> Unit): PulseBarCancellable
+
+    /**
+     * Subscribe to config updates. Emits the current persisted value on
+     * subscribe and again after every write. Used by the Swift adapter to
+     * drive the Settings UI without polling.
+     */
+    fun observeConfig(onUpdate: (PulseBarConfig) -> Unit): PulseBarCancellable
+
+    /**
+     * Subscribe to sync-state updates. Emits every time an endpoint probe /
+     * drain / ack changes the sync aggregate.
+     */
+    fun observeSyncState(onUpdate: (PulseBarSyncState) -> Unit): PulseBarCancellable
+
+    /**
+     * Subscribe to interaction-state updates.
+     */
+    fun observeInteractionState(onUpdate: (PulseBarInteractionState) -> Unit): PulseBarCancellable
 }

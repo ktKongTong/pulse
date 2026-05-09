@@ -12,6 +12,7 @@
 		85AA2D70D709F28BAE296198 /* NativeMonitorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F734477819B3CB78AB99D5 /* NativeMonitorModel.swift */; };
 		937AAA32E1758CD15F85D3E6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC60E77E8032C84E8799FBB3 /* Models.swift */; };
 		9B8B3B65D0B30C67182D6C2E /* LiveListenPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA9BC07D689FC7DC89DA97EB /* LiveListenPublisher.swift */; };
+		B99699BF84C1E7F568F26B15 /* PulseNativeLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F91E0E241418FC2BF9EAFF /* PulseNativeLog.swift */; };
 		BBED925F0EF5B8A6DB4CE32E /* PulseBarNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7842B00C463037D00FC517F /* PulseBarNativeApp.swift */; };
 		E53B97CEE26821B0B9F9A2D0 /* NativeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 948E7D74E792918846385A86 /* NativeSettingsView.swift */; };
 		F72802E924FF77ACD4ACD799 /* MenuBarContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13647FF6B43B48C18C587B08 /* MenuBarContentView.swift */; };
@@ -20,6 +21,7 @@
 /* Begin PBXFileReference section */
 		13647FF6B43B48C18C587B08 /* MenuBarContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContentView.swift; sourceTree = "<group>"; };
 		50F734477819B3CB78AB99D5 /* NativeMonitorModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMonitorModel.swift; sourceTree = "<group>"; };
+		54F91E0E241418FC2BF9EAFF /* PulseNativeLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseNativeLog.swift; sourceTree = "<group>"; };
 		5C154336396DDCF2281A4E67 /* LiveListenCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureView.swift; sourceTree = "<group>"; };
 		902FE641F33901EE027B942D /* PulseBarNative.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PulseBarNative.entitlements; sourceTree = "<group>"; };
 		948E7D74E792918846385A86 /* NativeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSettingsView.swift; sourceTree = "<group>"; };
@@ -51,6 +53,7 @@
 				948E7D74E792918846385A86 /* NativeSettingsView.swift */,
 				902FE641F33901EE027B942D /* PulseBarNative.entitlements */,
 				A7842B00C463037D00FC517F /* PulseBarNativeApp.swift */,
+				54F91E0E241418FC2BF9EAFF /* PulseNativeLog.swift */,
 			);
 			path = PulseBarNative;
 			sourceTree = "<group>";
@@ -152,6 +155,7 @@
 				85AA2D70D709F28BAE296198 /* NativeMonitorModel.swift in Sources */,
 				E53B97CEE26821B0B9F9A2D0 /* NativeSettingsView.swift in Sources */,
 				BBED925F0EF5B8A6DB4CE32E /* PulseBarNativeApp.swift in Sources */,
+				B99699BF84C1E7F568F26B15 /* PulseNativeLog.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,7 +1,7 @@
 package io.github.kt.pulsebar.core.config
 
 import androidx.datastore.core.okio.OkioSerializer
-import co.touchlab.kermit.Logger
+import io.github.kt.pulsebar.core.log.PulseBarLog
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
 import kotlinx.serialization.SerializationException
@@ -25,7 +25,7 @@ internal class PulseBarConfigSerializer(
         ignoreUnknownKeys = true
         explicitNulls = false
     },
-    private val log: Logger = logger(PulseLogCategory.ConfigStore),
+    private val log: PulseBarLog = logger(PulseLogCategory.ConfigStore),
 ) : OkioSerializer<PulseBarConfigProto> {
 
     override val defaultValue: PulseBarConfigProto = PulseBarConfigProto()

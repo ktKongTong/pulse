@@ -24,6 +24,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -120,6 +125,9 @@ actual class PulseBarBridge actual constructor() {
 
     @Volatile private var latestMenuState: PulseBarMenuState = emptyMenuState()
     @Volatile private var currentPollIntervalMillis: Long = DEFAULT_POLL_INTERVAL_MS
+    private val menuStateFlow = MutableStateFlow(latestMenuState)
+    private val syncStateFlow = MutableStateFlow<PulseBarSyncState?>(null)
+    private val interactionStateFlow = MutableStateFlow<PulseBarInteractionState?>(null)
     private val tickMutex = Mutex()
     private var tickLoopJob: Job? = null
 
@@ -202,6 +210,35 @@ actual class PulseBarBridge actual constructor() {
 
     private fun publishMenuState(next: PulseBarMenuState) {
         latestMenuState = next
+        menuStateFlow.value = next
+        syncStateFlow.value = reporter.readSyncState(currentConfig())
+        interactionStateFlow.value = interactionClient.readState()
+    }
+
+    actual fun observeMenuState(onUpdate: (PulseBarMenuState) -> Unit): PulseBarCancellable =
+        collect(menuStateFlow.asStateFlow(), onUpdate)
+
+    actual fun observeConfig(onUpdate: (PulseBarConfig) -> Unit): PulseBarCancellable =
+        collect(configStore.configs.distinctUntilChanged()) { onUpdate(it.toExport()) }
+
+    actual fun observeSyncState(onUpdate: (PulseBarSyncState) -> Unit): PulseBarCancellable =
+        collect(syncStateFlow.asStateFlow()) { if (it != null) onUpdate(it) }
+
+    actual fun observeInteractionState(onUpdate: (PulseBarInteractionState) -> Unit): PulseBarCancellable =
+        collect(interactionStateFlow.asStateFlow()) { if (it != null) onUpdate(it) }
+
+    private fun <T> collect(
+        source: kotlinx.coroutines.flow.Flow<T>,
+        onUpdate: (T) -> Unit,
+    ): PulseBarCancellable {
+        val job = scope.launch {
+            source.collect(onUpdate)
+        }
+        return object : PulseBarCancellable {
+            override fun cancel() {
+                job.cancel()
+            }
+        }
     }
 
     actual fun readStats(dayIso: String, limit: Int): PulseBarStatsPage {

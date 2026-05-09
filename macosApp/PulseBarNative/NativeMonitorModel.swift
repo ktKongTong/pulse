@@ -19,13 +19,10 @@ final class NativeMonitorModel: ObservableObject {
     @Published var isPaused = false
     @Published var dashboardSelection: DashboardSection = .connection
 
-    private var loopTask: Task<Void, Never>?
     private let bridgeWorker = NativeBridgeWorker()
     let liveListenCaptureModel = LiveListenCaptureModel()
-    private var lastStatsRefreshAt: Date = .distantPast
-    private var lastInteractionRefreshAt: Date = .distantPast
-    private var lastSyncRefreshAt: Date = .distantPast
-    private var refreshInFlight = false
+    private var subscribed = false
+    private var statsDayKey: String = NativeMonitorModel.todayIsoString()
 
     nonisolated(unsafe) private static let iso8601Formatter = ISO8601DateFormatter()
     private static let dayFormatter: DateFormatter = {
@@ -39,35 +36,10 @@ final class NativeMonitorModel: ObservableObject {
 
     init() {}
 
-    private struct RefreshPayload {
-        let snapshot: LiveSnapshot?
-        let todayStats: [UsageRow]?
-        let todayTotalSeconds: Int?
-        let interactionItems: [InteractionItem]?
-        let interactionPendingCount: Int?
-        let interactionLastStatus: String?
-        let syncState: SyncStatusInfo?
-        let statsRefreshedAt: Date?
-        let interactionRefreshedAt: Date?
-        let syncRefreshedAt: Date?
-
-        static let empty = RefreshPayload(
-            snapshot: nil,
-            todayStats: nil,
-            todayTotalSeconds: nil,
-            interactionItems: nil,
-            interactionPendingCount: nil,
-            interactionLastStatus: nil,
-            syncState: nil,
-            statsRefreshedAt: nil,
-            interactionRefreshedAt: nil,
-            syncRefreshedAt: nil
-        )
-    }
-
     private final class NativeBridgeWorker: @unchecked Sendable {
         private let queue = DispatchQueue(label: "io.github.kt.pulsebar.native.bridge", qos: .utility)
         private var bridge: PulseBarBridge!
+        private var cancellables: [PulseBarCancellable] = []
 
         init() {
             queue.sync {
@@ -75,12 +47,43 @@ final class NativeMonitorModel: ObservableObject {
             }
         }
 
-        func readSettingsDraft(_ completion: @escaping @MainActor (SettingsDraft) -> Void) {
+        func subscribeAll(
+            onMenuState: @escaping @MainActor (PulseBarMenuState) -> Void,
+            onConfig: @escaping @MainActor (PulseBarConfig) -> Void,
+            onSyncState: @escaping @MainActor (PulseBarSyncState) -> Void,
+            onInteractionState: @escaping @MainActor (PulseBarInteractionState) -> Void
+        ) {
             queue.async {
-                let draft = NativeMonitorModel.mapConfig(self.bridge.readConfig())
-                DispatchQueue.main.async {
-                    completion(draft)
-                }
+                self.cancellables.append(self.bridge.observeMenuState { state in
+                    DispatchQueue.main.async { onMenuState(state) }
+                })
+                self.cancellables.append(self.bridge.observeConfig { config in
+                    DispatchQueue.main.async { onConfig(config) }
+                })
+                self.cancellables.append(self.bridge.observeSyncState { state in
+                    DispatchQueue.main.async { onSyncState(state) }
+                })
+                self.cancellables.append(self.bridge.observeInteractionState { state in
+                    DispatchQueue.main.async { onInteractionState(state) }
+                })
+            }
+        }
+
+        func cancelAll() {
+            queue.async {
+                for c in self.cancellables { c.cancel() }
+                self.cancellables.removeAll()
+            }
+        }
+
+        func forceTick() {
+            queue.async { self.bridge.forceTick() }
+        }
+
+        func readStatsSnapshot(dayIso: String, completion: @escaping @MainActor ([UsageRow], Int) -> Void) {
+            queue.async {
+                let page = NativeMonitorModel.mapStatsPage(self.bridge.readStats(dayIso: dayIso, limit: 100))
+                DispatchQueue.main.async { completion(page.items, page.totalSeconds) }
             }
         }
 
@@ -100,67 +103,6 @@ final class NativeMonitorModel: ObservableObject {
                 _ = self.bridge.retryEndpoint()
                 DispatchQueue.main.async {
                     completion()
-                }
-            }
-        }
-
-        func refresh(
-            today: String,
-            now: Date,
-            shouldRefreshStats: Bool,
-            shouldRefreshInteraction: Bool,
-            shouldRefreshSync: Bool,
-            completion: @escaping @MainActor (RefreshPayload) -> Void
-        ) {
-            queue.async {
-                let payload = autoreleasepool { () -> RefreshPayload in
-                    let snapshot = NativeMonitorModel.mapSnapshotObject(self.bridge.readMenuState().snapshot)
-
-                    var todayStats: [UsageRow]?
-                    var todayTotalSeconds: Int?
-                    var statsRefreshedAt: Date?
-                    if shouldRefreshStats {
-                        let stats = NativeMonitorModel.mapStatsPage(self.bridge.readStats(dayIso: today, limit: 100))
-                        todayStats = stats.items
-                        todayTotalSeconds = stats.totalSeconds
-                        statsRefreshedAt = now
-                    }
-
-                    var interactionItems: [InteractionItem]?
-                    var interactionPendingCount: Int?
-                    var interactionLastStatus: String?
-                    var interactionRefreshedAt: Date?
-                    if shouldRefreshInteraction {
-                        let interactionState = NativeMonitorModel.mapInteractionStateObject(self.bridge.readInteractionState())
-                        interactionItems = interactionState.items
-                        interactionPendingCount = interactionState.pendingCount
-                        interactionLastStatus = interactionState.lastStatus
-                        interactionRefreshedAt = now
-                    }
-
-                    var syncState: SyncStatusInfo?
-                    var syncRefreshedAt: Date?
-                    if shouldRefreshSync {
-                        syncState = NativeMonitorModel.mapSyncStateObject(self.bridge.readSyncState())
-                        syncRefreshedAt = now
-                    }
-
-                    return RefreshPayload(
-                        snapshot: snapshot,
-                        todayStats: todayStats,
-                        todayTotalSeconds: todayTotalSeconds,
-                        interactionItems: interactionItems,
-                        interactionPendingCount: interactionPendingCount,
-                        interactionLastStatus: interactionLastStatus,
-                        syncState: syncState,
-                        statsRefreshedAt: statsRefreshedAt,
-                        interactionRefreshedAt: interactionRefreshedAt,
-                        syncRefreshedAt: syncRefreshedAt
-                    )
-                }
-
-                DispatchQueue.main.async {
-                    completion(payload)
                 }
             }
         }
@@ -198,32 +140,35 @@ final class NativeMonitorModel: ObservableObject {
 
     func start() {
         PulseNativeLog.info(.liveListenSession, "monitor.start")
-        if loopTask != nil {
+        if subscribed {
             isPaused = false
             return
         }
         isMonitoring = true
         isPaused = false
-        bridgeWorker.readSettingsDraft { [weak self] draft in
-            guard let self else { return }
-            self.settingsDraft = draft
-            self.liveListenCaptureModel.updateEndpoints(self.liveListenEndpoints)
-            self.refresh(forceStatsRefresh: true)
-        }
-        refresh(forceStatsRefresh: true)
-        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
-        loopTask = Task {
-            while !Task.isCancelled {
-                if !isPaused {
-                    refresh()
-                }
-                try? await Task.sleep(for: .milliseconds(pollIntervalMillis))
+        subscribed = true
+
+        bridgeWorker.subscribeAll(
+            onMenuState: { [weak self] state in
+                self?.applyMenuStateUpdate(state)
+            },
+            onConfig: { [weak self] config in
+                self?.applyConfigUpdate(config)
+            },
+            onSyncState: { [weak self] state in
+                self?.applySyncStateUpdate(state)
+            },
+            onInteractionState: { [weak self] state in
+                self?.applyInteractionStateUpdate(state)
             }
-        }
+        )
+
+        refreshStats(force: true)
+        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
     deinit {
-        loopTask?.cancel()
+        bridgeWorker.cancelAll()
     }
 
     func prepareLiveListenCapturePane() {
@@ -252,8 +197,6 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     func stop() {
-        loopTask?.cancel()
-        loopTask = nil
         isMonitoring = false
         isPaused = true
     }
@@ -265,7 +208,8 @@ final class NativeMonitorModel: ObservableObject {
         }
         isPaused.toggle()
         if !isPaused {
-            refresh()
+            bridgeWorker.forceTick()
+            refreshStats(force: true)
         }
     }
 
@@ -275,7 +219,8 @@ final class NativeMonitorModel: ObservableObject {
             return
         }
         isPaused = false
-        refresh()
+        bridgeWorker.forceTick()
+        refreshStats(force: true)
     }
 
     func refreshMenuBarContent() {
@@ -284,77 +229,66 @@ final class NativeMonitorModel: ObservableObject {
             return
         }
         isPaused = false
-        refresh(forceStatsRefresh: true)
+        bridgeWorker.forceTick()
+        refreshStats(force: true)
     }
 
-    func refresh(forceStatsRefresh: Bool = false) {
-        guard !refreshInFlight else { return }
-        let now = Date()
+    /// Usage stats (today's aggregate + top rows) aren't pushed through the
+    /// state flow yet — they're pulled on demand after force-ticks and when
+    /// we roll past midnight. Phase 3f can upgrade this to a Room-backed
+    /// flow; polling on user-visible events is fine until then.
+    func refreshStats(force: Bool = false) {
         let today = Self.todayIsoString()
-        let shouldRefreshStats = forceStatsRefresh || shouldRefreshStats(now: now)
-        let shouldRefreshInteraction = now.timeIntervalSince(lastInteractionRefreshAt) >= 2
-        let shouldRefreshSync = now.timeIntervalSince(lastSyncRefreshAt) >= 2
-        refreshInFlight = true
-
-        bridgeWorker.refresh(
-            today: today,
-            now: now,
-            shouldRefreshStats: shouldRefreshStats,
-            shouldRefreshInteraction: shouldRefreshInteraction,
-            shouldRefreshSync: shouldRefreshSync
-        ) { [weak self] payload in
+        if !force && today == statsDayKey && !todayStats.isEmpty { return }
+        statsDayKey = today
+        bridgeWorker.readStatsSnapshot(dayIso: today) { [weak self] items, totalSeconds in
             guard let self else { return }
-            self.refreshInFlight = false
-            self.applyRefreshPayload(payload)
+            if self.todayStats != items { self.todayStats = items }
+            if self.todayTotalSeconds != totalSeconds { self.todayTotalSeconds = totalSeconds }
         }
     }
 
-    private func applyRefreshPayload(_ payload: RefreshPayload) {
-        applySnapshotIfNeeded(payload.snapshot)
-        liveListenCaptureModel.updateCurrentMedia(payload.snapshot?.media)
+    private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
+        let mapped = Self.mapSnapshotObject(state.snapshot)
+        applySnapshotIfNeeded(mapped)
+        liveListenCaptureModel.updateCurrentMedia(mapped?.media)
+        refreshStats(force: false)
+    }
 
-        if let todayStats = payload.todayStats,
-           let todayTotalSeconds = payload.todayTotalSeconds,
-           let refreshedAt = payload.statsRefreshedAt {
-            if self.todayStats != todayStats {
-                self.todayStats = todayStats
-            }
-            if self.todayTotalSeconds != todayTotalSeconds {
-                self.todayTotalSeconds = todayTotalSeconds
-            }
-            lastStatsRefreshAt = refreshedAt
+    private func applyConfigUpdate(_ config: PulseBarConfig) {
+        let draft = Self.mapConfig(config)
+        if settingsDraft != draft {
+            settingsDraft = draft
         }
+        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
+    }
 
-        if let interactionItems = payload.interactionItems,
-           let interactionPendingCount = payload.interactionPendingCount,
-           let refreshedAt = payload.interactionRefreshedAt {
-            if self.interactionItems != interactionItems {
-                self.interactionItems = interactionItems
-            }
-            if self.interactionPendingCount != interactionPendingCount {
-                self.interactionPendingCount = interactionPendingCount
-            }
-            if interactionLastStatus != payload.interactionLastStatus {
-                interactionLastStatus = payload.interactionLastStatus
-            }
-            lastInteractionRefreshAt = refreshedAt
+    private func applySyncStateUpdate(_ state: PulseBarSyncState) {
+        let mapped = Self.mapSyncStateObject(state)
+        if syncState != mapped {
+            syncState = mapped
         }
+        clearFinishedConnectingEndpoints(mapped)
+    }
 
-        if let syncState = payload.syncState,
-           let refreshedAt = payload.syncRefreshedAt {
-            if self.syncState != syncState {
-                self.syncState = syncState
-            }
-            clearFinishedConnectingEndpoints(syncState)
-            lastSyncRefreshAt = refreshedAt
+    private func applyInteractionStateUpdate(_ state: PulseBarInteractionState) {
+        let mapped = Self.mapInteractionStateObject(state)
+        if interactionItems != mapped.items {
+            interactionItems = mapped.items
+        }
+        if interactionPendingCount != mapped.pendingCount {
+            interactionPendingCount = mapped.pendingCount
+        }
+        if interactionLastStatus != mapped.lastStatus {
+            interactionLastStatus = mapped.lastStatus
         }
     }
 
     func saveConfig() {
-        bridgeWorker.updateConfig(from: settingsDraft)
+        bridgeWorker.updateConfig(from: settingsDraft) { [weak self] in
+            self?.bridgeWorker.forceTick()
+        }
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
-        lastSyncRefreshAt = .distantPast
-        Task { @MainActor in refresh() }
     }
 
     var liveListenEndpoints: [LiveListenEndpointConfig] {
@@ -417,16 +351,14 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     func acceptInteraction(_ requestId: String) {
-        lastInteractionRefreshAt = .distantPast
         bridgeWorker.acceptInteraction(requestId) { [weak self] in
-            self?.refresh()
+            self?.bridgeWorker.forceTick()
         }
     }
 
     func dismissInteraction(_ requestId: String) {
-        lastInteractionRefreshAt = .distantPast
         bridgeWorker.dismissInteraction(requestId) { [weak self] in
-            self?.refresh()
+            self?.bridgeWorker.forceTick()
         }
     }
 
@@ -434,13 +366,10 @@ final class NativeMonitorModel: ObservableObject {
         if let endpointID {
             connectingEndpointIDs.insert(endpointID)
         }
-        lastSyncRefreshAt = .distantPast
         bridgeWorker.retry { [weak self] in
             if let endpointID {
                 self?.connectingEndpointIDs.remove(endpointID)
             }
-            self?.lastSyncRefreshAt = .distantPast
-            self?.refresh()
         }
     }
 
@@ -736,11 +665,6 @@ final class NativeMonitorModel: ObservableObject {
         )
     }
 
-    private func shouldRefreshStats(now: Date) -> Bool {
-        guard now.timeIntervalSince(lastStatsRefreshAt) >= 5 else { return false }
-        return NSApp.isActive
-    }
-
     private func clearFinishedConnectingEndpoints(_ syncState: SyncStatusInfo) {
         guard !connectingEndpointIDs.isEmpty else { return }
         for endpoint in syncState.endpoints where connectingEndpointIDs.contains(endpoint.id) {
@@ -984,10 +908,6 @@ final class NativeMonitorModel: ObservableObject {
                 endpoints: endpoints
             )
         }
-    }
-
-    private var pollIntervalMillis: Int {
-        min(max(settingsDraft.appPollingMillis, 750), 5_000)
     }
 
     nonisolated private static func mapConfig(_ config: PulseBarConfig) -> SettingsDraft {

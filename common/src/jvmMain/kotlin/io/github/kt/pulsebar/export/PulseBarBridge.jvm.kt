@@ -117,4 +117,22 @@ actual class PulseBarBridge actual constructor() {
     actual fun tick() = Unit
 
     actual fun forceTick() = Unit
+
+    actual fun observeMenuState(onUpdate: (PulseBarMenuState) -> Unit): PulseBarCancellable =
+        noopCancellable
+
+    actual fun observeConfig(onUpdate: (PulseBarConfig) -> Unit): PulseBarCancellable =
+        noopCancellable
+
+    actual fun observeSyncState(onUpdate: (PulseBarSyncState) -> Unit): PulseBarCancellable =
+        noopCancellable
+
+    actual fun observeInteractionState(onUpdate: (PulseBarInteractionState) -> Unit): PulseBarCancellable =
+        noopCancellable
+
+    private companion object {
+        val noopCancellable: PulseBarCancellable = object : PulseBarCancellable {
+            override fun cancel() = Unit
+        }
+    }
 }
