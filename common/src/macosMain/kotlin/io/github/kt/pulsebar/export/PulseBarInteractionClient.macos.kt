@@ -51,7 +51,7 @@ private data class LocalQueueItem(
 
 @OptIn(ExperimentalForeignApi::class)
 internal class PulseBarInteractionClient(
-    private val store: PulseBarPreferencesStore
+    initialConfig: PulseBarConfig,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val client = HttpClient(Darwin) {
@@ -62,7 +62,7 @@ internal class PulseBarInteractionClient(
         explicitNulls = false
     }
     private val deviceId = slugify("macos-${NSUserName()}")
-    private var config: PulseBarConfig = store.readConfig()
+    private var config: PulseBarConfig = initialConfig
     private var connectionJob: Job? = null
     private var activeSocket: io.ktor.client.plugins.websocket.DefaultClientWebSocketSession? = null
     private var pending = linkedMapOf<String, PendingInteraction>()

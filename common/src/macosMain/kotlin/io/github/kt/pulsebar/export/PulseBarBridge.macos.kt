@@ -1,5 +1,10 @@
 package io.github.kt.pulsebar.export
 
+import io.github.kt.pulsebar.core.config.PulseBarConfigStore
+import io.github.kt.pulsebar.core.config.pulseBarConfigFileSystem
+import io.github.kt.pulsebar.core.config.pulseBarConfigPath
+import io.github.kt.pulsebar.core.config.toExport
+import io.github.kt.pulsebar.core.config.toProto
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
 import io.ktor.client.HttpClient
@@ -69,9 +74,14 @@ private data class MediaProbeSpec(
 
 @OptIn(ExperimentalForeignApi::class)
 actual class PulseBarBridge actual constructor() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val store = PulseBarPreferencesStore()
+    private val configStore = PulseBarConfigStore(
+        fileSystem = pulseBarConfigFileSystem(),
+        path = pulseBarConfigPath(),
+    )
     private val reporter = PulseBarEndpointReporter()
-    private val interactionClient = PulseBarInteractionClient(store)
+    private val interactionClient: PulseBarInteractionClient
     private val mediaProbes by lazy {
         listOf(
             MediaProbeSpec(
@@ -107,21 +117,32 @@ actual class PulseBarBridge actual constructor() {
     private var pendingElapsedMillis: Long = 0L
 
     init {
-        val config = store.readConfig()
-        reporter.updateConfig(config)
-        interactionClient.updateConfig(config)
+        val initial = currentConfig()
+        interactionClient = PulseBarInteractionClient(initial)
+        reporter.updateConfig(initial)
         logger(PulseLogCategory.AppLifecycle).i {
-            "bridge.initialized endpoints=${config.endpoints.size} enabled=${config.endpoints.count { it.enabled }}"
+            "bridge.initialized endpoints=${initial.endpoints.size} enabled=${initial.endpoints.count { it.enabled }}"
+        }
+        scope.launch {
+            configStore.configs.collect { proto ->
+                val export = proto.toExport()
+                reporter.updateConfig(export)
+                reporter.resetIfDisabled(export)
+                interactionClient.updateConfig(export)
+                logger(PulseLogCategory.ConfigStore).d {
+                    "config.observed endpoints=${export.endpoints.size}" +
+                        " enabled=${export.endpoints.count { it.enabled }}" +
+                        " disconnected=${export.endpoints.count { it.disconnected }}"
+                }
+            }
         }
     }
 
     actual fun readMenuState(): PulseBarMenuState {
-        interactionClient.updateConfig(store.readConfig())
+        val config = currentConfig()
         val snapshot = readSnapshot()
         interactionClient.reconcilePlayback(snapshot.media)
         updateUsage(snapshot)
-        val config = store.readConfig()
-        reporter.updateConfig(config)
         reporter.capture(snapshot, config)
         reporter.sync(config)
         val rows = store.topRowsForDay(todayKey(), 3)
@@ -159,23 +180,22 @@ actual class PulseBarBridge actual constructor() {
             topMedia = store.rowsForDay(dayIso, UsageSlice.MEDIA, limit)
         )
 
-    actual fun readConfig(): PulseBarConfig = store.readConfig()
+    actual fun readConfig(): PulseBarConfig = currentConfig()
 
     actual fun updateConfig(config: PulseBarConfig) {
-        store.writeConfig(config)
-        reporter.updateConfig(config)
-        reporter.resetIfDisabled(config)
-        interactionClient.updateConfig(config)
+        // Writes hit DataStore; the `configs` flow subscriber in init() fans
+        // out to reporter and interactionClient. No imperative updates here.
+        configStore.replace(config.toProto())
     }
 
     actual fun readInteractionState(): PulseBarInteractionState =
         interactionClient.readState()
 
     actual fun readSyncState(): PulseBarSyncState =
-        reporter.readSyncState(store.readConfig())
+        reporter.readSyncState(currentConfig())
 
     actual fun retryEndpoint(): Boolean =
-        reporter.retry(readSnapshot(), store.readConfig())
+        reporter.retry(readSnapshot(), currentConfig())
 
     actual fun acceptInteraction(requestId: String): Boolean =
         interactionClient.accept(requestId)
@@ -592,10 +612,12 @@ actual class PulseBarBridge actual constructor() {
     }
 
     private fun pushRealtimeSnapshot() {
-        val config = store.readConfig()
+        val config = currentConfig()
         if (config.endpoints.none { it.enabled }) return
         reporter.forceSync(readSnapshot(), config)
     }
+
+    private fun currentConfig(): PulseBarConfig = configStore.snapshot().toExport()
 
     private fun currentTimeMillis(): Long =
         (NSDate().timeIntervalSinceReferenceDate * 1000.0).toLong()

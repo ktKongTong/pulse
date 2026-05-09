@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.swiftexport.ExperimentalSwiftExportDsl
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.androidxRoom3)
 }
@@ -28,6 +29,9 @@ kotlin {
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.ktor.client.core)
                 implementation(libs.ktor.client.websockets)
+                implementation(libs.androidx.datastore.core)
+                implementation(libs.androidx.datastore.core.okio)
+                implementation(libs.okio)
                 api(libs.kermit)
             }
         }
