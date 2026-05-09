@@ -36,7 +36,6 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
-import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUserName
 
 @OptIn(ExperimentalForeignApi::class)
@@ -56,7 +55,6 @@ internal class PulseBarEndpointReporter {
     private val sessionId = randomId()
     private val deviceId = slugify("macos-${NSUserName()}")
     private val rawJournal = PulseBarRawJournalStore()
-    private val defaults = NSUserDefaults.standardUserDefaults
     private val replayEvents = Channel<String>(capacity = Channel.UNLIMITED)
     private val replayMutexes = mutableMapOf<String, Mutex>()
     private val lastReplayIssuedAtMillis = mutableMapOf<String, Long>()
@@ -119,8 +117,7 @@ internal class PulseBarEndpointReporter {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
         val enabledEndpoints = config.enabledReporterEndpoints()
         if (enabledEndpoints.isEmpty()) {
-            defaults.setObject("skip:endpoint_disabled", "pulsebar.debug.endpoint.lastStatus")
-            defaults.synchronize()
+            logger(PulseLogCategory.SyncEndpoint).d { "capture.skip reason=endpoint_disabled" }
             lastEndpointFingerprints = emptySet()
             config.endpoints.forEach { endpoint ->
                 syncStates[endpoint.id] = EndpointSyncSnapshot(
@@ -171,8 +168,7 @@ internal class PulseBarEndpointReporter {
         )
 
         if (!shouldSendSnapshot && !shouldSendHeartbeat) {
-            defaults.setObject("skip:no_change", "pulsebar.debug.endpoint.lastStatus")
-            defaults.synchronize()
+            logger(PulseLogCategory.SyncEndpoint).d { "capture.skip reason=no_change" }
             enabledEndpoints.forEach { endpoint ->
                 val current = stateFor(endpoint.id)
                 if (current.status == "idle") {
@@ -592,8 +588,6 @@ internal class PulseBarEndpointReporter {
                     }
                     val body = buildReplayBody(endpoint, batch)
                     val bodyText = json.encodeToString(JsonObject.serializer(), body)
-                    defaults.setObject(bodyText, debugBodyKey(endpoint.id))
-                    defaults.synchronize()
                     val attemptAtIso8601 = nativeIso8601Now()
                     syncStates[endpoint.id] = stateFor(endpoint.id).copy(
                         lastAttemptAtIso8601 = attemptAtIso8601,
@@ -639,8 +633,6 @@ internal class PulseBarEndpointReporter {
                     }.getOrElse { error ->
                         logHttpError("ingest", endpoint, error)
                         writeDebugStatus(endpoint.id, "error:${error::class.simpleName}:${error.message ?: "unknown"}")
-                        defaults.setObject(bodyText, debugBodyKey(endpoint.id))
-                        defaults.synchronize()
                         recordTransportFailure(endpoint, attemptAtIso8601, error)
                         null
                     }
@@ -1025,9 +1017,7 @@ internal class PulseBarEndpointReporter {
     }
 
     private fun writeDebugStatus(endpointId: String, value: String) {
-        defaults.setObject(value, debugStatusKey(endpointId))
-        defaults.setObject(value, "pulsebar.debug.endpoint.lastStatus")
-        defaults.synchronize()
+        logger(PulseLogCategory.SyncEndpoint).d { "endpoint.status endpoint=$endpointId value=$value" }
     }
 
     private fun logHttpRequest(kind: String, endpoint: ReporterEndpoint, method: String, url: String, detail: String) {
@@ -1046,12 +1036,6 @@ internal class PulseBarEndpointReporter {
     private fun writeHttpLog(message: String) {
         logger(PulseLogCategory.SyncEndpoint).d { message }
     }
-
-    private fun debugStatusKey(endpointId: String): String =
-        "pulsebar.debug.endpoint.${slugify(endpointId)}.lastStatus"
-
-    private fun debugBodyKey(endpointId: String): String =
-        "pulsebar.debug.endpoint.${slugify(endpointId)}.lastBody"
 }
 
 private data class ReporterEndpoint(
