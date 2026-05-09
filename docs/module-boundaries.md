@@ -78,7 +78,7 @@ Pulse 当前按四层分工，后续改动默认遵守以下边界。
 
 - config/debug 偏好仍放 `NSUserDefaults`
 - usage/raw journal 的运行态持久化统一走 Room DAO
-- `composeApp` 只作为迁移参考，不再视为当前产品能力来源
+- 硬切换原则：不保留任何 legacy / compat / migration 路径，旧的 `~/Library/Application Support/PulseBar/*.json` 与已废弃的 `NSUserDefaults` key 均不再导入
 
 ## Dependency Direction
 

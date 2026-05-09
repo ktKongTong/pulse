@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.export
 
+import io.github.kt.pulsebar.core.log.PulseLogCategory
+import io.github.kt.pulsebar.core.log.PulseLogger
 import kotlinx.coroutines.runBlocking
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.serialization.json.buildJsonArray
@@ -8,111 +10,18 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import platform.Foundation.NSFileManager
-import platform.Foundation.NSHomeDirectory
-import platform.Foundation.NSJSONReadingMutableContainers
-import platform.Foundation.NSJSONSerialization
-import platform.Foundation.NSNumber
 import platform.Foundation.NSUserDefaults
 
 private const val ENDPOINTS_CONFIG_KEY = "pulsebar.config.endpoints.v1"
-private const val LEGACY_ENDPOINT_ENABLED_KEY = "pulsebar.config.endpoint.enabled"
-private const val LEGACY_ENDPOINT_NAME_KEY = "pulsebar.config.endpoint.name"
-private const val LEGACY_ENDPOINT_TRANSPORT_KEY = "pulsebar.config.endpoint.transport"
-private const val LEGACY_ENDPOINT_URL_KEY = "pulsebar.config.endpoint.url"
-private const val LEGACY_ENDPOINT_API_KEY = "pulsebar.config.endpoint.apiKey"
-private const val LEGACY_ENDPOINT_WORKSPACE_ID_KEY = "pulsebar.config.endpoint.workspaceId"
-private const val LEGACY_ENDPOINT_SITE_ID_KEY = "pulsebar.config.endpoint.siteId"
-private const val LEGACY_ENDPOINT_BATCH_WINDOW_KEY = "pulsebar.config.endpoint.batchWindowSeconds"
 private const val DEFAULT_ENDPOINT_ID = "default-endpoint"
 private const val DEFAULT_ENDPOINT_NAME = "Primary endpoint"
 
 @OptIn(ExperimentalForeignApi::class)
 internal class PulseBarPreferencesStore {
     private val defaults = NSUserDefaults.standardUserDefaults
-    private val rootPath = NSHomeDirectory() + "/Library/Application Support/PulseBar"
     private val json = PulseBarRoomProvider.json
     private val database get() = PulseBarRoomProvider.database
     private val usageDao get() = database.usageDao()
-
-    fun importLegacyFilesIfNeeded() {
-        if (defaults.boolForKey("pulsebar.migration.legacy-json-import")) return
-        importLegacyConfig()
-        importLegacyUsage()
-        defaults.setBool(true, "pulsebar.migration.legacy-json-import")
-    }
-
-    fun migrateRoomUsageIfNeeded() {
-        if (defaults.boolForKey("pulsebar.migration.room.usage-v1")) return
-
-        val dictionary = defaults.dictionaryRepresentation()
-        val usageRows = linkedMapOf<String, Pair<String, Int>>()
-        val counters = linkedMapOf<Pair<String, String>, Int>()
-        val keysToRemove = mutableListOf<String>()
-
-        dictionary.forEach { (rawKey, rawValue) ->
-            val key = rawKey as? String ?: return@forEach
-            when {
-                key.startsWith("pulsebar.usage.") && key.endsWith(".label") -> {
-                    val body = key.removePrefix("pulsebar.usage.").removeSuffix(".label")
-                    val day = body.substringBefore(".")
-                    val statKey = body.substringAfter(".", "")
-                    if (statKey.isEmpty()) return@forEach
-                    val compositeKey = "$day::$statKey"
-                    val previous = usageRows[compositeKey]
-                    usageRows[compositeKey] = (rawValue as? String ?: "Unknown") to (previous?.second ?: 0)
-                    keysToRemove += key
-                }
-                key.startsWith("pulsebar.usage.") && key.endsWith(".seconds") -> {
-                    val body = key.removePrefix("pulsebar.usage.").removeSuffix(".seconds")
-                    val day = body.substringBefore(".")
-                    val statKey = body.substringAfter(".", "")
-                    if (statKey.isEmpty()) return@forEach
-                    val compositeKey = "$day::$statKey"
-                    val previous = usageRows[compositeKey]
-                    usageRows[compositeKey] = (previous?.first ?: "Unknown") to numberValue(rawValue)
-                    keysToRemove += key
-                }
-                key.startsWith("pulsebar.stats.") -> {
-                    val body = key.removePrefix("pulsebar.stats.")
-                    val day = body.substringBefore(".")
-                    val counterKey = body.substringAfter(".", "")
-                    if (counterKey.isEmpty()) return@forEach
-                    counters[day to counterKey] = numberValue(rawValue)
-                    keysToRemove += key
-                }
-            }
-        }
-
-        runBlocking {
-            usageRows.forEach { (compositeKey, value) ->
-                val dayIso = compositeKey.substringBefore("::")
-                val statKey = compositeKey.substringAfter("::")
-                usageDao.upsertUsageRow(
-                    UsageRowEntity(
-                        dayIso = dayIso,
-                        statKey = statKey,
-                        bundleId = statKey.substringBefore("::"),
-                        label = value.first,
-                        totalSeconds = value.second
-                    )
-                )
-            }
-            counters.forEach { (compositeKey, value) ->
-                usageDao.upsertUsageCounter(
-                    UsageCounterEntity(
-                        dayIso = compositeKey.first,
-                        counterKey = compositeKey.second,
-                        value = value
-                    )
-                )
-            }
-        }
-
-        keysToRemove.forEach(defaults::removeObjectForKey)
-        defaults.setBool(true, "pulsebar.migration.room.usage-v1")
-        defaults.synchronize()
-    }
 
     fun readConfig(): PulseBarConfig {
         return PulseBarConfig(
@@ -147,7 +56,6 @@ internal class PulseBarPreferencesStore {
             }.toString(),
             ENDPOINTS_CONFIG_KEY
         )
-        mirrorLegacyEndpoint(endpoints.firstOrNull())
         defaults.setInteger(config.idleThresholdSeconds.toLong(), "pulsebar.config.idleThresholdSeconds")
         defaults.setInteger(config.changeStabilityMillis.toLong(), "pulsebar.config.changeStabilityMillis")
         defaults.setInteger(config.heartbeatSeconds.toLong(), "pulsebar.config.heartbeatSeconds")
@@ -158,6 +66,15 @@ internal class PulseBarPreferencesStore {
         defaults.setObject(config.interactionExecutionModeName, "pulsebar.config.interaction.executionMode")
         defaults.setObject(config.interactionPlaybackModeName, "pulsebar.config.interaction.playbackMode")
         defaults.synchronize()
+        PulseLogger.debug(
+            PulseLogCategory.ConfigStore,
+            event = "config.persisted",
+            fields = mapOf(
+                "endpointCount" to endpoints.size,
+                "interactionExecutionMode" to config.interactionExecutionModeName,
+                "interactionPlaybackMode" to config.interactionPlaybackModeName,
+            ),
+        )
     }
 
     fun incrementUsage(day: String, key: String, label: String, seconds: Int) {
@@ -251,91 +168,25 @@ internal class PulseBarPreferencesStore {
     fun totalSecondsForDay(day: String, slice: UsageSlice): Int =
         rowsForDay(day, slice, 0).sumOf { it.totalSeconds }
 
-    private fun importLegacyConfig() {
-        val path = "$rootPath/config.json"
-        val data = NSFileManager.defaultManager.contentsAtPath(path) ?: return
-        val json = NSJSONSerialization.JSONObjectWithData(data, NSJSONReadingMutableContainers, null) as? Map<*, *> ?: return
-        val endpoint = json["endpoint"] as? Map<*, *>
-        defaults.setBool((endpoint?.get("enabled") as? Boolean) ?: false, LEGACY_ENDPOINT_ENABLED_KEY)
-        defaults.setObject(endpoint?.get("name") as? String ?: DEFAULT_ENDPOINT_NAME, LEGACY_ENDPOINT_NAME_KEY)
-        defaults.setObject(endpoint?.get("transport") as? String ?: PulseBarTransport.WEBSOCKET.name, LEGACY_ENDPOINT_TRANSPORT_KEY)
-        defaults.setObject(endpoint?.get("url") as? String ?: "", LEGACY_ENDPOINT_URL_KEY)
-        defaults.setObject(endpoint?.get("apiKey") as? String ?: "", LEGACY_ENDPOINT_API_KEY)
-        defaults.setInteger(numberValue(endpoint?.get("batchWindowSeconds"), 15).toLong(), LEGACY_ENDPOINT_BATCH_WINDOW_KEY)
-        defaults.setInteger(numberValue(json["idleThresholdSeconds"], 300).toLong(), "pulsebar.config.idleThresholdSeconds")
-        defaults.setInteger(numberValue(json["changeStabilityMillis"], 1200).toLong(), "pulsebar.config.changeStabilityMillis")
-        defaults.setInteger(numberValue(json["heartbeatSeconds"], 60).toLong(), "pulsebar.config.heartbeatSeconds")
-        defaults.setInteger(numberValue(json["appPollingMillis"], 500).toLong(), "pulsebar.config.appPollingMillis")
-        defaults.setInteger(numberValue(json["pagePollingMillis"], 2000).toLong(), "pulsebar.config.pagePollingMillis")
-        defaults.setInteger(numberValue(json["mediaPollingMillis"], 500).toLong(), "pulsebar.config.mediaPollingMillis")
-        defaults.setBool((json["allowWebInteractions"] as? Boolean) ?: true, "pulsebar.config.interaction.enabled")
-        defaults.setObject(json["interactionExecutionMode"] as? String ?: PulseBarInteractionExecutionMode.CONFIRM.name, "pulsebar.config.interaction.executionMode")
-        defaults.setObject(json["interactionPlaybackMode"] as? String ?: PulseBarInteractionPlaybackMode.PLAY_NEXT.name, "pulsebar.config.interaction.playbackMode")
-    }
-
-    private fun importLegacyUsage() {
-        val path = "$rootPath/usage-stats.json"
-        val data = NSFileManager.defaultManager.contentsAtPath(path) ?: return
-        val json = NSJSONSerialization.JSONObjectWithData(data, NSJSONReadingMutableContainers, null) as? List<*> ?: return
-        json.forEach { item ->
-            val map = item as? Map<*, *> ?: return@forEach
-            val day = map["day"] as? String ?: return@forEach
-            val key = map["key"] as? String ?: return@forEach
-            val label = map["label"] as? String ?: "Unknown"
-            val totalSeconds = numberValue(map["totalSeconds"], 0)
-            val prefix = "pulsebar.usage.$day.$key"
-            defaults.setObject(label, "$prefix.label")
-            defaults.setInteger(totalSeconds.toLong(), "$prefix.seconds")
-        }
-        defaults.synchronize()
-    }
-
     private fun readEndpoints(): List<PulseBarEndpointConfig> {
-        if (defaults.containsKey(ENDPOINTS_CONFIG_KEY)) {
-            val stored = defaults.stringForKey(ENDPOINTS_CONFIG_KEY)
-                ?.let { serialized ->
-                    runCatching {
-                        json.parseToJsonElement(serialized)
-                            .jsonArray
-                            .map { it.jsonObject.toPulseBarEndpointConfig() }
-                    }.getOrDefault(emptyList())
-                }
-                .orEmpty()
-            return normalizeEndpoints(stored)
+        val serialized = defaults.stringForKey(ENDPOINTS_CONFIG_KEY)
+        if (serialized == null) {
+            return normalizeEndpoints(listOf(defaultEndpointConfig()))
         }
-
-        return normalizeEndpoints(listOf(legacyEndpointConfig()))
-    }
-
-    private fun mirrorLegacyEndpoint(endpoint: PulseBarEndpointConfig?) {
-        val primary = endpoint ?: defaultEndpointConfig()
-        defaults.setBool(primary.enabled, LEGACY_ENDPOINT_ENABLED_KEY)
-        defaults.setObject(primary.name, LEGACY_ENDPOINT_NAME_KEY)
-        defaults.setObject(primary.transportName, LEGACY_ENDPOINT_TRANSPORT_KEY)
-        defaults.setObject(primary.endpointUrl, LEGACY_ENDPOINT_URL_KEY)
-        defaults.setObject(primary.workspaceId, LEGACY_ENDPOINT_WORKSPACE_ID_KEY)
-        defaults.setObject(primary.siteId, LEGACY_ENDPOINT_SITE_ID_KEY)
-        defaults.setObject(primary.apiKey, LEGACY_ENDPOINT_API_KEY)
-        defaults.setInteger(primary.batchWindowSeconds.toLong(), LEGACY_ENDPOINT_BATCH_WINDOW_KEY)
-    }
-
-    private fun legacyEndpointConfig(): PulseBarEndpointConfig {
-        val transportName = defaults.stringForKey(LEGACY_ENDPOINT_TRANSPORT_KEY) ?: PulseBarTransport.WEBSOCKET.name
-        val endpointUrl = defaults.stringForKey(LEGACY_ENDPOINT_URL_KEY) ?: ""
-        val migratedId = resolvedEndpointIngestUrl(endpointUrl).ifBlank { DEFAULT_ENDPOINT_ID }
-        return PulseBarEndpointConfig(
-            id = migratedId,
-            name = defaults.stringForKey(LEGACY_ENDPOINT_NAME_KEY) ?: DEFAULT_ENDPOINT_NAME,
-            enabled = defaults.boolForKey(LEGACY_ENDPOINT_ENABLED_KEY),
-            disconnected = false,
-            transport = transportFromName(transportName),
-            transportName = transportName,
-            endpointUrl = endpointUrl,
-            workspaceId = defaults.stringForKey(LEGACY_ENDPOINT_WORKSPACE_ID_KEY) ?: "",
-            siteId = defaults.stringForKey(LEGACY_ENDPOINT_SITE_ID_KEY) ?: "",
-            apiKey = defaults.stringForKey(LEGACY_ENDPOINT_API_KEY) ?: "",
-            batchWindowSeconds = intForKey(LEGACY_ENDPOINT_BATCH_WINDOW_KEY, 15)
-        )
+        val parsed = runCatching {
+            json.parseToJsonElement(serialized)
+                .jsonArray
+                .map { it.jsonObject.toPulseBarEndpointConfig() }
+        }.getOrElse { error ->
+            PulseLogger.warn(
+                PulseLogCategory.ConfigStore,
+                event = "config.endpoints.parse_failed",
+                fields = mapOf("key" to ENDPOINTS_CONFIG_KEY),
+                throwable = error,
+            )
+            emptyList()
+        }
+        return normalizeEndpoints(parsed)
     }
 
     private fun defaultEndpointConfig(
@@ -401,15 +252,6 @@ internal class PulseBarPreferencesStore {
 
     private fun NSUserDefaults.containsKey(key: String): Boolean =
         objectForKey(key) != null
-
-    private fun numberValue(value: Any?, defaultValue: Int = 0): Int =
-        when (value) {
-            is NSNumber -> value.intValue
-            is Int -> value
-            is Long -> value.toInt()
-            is Double -> value.toInt()
-            else -> defaultValue
-        }
 
     private fun PulseBarEndpointConfig.toJson() =
         buildJsonObject {

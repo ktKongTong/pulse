@@ -105,8 +105,6 @@ xcodebuild -project macosApp/PulseBarNative.xcodeproj \
 
 - `common`
   - KMP 共享业务层，负责状态模型、监控桥接、Room 本地持久化与 Swift export
-- `composeApp`
-  - 旧的 Compose Desktop 壳，保留作迁移参考
 - `macosApp`
   - 原生 SwiftUI 菜单栏应用和 Xcode 工程
 - `apps/realtime-worker`
@@ -196,4 +194,4 @@ Durable Object 房间：
 - `NeteaseMusic / QQMusic` 当前作为 best-effort probe 入口存在，未安装时会静默跳过，不会弹系统选择器。
 - 应用级监控是稳定可用的；页面级和媒体级能力取决于目标应用是否暴露 AppleScript 接口以及用户是否授权。
 - `realtime-worker` 是当前唯一的房间聚合与统计事实来源；Web 和 native 端都只消费协议包或 Worker 输出。
-- 原生 SwiftUI 菜单栏 UI 当前仍以本地共享状态为主，同时本地存储已经切到 Room；`composeApp` 仅保留作迁移参考。
+- 原生 SwiftUI 菜单栏 UI 当前仍以本地共享状态为主，同时本地存储已经切到 Room。

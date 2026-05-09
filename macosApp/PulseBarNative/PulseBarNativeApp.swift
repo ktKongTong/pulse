@@ -134,6 +134,7 @@ private final class PulseBarStatusItemController: NSObject {
     private func showPanel(relativeTo button: NSStatusBarButton) {
         guard let buttonWindow = button.window else { return }
         monitor.refreshMenuBarContent()
+        PulseNativeLog.debug(.platformAdapter, "statusItem.panel.show")
         let buttonFrameInWindow = button.convert(button.bounds, to: nil)
         let buttonFrameOnScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
         let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
@@ -149,6 +150,7 @@ private final class PulseBarStatusItemController: NSObject {
     }
 
     private func closePanel() {
+        PulseNativeLog.debug(.platformAdapter, "statusItem.panel.hide")
         removeCloseMonitors()
         panel.orderOut(nil)
     }

@@ -22,7 +22,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlin.experimental.ExperimentalNativeApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -35,17 +34,12 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import kotlin.native.Platform
-import platform.Foundation.NSHomeDirectory
-import platform.Foundation.NSLog
+import io.github.kt.pulsebar.core.log.PulseLogCategory
+import io.github.kt.pulsebar.core.log.PulseLogger
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUserName
-import platform.posix.fclose
-import platform.posix.fopen
-import platform.posix.fprintf
-import platform.posix.mkdir
 
-@OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
+@OptIn(ExperimentalForeignApi::class)
 internal class PulseBarEndpointReporter {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val client = HttpClient(Darwin) {
@@ -81,10 +75,6 @@ internal class PulseBarEndpointReporter {
         writeHttpLog("logger initialized")
         startProbeLoop()
         startReplayLoop()
-    }
-
-    fun migrateStorageIfNeeded() {
-        rawJournal.migrateToRoomIfNeeded()
     }
 
     fun updateConfig(config: PulseBarConfig) {
@@ -1054,20 +1044,11 @@ internal class PulseBarEndpointReporter {
     }
 
     private fun writeHttpLog(message: String) {
-        val line = "${nativeIso8601Now()} [pulsebar.http] $message"
-        if (Platform.isDebugBinary) {
-            NSLog(line)
-        }
-        val home = NSHomeDirectory()
-        mkdir("$home/Library/Logs", 0x1EDu)
-        val logDirectory = "$home/Library/Logs/PulseBarNative"
-        mkdir(logDirectory, 0x1EDu)
-        val file = fopen("$logDirectory/http.log", "a") ?: return
-        try {
-            fprintf(file, "%s\n", line)
-        } finally {
-            fclose(file)
-        }
+        PulseLogger.debug(
+            PulseLogCategory.SyncEndpoint,
+            event = "http.wire",
+            fields = mapOf("message" to message),
+        )
     }
 
     private fun debugStatusKey(endpointId: String): String =

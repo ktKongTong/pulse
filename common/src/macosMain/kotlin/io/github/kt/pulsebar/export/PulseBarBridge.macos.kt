@@ -105,12 +105,17 @@ actual class PulseBarBridge actual constructor() {
     private var pendingElapsedMillis: Long = 0L
 
     init {
-        store.importLegacyFilesIfNeeded()
-        store.migrateRoomUsageIfNeeded()
-        reporter.migrateStorageIfNeeded()
         val config = store.readConfig()
         reporter.updateConfig(config)
         interactionClient.updateConfig(config)
+        io.github.kt.pulsebar.core.log.PulseLogger.info(
+            io.github.kt.pulsebar.core.log.PulseLogCategory.AppLifecycle,
+            event = "bridge.initialized",
+            fields = mapOf(
+                "endpointCount" to config.endpoints.size,
+                "enabledEndpointCount" to config.endpoints.count { it.enabled },
+            ),
+        )
     }
 
     actual fun readMenuState(): PulseBarMenuState {
@@ -584,7 +589,10 @@ actual class PulseBarBridge actual constructor() {
         val appleScript = NSAppleScript(source = script)
         val result = appleScript.executeAndReturnError(null)
         if (result.stringValue == null) {
-            println("[pulsebar.appleScript] emptyResult")
+            io.github.kt.pulsebar.core.log.PulseLogger.debug(
+                io.github.kt.pulsebar.core.log.PulseLogCategory.PlatformAdapter,
+                event = "applescript.empty_result",
+            )
         }
         return result.stringValue?.trim()
     }

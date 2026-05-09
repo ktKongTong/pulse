@@ -20,12 +20,8 @@ final class NativeMonitorModel: ObservableObject {
     @Published var dashboardSelection: DashboardSection = .connection
 
     private var loopTask: Task<Void, Never>?
-    private var liveListenDebugTriggerTask: Task<Void, Never>?
     private let bridgeWorker = NativeBridgeWorker()
     let liveListenCaptureModel = LiveListenCaptureModel()
-    private var liveListenDebugStartObserver: NSObjectProtocol?
-    private var liveListenDebugStopObserver: NSObjectProtocol?
-    private var liveListenDebugStartInProgress = false
     private var lastStatsRefreshAt: Date = .distantPast
     private var lastInteractionRefreshAt: Date = .distantPast
     private var lastSyncRefreshAt: Date = .distantPast
@@ -41,9 +37,7 @@ final class NativeMonitorModel: ObservableObject {
     @_silgen_name("Kotlin_native_internal_ref_disposeExternalRCRef")
     nonisolated private static func disposeExternalRCRef(_ ref: UnsafeMutableRawPointer?)
 
-    init() {
-        installLiveListenDebugTriggerLoopIfNeeded()
-    }
+    init() {}
 
     private struct RefreshPayload {
         let snapshot: LiveSnapshot?
@@ -203,9 +197,7 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     func start() {
-        appendLiveListenDebugLog("monitor.start")
-        installLiveListenDebugObserversIfNeeded()
-        installLiveListenDebugTriggerLoopIfNeeded()
+        PulseNativeLog.info(.liveListenSession, "monitor.start")
         if loopTask != nil {
             isPaused = false
             return
@@ -232,43 +224,6 @@ final class NativeMonitorModel: ObservableObject {
 
     deinit {
         loopTask?.cancel()
-        liveListenDebugTriggerTask?.cancel()
-    }
-
-
-    private func installLiveListenDebugTriggerLoopIfNeeded() {
-        if liveListenDebugTriggerTask != nil { return }
-        appendLiveListenDebugLog("debug trigger loop installed")
-        liveListenDebugTriggerTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                self?.pollLiveListenDebugTriggerFiles()
-                try? await Task.sleep(for: .milliseconds(250))
-            }
-        }
-    }
-
-
-    private func pollLiveListenDebugTriggerFiles() {
-        let fileManager = FileManager.default
-        let startURL = URL(fileURLWithPath: "/tmp/pulse-live-listen-start")
-        let stopURL = URL(fileURLWithPath: "/tmp/pulse-live-listen-stop")
-
-        if fileManager.fileExists(atPath: stopURL.path) {
-            appendLiveListenDebugLog("stop trigger seen")
-            try? fileManager.removeItem(at: stopURL)
-            stopDebugNativeLiveListenStream()
-        }
-
-        if fileManager.fileExists(atPath: startURL.path), !liveListenDebugStartInProgress {
-            appendLiveListenDebugLog("start trigger seen")
-            try? fileManager.removeItem(at: startURL)
-            liveListenDebugStartInProgress = true
-            startDebugNativeLiveListenStream()
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(2))
-                self?.liveListenDebugStartInProgress = false
-            }
-        }
     }
 
     func prepareLiveListenCapturePane() {
@@ -283,54 +238,22 @@ final class NativeMonitorModel: ObservableObject {
     func startDebugNativeLiveListenStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
         liveListenCaptureModel.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
         let endpoints = liveListenEndpoints
-        appendLiveListenDebugLog("start debug stream endpoints=\(endpoints.map { $0.baseURL.absoluteString }.joined(separator: ",")) source=\(liveListenCaptureModel.selectedSource?.name ?? "nil")")
+        PulseNativeLog.info(
+            .liveListenSession,
+            "debug.stream.start",
+            fields: [
+                "endpoints": endpoints.map { $0.baseURL.absoluteString }.joined(separator: ","),
+                "source": liveListenCaptureModel.selectedSource?.name ?? "nil",
+            ]
+        )
         liveListenCaptureModel.updateEndpoints(endpoints)
         dashboardSelection = .connection
         liveListenCaptureModel.startNativeStream()
     }
 
     func stopDebugNativeLiveListenStream() {
-        appendLiveListenDebugLog("stop debug stream")
+        PulseNativeLog.info(.liveListenSession, "debug.stream.stop")
         liveListenCaptureModel.stopCapture()
-    }
-
-    private func appendLiveListenDebugLog(_ message: String) {
-        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
-        let url = URL(fileURLWithPath: "/tmp/pulse-live-listen-native-debug.log")
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
-                try? handle.seekToEnd()
-                try? handle.write(contentsOf: data)
-                try? handle.close()
-            } else {
-                try? data.write(to: url)
-            }
-        }
-    }
-
-    private func installLiveListenDebugObserversIfNeeded() {
-        if liveListenDebugStartObserver == nil {
-            liveListenDebugStartObserver = DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("PulseLiveListenDebugStartNativeStream"),
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.startDebugNativeLiveListenStream()
-                }
-            }
-        }
-        if liveListenDebugStopObserver == nil {
-            liveListenDebugStopObserver = DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("PulseLiveListenDebugStopNativeStream"),
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.stopDebugNativeLiveListenStream()
-                }
-            }
-        }
     }
 
     func stop() {

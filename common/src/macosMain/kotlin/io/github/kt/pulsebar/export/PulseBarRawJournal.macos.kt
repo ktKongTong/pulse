@@ -2,21 +2,10 @@ package io.github.kt.pulsebar.export
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import kotlinx.coroutines.runBlocking
-import platform.Foundation.NSUserDefaults
 
 private const val DEVICE_RAW_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L
-private const val RAW_JOURNAL_KEY = "pulsebar.rawJournal.entries"
-private const val RAW_CHECKPOINTS_KEY = "pulsebar.rawJournal.checkpoints"
-private const val RAW_SEQUENCE_KEY = "pulsebar.rawJournal.sequence"
-private const val ROOM_RAW_JOURNAL_MIGRATION_KEY = "pulsebar.migration.room.raw-journal-v1"
-private const val ROOM_RAW_SEQUENCE_KEY = "raw_sequence"
 private const val ROOM_RAW_JOURNAL_MAX_ENTRIES = 10_000L
 
 internal data class RawJournalEntry(
@@ -48,54 +37,15 @@ internal data class ReplayBatchResult(
     val removedCount: Int
 )
 
+/**
+ * Room-backed journal of outbound presence events and per-endpoint delivery
+ * watermarks. Legacy `NSUserDefaults` migration paths were removed in the
+ * Phase 1 cleanup; Room is now the only backing store.
+ */
 internal class PulseBarRawJournalStore {
-    private val defaults = NSUserDefaults.standardUserDefaults
     private val json = PulseBarRoomProvider.json
     private val database get() = PulseBarRoomProvider.database
     private val dao get() = database.rawJournalDao()
-
-    fun migrateToRoomIfNeeded() {
-        if (defaults.boolForKey(ROOM_RAW_JOURNAL_MIGRATION_KEY)) return
-
-        val rawEntries = defaults.stringForKey(RAW_JOURNAL_KEY)
-        val rawCheckpoints = defaults.stringForKey(RAW_CHECKPOINTS_KEY)
-        val rawSequence = defaults.integerForKey(RAW_SEQUENCE_KEY)
-
-        runBlocking {
-            rawEntries?.let { serialized ->
-                runCatching {
-                    json.parseToJsonElement(serialized).jsonArray.map { it.jsonObject.toRawJournalEntry() }
-                }.getOrDefault(emptyList()).forEach { entry ->
-                    dao.upsertRawJournalEntity(entry.toEntity(json))
-                }
-            }
-
-            rawCheckpoints?.let { serialized ->
-                runCatching {
-                    json.parseToJsonElement(serialized).jsonArray.map { it.jsonObject.toDeliveryWatermark() }
-                }.getOrDefault(emptyList()).forEach { checkpoint ->
-                    dao.upsertCheckpoint(
-                        DeliveryWatermarkEntity(
-                            endpointKey = checkpoint.endpointKey,
-                            deviceId = checkpoint.deviceId,
-                            acknowledgedSeqMax = checkpoint.acknowledgedSeqMax,
-                            acknowledgedAtIso8601 = checkpoint.acknowledgedAtIso8601
-                        )
-                    )
-                }
-            }
-
-            if (rawSequence > 0L) {
-                dao.upsertMetaValue(ROOM_RAW_SEQUENCE_KEY, rawSequence)
-            }
-        }
-
-        defaults.removeObjectForKey(RAW_JOURNAL_KEY)
-        defaults.removeObjectForKey(RAW_CHECKPOINTS_KEY)
-        defaults.removeObjectForKey(RAW_SEQUENCE_KEY)
-        defaults.setBool(true, ROOM_RAW_JOURNAL_MIGRATION_KEY)
-        defaults.synchronize()
-    }
 
     fun nextSequence(): Long {
         return runBlocking { dao.nextSequence() }
@@ -159,53 +109,6 @@ internal class PulseBarRawJournalStore {
         }
     }
 }
-private fun RawJournalEntry.toJson(): JsonObject =
-    buildJsonObject {
-        put("protocol", protocol)
-        put("endpointKey", endpointKey)
-        put("workspaceId", workspaceId)
-        put("deviceId", deviceId)
-        put("sessionId", sessionId)
-        put("eventId", eventId)
-        put("seq", seq)
-        put("observedAt", observedAt)
-        put("sentAt", sentAt)
-        put("kind", kind)
-        put("event", event)
-        put("queuedAtMillis", queuedAtMillis)
-    }
-
-internal fun JsonObject.toRawJournalEntry(): RawJournalEntry =
-    RawJournalEntry(
-        protocol = getValue("protocol").jsonPrimitive.content,
-        endpointKey = getValue("endpointKey").jsonPrimitive.content,
-        workspaceId = getValue("workspaceId").jsonPrimitive.content,
-        deviceId = getValue("deviceId").jsonPrimitive.content,
-        sessionId = getValue("sessionId").jsonPrimitive.content,
-        eventId = getValue("eventId").jsonPrimitive.content,
-        seq = getValue("seq").jsonPrimitive.content.toLong(),
-        observedAt = getValue("observedAt").jsonPrimitive.content,
-        sentAt = getValue("sentAt").jsonPrimitive.content,
-        kind = getValue("kind").jsonPrimitive.content,
-        event = getValue("event").jsonObject,
-        queuedAtMillis = getValue("queuedAtMillis").jsonPrimitive.content.toLong()
-    )
-
-private fun DeliveryWatermark.toJson(): JsonObject =
-    buildJsonObject {
-        put("endpointKey", endpointKey)
-        put("deviceId", deviceId)
-        put("acknowledgedSeqMax", acknowledgedSeqMax)
-        put("acknowledgedAtIso8601", acknowledgedAtIso8601)
-    }
-
-internal fun JsonObject.toDeliveryWatermark(): DeliveryWatermark =
-    DeliveryWatermark(
-        endpointKey = getValue("endpointKey").jsonPrimitive.content,
-        deviceId = getValue("deviceId").jsonPrimitive.content,
-        acknowledgedSeqMax = getValue("acknowledgedSeqMax").jsonPrimitive.content.toLong(),
-        acknowledgedAtIso8601 = getValue("acknowledgedAtIso8601").jsonPrimitive.content
-    )
 
 private fun RawJournalEntry.toEntity(json: Json): RawJournalEntity =
     RawJournalEntity(

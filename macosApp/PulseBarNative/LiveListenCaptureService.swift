@@ -675,16 +675,7 @@ final class LiveListenCaptureModel: ObservableObject {
 
 
     private func appendLiveListenCaptureDebugLog(_ message: String) {
-        let line = "\(ISO8601DateFormatter().string(from: Date())) capture \(message)\n"
-        let url = URL(fileURLWithPath: "/tmp/pulse-live-listen-native-debug.log")
-        guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
-            _ = try? handle.seekToEnd()
-            _ = try? handle.write(contentsOf: data)
-            try? handle.close()
-        } else {
-            try? data.write(to: url)
-        }
+        PulseNativeLog.debug(.liveListenSession, "capture", fields: ["message": message])
     }
 
     func stopCapture() {
@@ -1189,16 +1180,7 @@ private let liveListenCaptureIOProc: AudioDeviceIOProc = { _, _, inputData, _, o
 }
 
 private func appendLiveListenCaptureServiceLog(_ message: String) {
-    let line = "\(ISO8601DateFormatter().string(from: Date())) capture-service \(message)\n"
-    let url = URL(fileURLWithPath: "/tmp/pulse-live-listen-native-debug.log")
-    guard let data = line.data(using: .utf8) else { return }
-    if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
-        _ = try? handle.seekToEnd()
-        _ = try? handle.write(contentsOf: data)
-        try? handle.close()
-    } else {
-        try? data.write(to: url)
-    }
+    PulseNativeLog.debug(.liveListenSession, "capture.service", fields: ["message": message])
 }
 
 private func liveListenEmitCaptureUpdateIfNeeded(context: LiveListenCaptureService.CaptureContext) {

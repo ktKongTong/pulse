@@ -915,16 +915,7 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
     }
 
     private func appendLiveListenPublisherDebugLog(_ message: String) {
-        let line = "\(ISO8601DateFormatter().string(from: Date())) publisher \(message)\n"
-        let url = URL(fileURLWithPath: "/tmp/pulse-live-listen-native-debug.log")
-        guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
-            _ = try? handle.seekToEnd()
-            _ = try? handle.write(contentsOf: data)
-            try? handle.close()
-        } else {
-            try? data.write(to: url)
-        }
+        PulseNativeLog.debug(.liveListenSession, "publisher", fields: ["message": message])
     }
 
     private static func wavChunk(pcm16: Data, sampleRate: UInt32, channels: UInt32) -> Data {
