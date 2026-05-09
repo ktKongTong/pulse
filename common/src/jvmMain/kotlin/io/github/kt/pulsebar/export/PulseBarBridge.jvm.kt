@@ -113,4 +113,8 @@ actual class PulseBarBridge actual constructor() {
     actual fun mediaCommand(command: PulseBarPlaybackCommand): Boolean = false
 
     actual fun seekMedia(progressSeconds: Double): Boolean = false
+
+    actual fun tick() = Unit
+
+    actual fun forceTick() = Unit
 }

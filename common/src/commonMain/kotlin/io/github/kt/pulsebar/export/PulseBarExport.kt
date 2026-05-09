@@ -179,4 +179,22 @@ expect class PulseBarBridge() {
     fun dismissInteraction(requestId: String): Boolean
     fun mediaCommand(command: PulseBarPlaybackCommand): Boolean
     fun seekMedia(progressSeconds: Double): Boolean
+
+    /**
+     * Advance the bridge one orchestration step: probe the frontmost app +
+     * media, update usage counters, hand the resulting snapshot to the
+     * reporter, opportunistically drain pending replays. Safe to call
+     * frequently; respects the change-stability and heartbeat windows.
+     *
+     * Called by Kotlin's internal tick loop. Platforms should prefer
+     * [forceTick] for user-driven events instead of calling this directly.
+     */
+    fun tick()
+
+    /**
+     * Like [tick] but forces a snapshot publish and a replay attempt. Use
+     * for user-triggered actions (menubar opened, Retry pressed, settings
+     * saved).
+     */
+    fun forceTick()
 }

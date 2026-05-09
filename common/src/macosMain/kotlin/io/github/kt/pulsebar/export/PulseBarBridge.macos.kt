@@ -27,6 +27,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -116,10 +118,16 @@ actual class PulseBarBridge actual constructor() {
     private var lastSelectedMediaProviderId: String? = null
     private var pendingElapsedMillis: Long = 0L
 
+    @Volatile private var latestMenuState: PulseBarMenuState = emptyMenuState()
+    @Volatile private var currentPollIntervalMillis: Long = DEFAULT_POLL_INTERVAL_MS
+    private val tickMutex = Mutex()
+    private var tickLoopJob: Job? = null
+
     init {
         val initial = currentConfig()
         interactionClient = PulseBarInteractionClient(initial)
         reporter.updateConfig(initial)
+        currentPollIntervalMillis = resolvePollIntervalMs(initial)
         logger(PulseLogCategory.AppLifecycle).i {
             "bridge.initialized endpoints=${initial.endpoints.size} enabled=${initial.endpoints.count { it.enabled }}"
         }
@@ -129,29 +137,71 @@ actual class PulseBarBridge actual constructor() {
                 reporter.updateConfig(export)
                 reporter.resetIfDisabled(export)
                 interactionClient.updateConfig(export)
+                currentPollIntervalMillis = resolvePollIntervalMs(export)
                 logger(PulseLogCategory.ConfigStore).d {
                     "config.observed endpoints=${export.endpoints.size}" +
                         " enabled=${export.endpoints.count { it.enabled }}" +
-                        " disconnected=${export.endpoints.count { it.disconnected }}"
+                        " disconnected=${export.endpoints.count { it.disconnected }}" +
+                        " pollMs=${currentPollIntervalMillis}"
                 }
+            }
+        }
+        tickLoopJob = scope.launch {
+            while (isActive) {
+                runCatching { runTick(forcePublish = false, forceReplay = false) }
+                    .onFailure { error ->
+                        logger(PulseLogCategory.StatsRefresh).w(error) { "tick.failed" }
+                    }
+                delay(currentPollIntervalMillis)
             }
         }
     }
 
-    actual fun readMenuState(): PulseBarMenuState {
-        val config = currentConfig()
-        val snapshot = readSnapshot()
-        interactionClient.reconcilePlayback(snapshot.media)
-        updateUsage(snapshot)
-        reporter.capture(snapshot, config)
-        reporter.sync(config)
-        val rows = store.topRowsForDay(todayKey(), 3)
-        return PulseBarMenuState(
-            snapshot = snapshot,
-            firstUsage = rows.getOrNull(0),
-            secondUsage = rows.getOrNull(1),
-            thirdUsage = rows.getOrNull(2)
-        )
+    /**
+     * Pure reader. Returns the most recent menu state that the bridge's tick
+     * loop has materialized. No I/O, no AppleScript, no network. Safe to call
+     * as often as the UI needs.
+     */
+    actual fun readMenuState(): PulseBarMenuState = latestMenuState
+
+    actual fun tick() {
+        scope.launch { runTick(forcePublish = false, forceReplay = false) }
+    }
+
+    actual fun forceTick() {
+        scope.launch { runTick(forcePublish = true, forceReplay = true) }
+    }
+
+    private suspend fun runTick(forcePublish: Boolean, forceReplay: Boolean) {
+        tickMutex.withLock {
+            val config = currentConfig()
+            val snapshot = readSnapshot()
+            interactionClient.reconcilePlayback(snapshot.media)
+            updateUsage(snapshot)
+            reporter.capture(snapshot, config)
+            if (forceReplay) {
+                reporter.sync(config, forceReplay = true)
+            } else {
+                reporter.sync(config)
+            }
+            if (forcePublish) {
+                // capture() is a no-op when nothing changed; force a push anyway.
+                reporter.forceSync(snapshot, config)
+            }
+            val rows = store.topRowsForDay(todayKey(), 3)
+            publishMenuState(
+                PulseBarMenuState(
+                    snapshot = snapshot,
+                    firstUsage = rows.getOrNull(0),
+                    secondUsage = rows.getOrNull(1),
+                    thirdUsage = rows.getOrNull(2),
+                ),
+            )
+        }
+    }
+
+    private fun publishMenuState(next: PulseBarMenuState) {
+        latestMenuState = next
     }
 
     actual fun readStats(dayIso: String, limit: Int): PulseBarStatsPage {
@@ -194,8 +244,10 @@ actual class PulseBarBridge actual constructor() {
     actual fun readSyncState(): PulseBarSyncState =
         reporter.readSyncState(currentConfig())
 
-    actual fun retryEndpoint(): Boolean =
-        reporter.retry(readSnapshot(), currentConfig())
+    actual fun retryEndpoint(): Boolean {
+        forceTick()
+        return true
+    }
 
     actual fun acceptInteraction(requestId: String): Boolean =
         interactionClient.accept(requestId)
@@ -204,7 +256,7 @@ actual class PulseBarBridge actual constructor() {
         interactionClient.dismiss(requestId)
 
     actual fun mediaCommand(command: PulseBarPlaybackCommand): Boolean {
-        val spotifyCommand = when (command) {
+        val appleScriptVerb = when (command) {
             PulseBarPlaybackCommand.PREVIOUS -> "previous track"
             PulseBarPlaybackCommand.TOGGLE_PLAY_PAUSE -> "playpause"
             PulseBarPlaybackCommand.NEXT -> "next track"
@@ -212,33 +264,26 @@ actual class PulseBarBridge actual constructor() {
         val spotifyScript = """
             tell application "Spotify"
                 if it is running then
-                    $spotifyCommand
+                    $appleScriptVerb
                     return "ok"
                 end if
             end tell
         """.trimIndent()
         if (runAppleScript(spotifyScript) == "ok") {
-            pushRealtimeSnapshot()
+            forceTick()
             return true
         }
 
-        val musicCommand = when (command) {
-            PulseBarPlaybackCommand.PREVIOUS -> "previous track"
-            PulseBarPlaybackCommand.TOGGLE_PLAY_PAUSE -> "playpause"
-            PulseBarPlaybackCommand.NEXT -> "next track"
-        }
         val musicScript = """
             tell application "Music"
                 if it is running then
-                    $musicCommand
+                    $appleScriptVerb
                     return "ok"
                 end if
             end tell
         """.trimIndent()
         val success = runAppleScript(musicScript) == "ok"
-        if (success) {
-            pushRealtimeSnapshot()
-        }
+        if (success) forceTick()
         return success
     }
 
@@ -253,7 +298,7 @@ actual class PulseBarBridge actual constructor() {
             end tell
         """.trimIndent()
         if (runAppleScript(spotifyScript) == "ok") {
-            pushRealtimeSnapshot()
+            forceTick()
             return true
         }
 
@@ -266,9 +311,7 @@ actual class PulseBarBridge actual constructor() {
             end tell
         """.trimIndent()
         val success = runAppleScript(musicScript) == "ok"
-        if (success) {
-            pushRealtimeSnapshot()
-        }
+        if (success) forceTick()
         return success
     }
 
@@ -611,13 +654,20 @@ actual class PulseBarBridge actual constructor() {
         return result.stringValue?.trim()
     }
 
-    private fun pushRealtimeSnapshot() {
-        val config = currentConfig()
-        if (config.endpoints.none { it.enabled }) return
-        reporter.forceSync(readSnapshot(), config)
-    }
-
     private fun currentConfig(): PulseBarConfig = configStore.snapshot().toExport()
+
+    private fun resolvePollIntervalMs(config: PulseBarConfig): Long =
+        config.appPollingMillis
+            .toLong()
+            .coerceIn(MIN_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS)
+
+    private fun emptyMenuState(): PulseBarMenuState =
+        PulseBarMenuState(
+            snapshot = null,
+            firstUsage = null,
+            secondUsage = null,
+            thirdUsage = null,
+        )
 
     private fun currentTimeMillis(): Long =
         (NSDate().timeIntervalSinceReferenceDate * 1000.0).toLong()
@@ -630,6 +680,12 @@ actual class PulseBarBridge actual constructor() {
     }
 
     private fun todayKey(): String = iso8601Now().substring(0, 10)
+
+    private companion object {
+        const val DEFAULT_POLL_INTERVAL_MS: Long = 750L
+        const val MIN_POLL_INTERVAL_MS: Long = 500L
+        const val MAX_POLL_INTERVAL_MS: Long = 5_000L
+    }
 }
 
 private data class SessionParts(
