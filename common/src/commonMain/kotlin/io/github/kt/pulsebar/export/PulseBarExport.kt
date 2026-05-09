@@ -100,6 +100,20 @@ class PulseBarStatsPage(
     val items: List<PulseBarUsageRow>
 )
 
+/**
+ * Top-3 usage rows + today's total seconds, derived from the Room-backed
+ * usage journal. Emitted via [PulseBarBridge.observeTodayStats] whenever the
+ * Room tables change, so UIs never need to poll.
+ */
+class PulseBarTodayStats(
+    val dayIso: String,
+    val totalSeconds: Int,
+    val firstUsage: PulseBarUsageRow?,
+    val secondUsage: PulseBarUsageRow?,
+    val thirdUsage: PulseBarUsageRow?,
+    val topRows: List<PulseBarUsageRow>,
+)
+
 class PulseBarLocalStats(
     val dayIso: String,
     val appFocusSeconds: Int,
@@ -232,4 +246,12 @@ expect class PulseBarBridge() {
      * Subscribe to interaction-state updates.
      */
     fun observeInteractionState(onUpdate: (PulseBarInteractionState) -> Unit): PulseBarCancellable
+
+    /**
+     * Subscribe to today's usage stats. Emits on startup, when Room's usage
+     * tables are updated by a tick, and when the day rolls over. The value
+     * includes today's total seconds plus the top three app rows for menubar
+     * rendering.
+     */
+    fun observeTodayStats(onUpdate: (PulseBarTodayStats) -> Unit): PulseBarCancellable
 }

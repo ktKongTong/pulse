@@ -22,7 +22,6 @@ final class NativeMonitorModel: ObservableObject {
     private let bridgeWorker = NativeBridgeWorker()
     let liveListenCaptureModel = LiveListenCaptureModel()
     private var subscribed = false
-    private var statsDayKey: String = NativeMonitorModel.todayIsoString()
 
     nonisolated(unsafe) private static let iso8601Formatter = ISO8601DateFormatter()
     private static let dayFormatter: DateFormatter = {
@@ -51,7 +50,8 @@ final class NativeMonitorModel: ObservableObject {
             onMenuState: @escaping @MainActor (PulseBarMenuState) -> Void,
             onConfig: @escaping @MainActor (PulseBarConfig) -> Void,
             onSyncState: @escaping @MainActor (PulseBarSyncState) -> Void,
-            onInteractionState: @escaping @MainActor (PulseBarInteractionState) -> Void
+            onInteractionState: @escaping @MainActor (PulseBarInteractionState) -> Void,
+            onTodayStats: @escaping @MainActor (PulseBarTodayStats) -> Void
         ) {
             queue.async {
                 self.cancellables.append(self.bridge.observeMenuState { state in
@@ -66,6 +66,9 @@ final class NativeMonitorModel: ObservableObject {
                 self.cancellables.append(self.bridge.observeInteractionState { state in
                     DispatchQueue.main.async { onInteractionState(state) }
                 })
+                self.cancellables.append(self.bridge.observeTodayStats { stats in
+                    DispatchQueue.main.async { onTodayStats(stats) }
+                })
             }
         }
 
@@ -78,13 +81,6 @@ final class NativeMonitorModel: ObservableObject {
 
         func forceTick() {
             queue.async { self.bridge.forceTick() }
-        }
-
-        func readStatsSnapshot(dayIso: String, completion: @escaping @MainActor ([UsageRow], Int) -> Void) {
-            queue.async {
-                let page = NativeMonitorModel.mapStatsPage(self.bridge.readStats(dayIso: dayIso, limit: 100))
-                DispatchQueue.main.async { completion(page.items, page.totalSeconds) }
-            }
         }
 
         func updateConfig(from draft: SettingsDraft, completion: (@MainActor () -> Void)? = nil) {
@@ -160,10 +156,12 @@ final class NativeMonitorModel: ObservableObject {
             },
             onInteractionState: { [weak self] state in
                 self?.applyInteractionStateUpdate(state)
+            },
+            onTodayStats: { [weak self] stats in
+                self?.applyTodayStatsUpdate(stats)
             }
         )
 
-        refreshStats(force: true)
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
@@ -209,7 +207,6 @@ final class NativeMonitorModel: ObservableObject {
         isPaused.toggle()
         if !isPaused {
             bridgeWorker.forceTick()
-            refreshStats(force: true)
         }
     }
 
@@ -220,7 +217,6 @@ final class NativeMonitorModel: ObservableObject {
         }
         isPaused = false
         bridgeWorker.forceTick()
-        refreshStats(force: true)
     }
 
     func refreshMenuBarContent() {
@@ -230,29 +226,30 @@ final class NativeMonitorModel: ObservableObject {
         }
         isPaused = false
         bridgeWorker.forceTick()
-        refreshStats(force: true)
-    }
-
-    /// Usage stats (today's aggregate + top rows) aren't pushed through the
-    /// state flow yet — they're pulled on demand after force-ticks and when
-    /// we roll past midnight. Phase 3f can upgrade this to a Room-backed
-    /// flow; polling on user-visible events is fine until then.
-    func refreshStats(force: Bool = false) {
-        let today = Self.todayIsoString()
-        if !force && today == statsDayKey && !todayStats.isEmpty { return }
-        statsDayKey = today
-        bridgeWorker.readStatsSnapshot(dayIso: today) { [weak self] items, totalSeconds in
-            guard let self else { return }
-            if self.todayStats != items { self.todayStats = items }
-            if self.todayTotalSeconds != totalSeconds { self.todayTotalSeconds = totalSeconds }
-        }
     }
 
     private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
         let mapped = Self.mapSnapshotObject(state.snapshot)
         applySnapshotIfNeeded(mapped)
         liveListenCaptureModel.updateCurrentMedia(mapped?.media)
-        refreshStats(force: false)
+    }
+
+    private func applyTodayStatsUpdate(_ stats: PulseBarTodayStats) {
+        let rows = stats.topRows.map { row in
+            Self.mapUsageRow(
+                key: row.key,
+                label: row.label,
+                bundleId: row.bundleId,
+                totalSeconds: Int(row.totalSeconds),
+            )
+        }
+        if todayStats != rows {
+            todayStats = rows
+        }
+        let total = Int(stats.totalSeconds)
+        if todayTotalSeconds != total {
+            todayTotalSeconds = total
+        }
     }
 
     private func applyConfigUpdate(_ config: PulseBarConfig) {

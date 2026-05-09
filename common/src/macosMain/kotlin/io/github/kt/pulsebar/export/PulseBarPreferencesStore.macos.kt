@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.export
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -48,7 +50,25 @@ internal class PulseBarPreferencesStore {
 
     fun rowsForDay(day: String, slice: UsageSlice, limit: Int): List<PulseBarUsageRow> {
         val rawRows = runBlocking { usageDao.rowsForDay(day) }
+        return projectRows(rawRows, slice, limit)
+    }
 
+    fun totalSecondsForDay(day: String, slice: UsageSlice): Int =
+        rowsForDay(day, slice, 0).sumOf { it.totalSeconds }
+
+    /** Flow-based counterpart of [rowsForDay]. Emits whenever [UsageRowEntity] for [day] change. */
+    fun rowsForDayFlow(day: String, slice: UsageSlice, limit: Int): Flow<List<PulseBarUsageRow>> =
+        usageDao.rowsForDayFlow(day).map { rows -> projectRows(rows, slice, limit) }
+
+    /** Flow variant of [topRowsForDay]. */
+    fun topRowsForDayFlow(day: String, limit: Int): Flow<List<PulseBarUsageRow>> =
+        rowsForDayFlow(day, UsageSlice.APP, limit)
+
+    private fun projectRows(
+        rawRows: List<UsageRowEntity>,
+        slice: UsageSlice,
+        limit: Int,
+    ): List<PulseBarUsageRow> {
         val grouped = linkedMapOf<String, Pair<String, Int>>()
         rawRows.forEach { row ->
             val statKey = row.statKey
@@ -91,7 +111,4 @@ internal class PulseBarPreferencesStore {
             .sortedByDescending { it.totalSeconds }
             .let { rows -> if (limit > 0) rows.take(limit) else rows }
     }
-
-    fun totalSecondsForDay(day: String, slice: UsageSlice): Int =
-        rowsForDay(day, slice, 0).sumOf { it.totalSeconds }
 }

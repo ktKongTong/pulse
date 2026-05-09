@@ -10,6 +10,7 @@ import androidx.room3.Transaction
 import androidx.room3.Upsert
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.Json
 
 private const val RAW_SEQUENCE_META_KEY = "raw_sequence"
@@ -72,6 +73,15 @@ internal interface PulseBarUsageDao {
         """
     )
     suspend fun rowsForDay(dayIso: String): List<UsageRowEntity>
+
+    @Query(
+        """
+        SELECT day_iso, stat_key, bundle_id, label, total_seconds
+        FROM usage_rows
+        WHERE day_iso = :dayIso
+        """
+    )
+    fun rowsForDayFlow(dayIso: String): Flow<List<UsageRowEntity>>
 
     @Query("SELECT total_seconds FROM usage_rows WHERE day_iso = :dayIso AND stat_key = :statKey")
     suspend fun readUsageSeconds(dayIso: String, statKey: String): Int?

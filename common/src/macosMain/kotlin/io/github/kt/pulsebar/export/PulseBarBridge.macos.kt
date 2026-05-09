@@ -227,6 +227,26 @@ actual class PulseBarBridge actual constructor() {
     actual fun observeInteractionState(onUpdate: (PulseBarInteractionState) -> Unit): PulseBarCancellable =
         collect(interactionStateFlow.asStateFlow()) { if (it != null) onUpdate(it) }
 
+    actual fun observeTodayStats(onUpdate: (PulseBarTodayStats) -> Unit): PulseBarCancellable {
+        val todayIso = todayKey()
+        return collect(
+            store.rowsForDayFlow(todayIso, UsageSlice.APP, limit = 100)
+                .distinctUntilChanged(),
+        ) { rows ->
+            val total = rows.sumOf { it.totalSeconds }
+            onUpdate(
+                PulseBarTodayStats(
+                    dayIso = todayIso,
+                    totalSeconds = total,
+                    firstUsage = rows.getOrNull(0),
+                    secondUsage = rows.getOrNull(1),
+                    thirdUsage = rows.getOrNull(2),
+                    topRows = rows,
+                ),
+            )
+        }
+    }
+
     private fun <T> collect(
         source: kotlinx.coroutines.flow.Flow<T>,
         onUpdate: (T) -> Unit,
