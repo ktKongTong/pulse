@@ -133,6 +133,30 @@ actual class PulseBarBridge actual constructor() {
     actual fun observeTodayStats(onUpdate: (PulseBarTodayStats) -> Unit): PulseBarCancellable =
         noopCancellable
 
+    actual fun startLiveListen(
+        roomId: String,
+        deviceId: String,
+        baseUrl: String,
+        workspaceId: String,
+        apiKey: String,
+        sampleRate: Int,
+        channels: Int,
+        chunkDurationMs: Int,
+    ) = Unit
+
+    actual fun stopLiveListen() = Unit
+
+    actual fun submitLiveListenPcmBase64(chunkBase64: String) = Unit
+
+    actual fun updateLiveListenMediaState(
+        permissionAllow: Boolean,
+        playbackPlaying: Boolean,
+        captureRunning: Boolean,
+    ) = Unit
+
+    actual fun observeLiveListenStats(onUpdate: (PulseBarLiveListenStats) -> Unit): PulseBarCancellable =
+        noopCancellable
+
     private companion object {
         val noopCancellable: PulseBarCancellable = object : PulseBarCancellable {
             override fun cancel() = Unit

@@ -5,8 +5,17 @@ import io.github.kt.pulsebar.core.config.pulseBarConfigFileSystem
 import io.github.kt.pulsebar.core.config.pulseBarConfigPath
 import io.github.kt.pulsebar.core.config.toExport
 import io.github.kt.pulsebar.core.config.toProto
+import io.github.kt.pulsebar.core.livelisten.LiveListenCaptureRuntime
+import io.github.kt.pulsebar.core.livelisten.LiveListenClient
+import io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig
+import io.github.kt.pulsebar.core.livelisten.LiveListenMediaPermission
+import io.github.kt.pulsebar.core.livelisten.LiveListenNativeMediaState
+import io.github.kt.pulsebar.core.livelisten.LiveListenPlaybackWire
+import io.github.kt.pulsebar.core.livelisten.LiveListenStats
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.plugins.websocket.WebSockets
@@ -128,6 +137,7 @@ actual class PulseBarBridge actual constructor() {
     private val menuStateFlow = MutableStateFlow(latestMenuState)
     private val syncStateFlow = MutableStateFlow<PulseBarSyncState?>(null)
     private val interactionStateFlow = MutableStateFlow<PulseBarInteractionState?>(null)
+    private val liveListenClient = LiveListenClient(scope = scope)
     private val tickMutex = Mutex()
     private var tickLoopJob: Job? = null
 
@@ -246,6 +256,61 @@ actual class PulseBarBridge actual constructor() {
             )
         }
     }
+
+    actual fun startLiveListen(
+        roomId: String,
+        deviceId: String,
+        baseUrl: String,
+        workspaceId: String,
+        apiKey: String,
+        sampleRate: Int,
+        channels: Int,
+        chunkDurationMs: Int,
+    ) {
+        liveListenClient.start(
+            LiveListenConnectionConfig(
+                roomId = roomId,
+                deviceId = deviceId,
+                baseUrl = baseUrl,
+                workspaceId = workspaceId,
+                apiKey = apiKey,
+                sampleRate = sampleRate.coerceAtLeast(8_000),
+                channels = channels.coerceAtLeast(1),
+                chunkDurationMs = chunkDurationMs.coerceIn(50, 5_000),
+            ),
+        )
+    }
+
+    actual fun stopLiveListen() {
+        liveListenClient.stop()
+    }
+
+    actual fun submitLiveListenPcmBase64(chunkBase64: String) {
+        val decoded = decodeBase64OrNull(chunkBase64) ?: return
+        liveListenClient.submitPcm(decoded)
+    }
+
+    actual fun updateLiveListenMediaState(
+        permissionAllow: Boolean,
+        playbackPlaying: Boolean,
+        captureRunning: Boolean,
+    ) {
+        liveListenClient.updateMediaState(
+            LiveListenNativeMediaState(
+                permission = if (permissionAllow) LiveListenMediaPermission.ALLOW
+                else LiveListenMediaPermission.DISALLOW,
+                playback = if (playbackPlaying) LiveListenPlaybackWire.PLAYING
+                else LiveListenPlaybackWire.PAUSED,
+                capture = if (captureRunning) LiveListenCaptureRuntime.CAPTURING
+                else LiveListenCaptureRuntime.NO_CAPTURE,
+            ),
+        )
+    }
+
+    actual fun observeLiveListenStats(onUpdate: (PulseBarLiveListenStats) -> Unit): PulseBarCancellable =
+        collect(liveListenClient.stats) { stats ->
+            onUpdate(stats.toExport())
+        }
 
     private fun <T> collect(
         source: kotlinx.coroutines.flow.Flow<T>,
@@ -759,3 +824,50 @@ private fun parseSessionParts(session: SessionState): SessionParts {
         mediaKey = parts.getOrNull(2)?.takeIf { it.isNotBlank() }
     )
 }
+
+private fun LiveListenStats.toExport(): PulseBarLiveListenStats =
+    PulseBarLiveListenStats(
+        connectionState = connectionState.toExport(),
+        connectionStateName = connectionState.name,
+        webSocketUrl = webSocketUrl,
+        lastConnectedAtMillis = lastConnectedAtMillis ?: 0L,
+        lastDisconnectedAtMillis = lastDisconnectedAtMillis ?: 0L,
+        nextReconnectAtMillis = nextReconnectAtMillis ?: 0L,
+        reconnectDelaySeconds = reconnectDelaySeconds ?: 0.0,
+        lastSendAtMillis = lastSendAtMillis ?: 0L,
+        lastErrorMessage = lastErrorMessage,
+        acceptedFrames = acceptedFrames,
+        acceptedBytes = acceptedBytes,
+        droppedFrames = droppedFrames,
+        droppedChunks = droppedChunks,
+        lastSequence = lastSequence,
+        bufferedFrames = bufferedFrames,
+        queuedChunks = queuedChunks,
+        queuedBytes = queuedBytes,
+        queuedFirstSequence = queuedFirstSequence ?: -1L,
+        queuedLastSequence = queuedLastSequence ?: -1L,
+        isSending = isSending,
+        maxQueuedChunks = maxQueuedChunks,
+        reconnectCount = reconnectCount,
+        reconnectAttempt = reconnectAttempt,
+        chunksSent = chunksSent,
+        bytesSent = bytesSent,
+        sendBitrateKbps = sendBitrateKbps ?: 0.0,
+        lastChunkBytes = lastChunkBytes,
+        chunkDurationMs = chunkDurationMs,
+        statusText = statusText,
+    )
+
+private fun LiveListenStats.ConnectionState.toExport(): PulseBarLiveListenConnectionState = when (this) {
+    LiveListenStats.ConnectionState.Idle -> PulseBarLiveListenConnectionState.IDLE
+    LiveListenStats.ConnectionState.Connecting -> PulseBarLiveListenConnectionState.CONNECTING
+    LiveListenStats.ConnectionState.Connected -> PulseBarLiveListenConnectionState.CONNECTED
+    LiveListenStats.ConnectionState.Reconnecting -> PulseBarLiveListenConnectionState.RECONNECTING
+    LiveListenStats.ConnectionState.Stopping -> PulseBarLiveListenConnectionState.STOPPING
+    LiveListenStats.ConnectionState.Stopped -> PulseBarLiveListenConnectionState.STOPPED
+    LiveListenStats.ConnectionState.Failed -> PulseBarLiveListenConnectionState.FAILED
+}
+
+@OptIn(ExperimentalEncodingApi::class)
+private fun decodeBase64OrNull(raw: String): ByteArray? =
+    runCatching { Base64.Default.decode(raw) }.getOrNull()

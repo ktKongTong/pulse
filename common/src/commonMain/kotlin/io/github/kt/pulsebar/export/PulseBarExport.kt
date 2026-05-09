@@ -189,6 +189,53 @@ interface PulseBarCancellable {
     fun cancel()
 }
 
+enum class PulseBarLiveListenConnectionState {
+    IDLE,
+    CONNECTING,
+    CONNECTED,
+    RECONNECTING,
+    STOPPING,
+    STOPPED,
+    FAILED,
+}
+
+/**
+ * Swift-export-friendly mirror of the shared `LiveListenStats`. All fields
+ * use primitives so the Swift layer doesn't have to juggle `KotlinLong?`
+ * boxes — `0L`/`-1L` act as sentinels where absence matters.
+ */
+class PulseBarLiveListenStats(
+    val connectionState: PulseBarLiveListenConnectionState,
+    val connectionStateName: String,
+    val webSocketUrl: String?,
+    val lastConnectedAtMillis: Long,        // 0 == never
+    val lastDisconnectedAtMillis: Long,     // 0 == never
+    val nextReconnectAtMillis: Long,        // 0 == none scheduled
+    val reconnectDelaySeconds: Double,      // 0.0 == unknown
+    val lastSendAtMillis: Long,             // 0 == never
+    val lastErrorMessage: String?,
+    val acceptedFrames: Long,
+    val acceptedBytes: Long,
+    val droppedFrames: Long,
+    val droppedChunks: Long,
+    val lastSequence: Long,
+    val bufferedFrames: Long,
+    val queuedChunks: Int,
+    val queuedBytes: Long,
+    val queuedFirstSequence: Long,          // -1 == none
+    val queuedLastSequence: Long,           // -1 == none
+    val isSending: Boolean,
+    val maxQueuedChunks: Int,
+    val reconnectCount: Long,
+    val reconnectAttempt: Int,
+    val chunksSent: Long,
+    val bytesSent: Long,
+    val sendBitrateKbps: Double,            // 0.0 == unknown
+    val lastChunkBytes: Long,
+    val chunkDurationMs: Int,
+    val statusText: String,
+)
+
 expect class PulseBarBridge() {
     fun readMenuState(): PulseBarMenuState
     fun readConfig(): PulseBarConfig
@@ -254,4 +301,61 @@ expect class PulseBarBridge() {
      * rendering.
      */
     fun observeTodayStats(onUpdate: (PulseBarTodayStats) -> Unit): PulseBarCancellable
+
+    /**
+     * Start (or restart) the Live Listen device session against the given
+     * endpoint. Safe to call repeatedly: if a session is already running
+     * with the same parameters this is a no-op.
+     *
+     * @param roomId room the device should join (typically `live-listen:<owner>`)
+     * @param deviceId stable identifier for this device (typically `owner`)
+     * @param baseUrl server base URL (e.g. `https://pulse.example.com`)
+     * @param workspaceId workspace the endpoint belongs to
+     * @param apiKey bearer token used in the `Authorization` header
+     * @param sampleRate captured PCM sample rate (hint for WAV framing; defaults to 48000)
+     * @param channels captured PCM channel count (hint for WAV framing; defaults to 2)
+     * @param chunkDurationMs audio chunk duration in milliseconds
+     */
+    fun startLiveListen(
+        roomId: String,
+        deviceId: String,
+        baseUrl: String,
+        workspaceId: String,
+        apiKey: String,
+        sampleRate: Int,
+        channels: Int,
+        chunkDurationMs: Int,
+    )
+
+    /** Stop the Live Listen session. Cancels reconnects and closes the socket. */
+    fun stopLiveListen()
+
+    /**
+     * Hand a PCM16 chunk (little-endian, interleaved) to the Live Listen
+     * client. The Swift CoreAudio callback collects samples and forwards
+     * them as a Base64-encoded string — the ByteArray construction path
+     * through Swift Export is currently limited to `fatalError()`
+     * initializers, so a primitive-typed envelope is used at the boundary.
+     */
+    fun submitLiveListenPcmBase64(chunkBase64: String)
+
+    /**
+     * Forward the owner-side media state (is media playing? permission?
+     * capture runtime?) to the server. `playbackPlaying = true` means
+     * the owner's app is currently playing audio; `permissionAllow = true`
+     * means the owner has enabled Live Listen; `captureRunning = true` means
+     * the CoreAudio tap is actively producing samples.
+     */
+    fun updateLiveListenMediaState(
+        permissionAllow: Boolean,
+        playbackPlaying: Boolean,
+        captureRunning: Boolean,
+    )
+
+    /**
+     * Subscribe to Live Listen telemetry (connection state, queue depth,
+     * bitrate, errors). Emits the current snapshot on subscribe and every
+     * time something changes.
+     */
+    fun observeLiveListenStats(onUpdate: (PulseBarLiveListenStats) -> Unit): PulseBarCancellable
 }

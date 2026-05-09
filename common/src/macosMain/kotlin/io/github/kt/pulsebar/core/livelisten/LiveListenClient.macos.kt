@@ -60,7 +60,7 @@ internal class LiveListenClient(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private val log = logger(PulseLogCategory.LiveListenSession)
-    private val stateMachine = LiveListenStateMachine(deviceId = "uninitialized")
+    private var stateMachine = LiveListenStateMachine(deviceId = "uninitialized")
     private val _stats = MutableStateFlow(LiveListenStats())
     val stats: StateFlow<LiveListenStats> = _stats.asStateFlow()
 
@@ -95,6 +95,7 @@ internal class LiveListenClient(
                 connectionJob?.cancelAndJoin()
                 currentConfig = config
                 currentDeviceId = config.deviceId
+                stateMachine = LiveListenStateMachine(deviceId = config.deviceId)
                 sampleRate = config.sampleRate
                 channels = config.channels
                 chunkBytes = chunkBytesFor(config.chunkDurationMs, config.sampleRate, config.channels)
