@@ -1,0 +1,56 @@
+package io.github.kt.pulsebar.core.presentation
+
+import io.github.kt.pulsebar.export.PulseBarEndpointConfig
+import io.github.kt.pulsebar.export.PulseBarEndpointSyncState
+
+/**
+ * Three-state projection of an endpoint as the UI wants to show it.
+ *
+ * The raw [PulseBarEndpointSyncState] has ~10 sub-states; UIs universally
+ * collapse these into `connected / disconnected / reconnecting`. This
+ * derivation used to live in Swift (`ConnectionRuntimeStatus.resolve`) and
+ * is now shared so a future Windows shell or a unit test doesn't have to
+ * reimplement it.
+ */
+enum class ConnectionRuntimeStatus {
+    Connected,
+    Disconnected,
+    Reconnecting,
+}
+
+/**
+ * Collapses the endpoint + its current sync state into a
+ * [ConnectionRuntimeStatus]. [manuallyDisconnected] reflects "user clicked
+ * Disconnect but the row is still enabled" — a transient intent that the
+ * UI has already applied optimistically.
+ */
+fun resolveConnectionStatus(
+    endpoint: PulseBarEndpointConfig,
+    sync: PulseBarEndpointSyncState?,
+    manuallyDisconnected: Boolean,
+): ConnectionRuntimeStatus {
+    if (manuallyDisconnected || !endpoint.enabled) {
+        return ConnectionRuntimeStatus.Disconnected
+    }
+    if (sync == null) {
+        return if (endpoint.endpointUrl.trim().isEmpty()) {
+            ConnectionRuntimeStatus.Disconnected
+        } else {
+            ConnectionRuntimeStatus.Reconnecting
+        }
+    }
+    val status = sync.status
+    val lastStatus = sync.lastStatus
+    if (status == "disabled" ||
+        status == "disconnected" ||
+        lastStatus == "skip:endpoint_disabled" ||
+        lastStatus == "skip:endpoint_disconnected"
+    ) {
+        return ConnectionRuntimeStatus.Reconnecting
+    }
+    return when (status) {
+        "healthy" -> ConnectionRuntimeStatus.Connected
+        "probing", "checking_server", "idle" -> ConnectionRuntimeStatus.Reconnecting
+        else -> ConnectionRuntimeStatus.Disconnected
+    }
+}
