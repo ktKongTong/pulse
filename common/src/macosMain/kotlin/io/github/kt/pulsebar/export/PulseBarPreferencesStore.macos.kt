@@ -1,7 +1,7 @@
 package io.github.kt.pulsebar.export
 
 import io.github.kt.pulsebar.core.log.PulseLogCategory
-import io.github.kt.pulsebar.core.log.PulseLogger
+import io.github.kt.pulsebar.core.log.logger
 import kotlinx.coroutines.runBlocking
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.serialization.json.buildJsonArray
@@ -66,15 +66,9 @@ internal class PulseBarPreferencesStore {
         defaults.setObject(config.interactionExecutionModeName, "pulsebar.config.interaction.executionMode")
         defaults.setObject(config.interactionPlaybackModeName, "pulsebar.config.interaction.playbackMode")
         defaults.synchronize()
-        PulseLogger.debug(
-            PulseLogCategory.ConfigStore,
-            event = "config.persisted",
-            fields = mapOf(
-                "endpointCount" to endpoints.size,
-                "interactionExecutionMode" to config.interactionExecutionModeName,
-                "interactionPlaybackMode" to config.interactionPlaybackModeName,
-            ),
-        )
+        logger(PulseLogCategory.ConfigStore).d {
+            "config.persisted endpoints=${endpoints.size} exec=${config.interactionExecutionModeName} playback=${config.interactionPlaybackModeName}"
+        }
     }
 
     fun incrementUsage(day: String, key: String, label: String, seconds: Int) {
@@ -178,12 +172,9 @@ internal class PulseBarPreferencesStore {
                 .jsonArray
                 .map { it.jsonObject.toPulseBarEndpointConfig() }
         }.getOrElse { error ->
-            PulseLogger.warn(
-                PulseLogCategory.ConfigStore,
-                event = "config.endpoints.parse_failed",
-                fields = mapOf("key" to ENDPOINTS_CONFIG_KEY),
-                throwable = error,
-            )
+            logger(PulseLogCategory.ConfigStore).w(error) {
+                "config.endpoints.parse_failed key=$ENDPOINTS_CONFIG_KEY"
+            }
             emptyList()
         }
         return normalizeEndpoints(parsed)

@@ -675,7 +675,7 @@ final class LiveListenCaptureModel: ObservableObject {
 
 
     private func appendLiveListenCaptureDebugLog(_ message: String) {
-        PulseNativeLog.debug(.liveListenSession, "capture", fields: ["message": message])
+        PulseNativeLog.debug(.liveListenSession, "capture \(message)")
     }
 
     func stopCapture() {
@@ -1180,7 +1180,7 @@ private let liveListenCaptureIOProc: AudioDeviceIOProc = { _, _, inputData, _, o
 }
 
 private func appendLiveListenCaptureServiceLog(_ message: String) {
-    PulseNativeLog.debug(.liveListenSession, "capture.service", fields: ["message": message])
+    PulseNativeLog.debug(.liveListenSession, "capture.service \(message)")
 }
 
 private func liveListenEmitCaptureUpdateIfNeeded(context: LiveListenCaptureService.CaptureContext) {

@@ -35,7 +35,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import io.github.kt.pulsebar.core.log.PulseLogCategory
-import io.github.kt.pulsebar.core.log.PulseLogger
+import io.github.kt.pulsebar.core.log.logger
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUserName
 
@@ -1044,11 +1044,7 @@ internal class PulseBarEndpointReporter {
     }
 
     private fun writeHttpLog(message: String) {
-        PulseLogger.debug(
-            PulseLogCategory.SyncEndpoint,
-            event = "http.wire",
-            fields = mapOf("message" to message),
-        )
+        logger(PulseLogCategory.SyncEndpoint).d { message }
     }
 
     private fun debugStatusKey(endpointId: String): String =

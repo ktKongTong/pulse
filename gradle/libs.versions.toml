@@ -10,6 +10,7 @@ slf4j = "2.0.17"
 junit = "5.13.4"
 room3 = "3.0.0-alpha03"
 sqlite = "2.7.0-alpha03"
+kermit = "2.0.8"
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
@@ -36,3 +37,4 @@ ktor-client-logging = { module = "io.ktor:ktor-client-logging-jvm", version.ref 
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }

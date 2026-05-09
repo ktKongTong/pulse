@@ -238,14 +238,9 @@ final class NativeMonitorModel: ObservableObject {
     func startDebugNativeLiveListenStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
         liveListenCaptureModel.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
         let endpoints = liveListenEndpoints
-        PulseNativeLog.info(
-            .liveListenSession,
-            "debug.stream.start",
-            fields: [
-                "endpoints": endpoints.map { $0.baseURL.absoluteString }.joined(separator: ","),
-                "source": liveListenCaptureModel.selectedSource?.name ?? "nil",
-            ]
-        )
+        let endpointList = endpoints.map { $0.baseURL.absoluteString }.joined(separator: ",")
+        let source = liveListenCaptureModel.selectedSource?.name ?? "nil"
+        PulseNativeLog.info(.liveListenSession, "debug.stream.start endpoints=\(endpointList) source=\(source)")
         liveListenCaptureModel.updateEndpoints(endpoints)
         dashboardSelection = .connection
         liveListenCaptureModel.startNativeStream()

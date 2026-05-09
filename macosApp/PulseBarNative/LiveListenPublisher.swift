@@ -915,7 +915,7 @@ final class NativeLiveListenPublisher: NSObject, LiveListenPublisher, URLSession
     }
 
     private func appendLiveListenPublisherDebugLog(_ message: String) {
-        PulseNativeLog.debug(.liveListenSession, "publisher", fields: ["message": message])
+        PulseNativeLog.debug(.liveListenSession, "publisher \(message)")
     }
 
     private static func wavChunk(pcm16: Data, sampleRate: UInt32, channels: UInt32) -> Data {

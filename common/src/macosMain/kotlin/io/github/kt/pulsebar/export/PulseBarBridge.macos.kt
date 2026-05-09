@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.export
 
+import io.github.kt.pulsebar.core.log.PulseLogCategory
+import io.github.kt.pulsebar.core.log.logger
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.plugins.websocket.WebSockets
@@ -108,14 +110,9 @@ actual class PulseBarBridge actual constructor() {
         val config = store.readConfig()
         reporter.updateConfig(config)
         interactionClient.updateConfig(config)
-        io.github.kt.pulsebar.core.log.PulseLogger.info(
-            io.github.kt.pulsebar.core.log.PulseLogCategory.AppLifecycle,
-            event = "bridge.initialized",
-            fields = mapOf(
-                "endpointCount" to config.endpoints.size,
-                "enabledEndpointCount" to config.endpoints.count { it.enabled },
-            ),
-        )
+        logger(PulseLogCategory.AppLifecycle).i {
+            "bridge.initialized endpoints=${config.endpoints.size} enabled=${config.endpoints.count { it.enabled }}"
+        }
     }
 
     actual fun readMenuState(): PulseBarMenuState {
@@ -589,10 +586,7 @@ actual class PulseBarBridge actual constructor() {
         val appleScript = NSAppleScript(source = script)
         val result = appleScript.executeAndReturnError(null)
         if (result.stringValue == null) {
-            io.github.kt.pulsebar.core.log.PulseLogger.debug(
-                io.github.kt.pulsebar.core.log.PulseLogCategory.PlatformAdapter,
-                event = "applescript.empty_result",
-            )
+            logger(PulseLogCategory.PlatformAdapter).d { "applescript.empty_result" }
         }
         return result.stringValue?.trim()
     }
