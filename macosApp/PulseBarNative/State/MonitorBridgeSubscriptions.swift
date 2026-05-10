@@ -51,3 +51,18 @@ enum MonitorBridgeSubscriptions {
         }
     }
 }
+
+
+// TODO(kotlin-2.4): delete this entire file.
+//
+// Kotlin 2.4's Swift Export ships native `Flow<T>` / `suspend fun` support
+// (KT-64572). See the reference implementation:
+// https://github.com/GuilhE/SwiftExport-Playground
+//
+// Once we bump `kotlin = "2.4.x"` and switch the bridge's observer signatures
+// from callbacks to `val xFlow: Flow<T>`, the subscribe helpers below become
+// one-line Swift `for try await` loops inside a `Task`, with `@MainActor`
+// inherited from the enclosing context. No DispatchQueue hop, no
+// `MainActor.assumeIsolated`, no `PulseBarCancellable`.
+//
+// Migration steps are pre-written in docs/app/refactor-plan.md §11.
