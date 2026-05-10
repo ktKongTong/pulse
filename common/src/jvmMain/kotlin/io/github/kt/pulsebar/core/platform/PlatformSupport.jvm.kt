@@ -25,3 +25,5 @@ actual fun parseIso8601ToMillis(value: String?): Long? {
         }
         .getOrNull()
 }
+
+actual fun newPulseUuid(): String = java.util.UUID.randomUUID().toString().lowercase()

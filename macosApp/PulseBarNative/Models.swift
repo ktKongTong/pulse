@@ -46,24 +46,18 @@ struct LiveListenEndpointConfig: Equatable {
 }
 
 extension LiveListenEndpointConfig {
-    /// Build from the Kotlin-side `PulseBarEndpointDraft` that already comes
-    /// out of `PulseBarConfigFactory.liveListenCandidateEndpoints`.
-    static func fromKotlinDraft(_ endpoint: PulseBarEndpointDraft) -> LiveListenEndpointConfig? {
-        let workspaceId = endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let apiKey = endpoint.apiKey
-        guard !workspaceId.isEmpty, !apiKey.isEmpty else { return nil }
-        // The Kotlin normalizer strips `/api/v2/presence/ingest`,
-        // `/api/v1/live-listen`, `/api/v1/meta`, query, fragment, trailing
-        // slash — shared with the Kotlin presence reporter so both sides
-        // agree on the same base URL.
-        guard let normalized = ExportedKotlinPackages.io.github.kt.pulsebar.core.platform.normalizePulseBaseUrl(raw: endpoint.endpointUrl),
-              let baseURL = URL(string: normalized) else { return nil }
+    /// Wrap the Kotlin-resolved endpoint. All trimming + URL normalization
+    /// happens in `PulseBarConfigFactory.resolvedLiveListenEndpoints` on
+    /// the Kotlin side; Swift's only job is parsing the `baseUrl` string
+    /// into a Foundation `URL`.
+    static func fromResolved(_ resolved: LiveListenEndpointResolved) -> LiveListenEndpointConfig? {
+        guard let baseURL = URL(string: resolved.baseUrl) else { return nil }
         return LiveListenEndpointConfig(
-            id: endpoint.id,
-            name: endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            id: resolved.id,
+            name: resolved.name,
             baseURL: baseURL,
-            workspaceId: workspaceId,
-            apiKey: apiKey
+            workspaceId: resolved.workspaceId,
+            apiKey: resolved.apiKey
         )
     }
 }
@@ -201,15 +195,10 @@ extension PulseBarLiveListenStats {
 
 extension PulseBarEndpointDraft {
     static func pulseDefault(index: Int) -> PulseBarEndpointDraft {
-        PulseBarConfigFactory.shared.defaultEndpoint(
-            index: Int32(index),
-            randomId: UUID().uuidString.lowercased()
-        )
+        PulseBarConfigFactory.shared.defaultEndpoint(index: Int32(index))
     }
 
     static func pulseDefaultPrimary() -> PulseBarEndpointDraft {
-        PulseBarConfigFactory.shared.defaultPrimaryEndpoint(
-            randomId: UUID().uuidString.lowercased()
-        )
+        PulseBarConfigFactory.shared.defaultPrimaryEndpoint()
     }
 }

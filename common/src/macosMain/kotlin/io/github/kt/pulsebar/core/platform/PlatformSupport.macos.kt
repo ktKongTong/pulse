@@ -11,6 +11,7 @@ import platform.Foundation.NSISO8601DateFormatWithFractionalSeconds
 import platform.Foundation.NSISO8601DateFormatWithInternetDateTime
 import platform.Foundation.NSISO8601DateFormatter
 import platform.Foundation.NSString
+import platform.Foundation.NSUUID
 import platform.Foundation.dateWithTimeIntervalSince1970
 import platform.Foundation.timeIntervalSince1970
 
@@ -66,3 +67,6 @@ actual fun parseIso8601ToMillis(value: String?): Long? {
         ?: return null
     return (parsed.timeIntervalSince1970 * 1000.0).toLong()
 }
+
+actual fun newPulseUuid(): String =
+    NSUUID().UUIDString().lowercase()

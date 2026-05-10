@@ -39,6 +39,15 @@ expect fun formatWallClockTime(epochMillis: Long?): String
 expect fun parseIso8601ToMillis(value: String?): Long?
 
 /**
+ * Generate a lowercase hex UUIDv4 suitable for PulseBar endpoint IDs.
+ *
+ * macOS uses `NSUUID.UUIDString.lowercased()`. JVM uses
+ * `java.util.UUID.randomUUID()`. Moved here so Swift doesn't keep its
+ * own `UUID()` path — one less place to diverge.
+ */
+expect fun newPulseUuid(): String
+
+/**
  * Normalize a user-entered endpoint base URL so downstream consumers have
  * a clean host (no trailing path like `/api/v2/presence/ingest` or
  * `/api/v1/live-listen`). Returns null when the URL can't be parsed or

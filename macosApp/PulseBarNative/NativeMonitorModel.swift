@@ -200,13 +200,10 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     var liveListenEndpoints: [LiveListenEndpointConfig] {
-        // Delegate candidate selection to Kotlin (prefers enabled + credentialed,
-        // falls back to any with credentials). Swift only adapts the result into
-        // platform-typed URLs.
-        let candidates = PulseBarConfigFactory.shared.liveListenCandidateEndpoints(draft: settingsDraft)
-        return candidates.compactMap { kotlin in
-            LiveListenEndpointConfig.fromKotlinDraft(kotlin)
-        }
+        // Kotlin does the selection + trimming + URL normalization; Swift
+        // only wraps the already-normalized `baseUrl` string in a `URL`.
+        let resolved = PulseBarConfigFactory.shared.resolvedLiveListenEndpoints(draft: settingsDraft)
+        return resolved.compactMap { LiveListenEndpointConfig.fromResolved($0) }
     }
 
     func addEndpoint() {

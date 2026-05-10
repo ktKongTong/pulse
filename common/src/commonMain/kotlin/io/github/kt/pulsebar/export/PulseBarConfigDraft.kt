@@ -38,6 +38,19 @@ class PulseBarConfigDraft(
 )
 
 /**
+ * Live Listen endpoint pre-resolved for the platform shell — all string
+ * trimming + URL normalization done on the Kotlin side. Swift only wraps
+ * [baseUrl] in a `URL`.
+ */
+class LiveListenEndpointResolved(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val workspaceId: String,
+    val apiKey: String,
+)
+
+/**
  * Builders / projectors used by the platform shell. Keeping these on the
  * Kotlin side means Swift doesn't need its own enum-name switches and
  * can't silently diverge from the schema.
@@ -107,6 +120,30 @@ object PulseBarConfigFactory {
         return draft.endpoints.filter { hasLiveListenCredentials(it) }
     }
 
+    /**
+     * Live Listen endpoints resolved into what Swift actually needs:
+     * normalized `baseUrl` (shared `normalizePulseBaseUrl` output), trimmed
+     * `name` / `workspaceId`, the raw `apiKey`. Swift wraps `baseUrl` in
+     * `URL(string:)` — no more trimming / normalizing on the Swift side.
+     *
+     * Returns an empty list when none of the candidates have a valid URL.
+     */
+    fun resolvedLiveListenEndpoints(draft: PulseBarConfigDraft): List<LiveListenEndpointResolved> =
+        liveListenCandidateEndpoints(draft).mapNotNull { candidate ->
+            val workspaceId = candidate.workspaceId.trim()
+            val apiKey = candidate.apiKey
+            if (workspaceId.isEmpty() || apiKey.isEmpty()) return@mapNotNull null
+            val baseUrl = io.github.kt.pulsebar.core.platform.normalizePulseBaseUrl(candidate.endpointUrl)
+                ?: return@mapNotNull null
+            LiveListenEndpointResolved(
+                id = candidate.id,
+                name = candidate.name.trim(),
+                baseUrl = baseUrl,
+                workspaceId = workspaceId,
+                apiKey = apiKey,
+            )
+        }
+
     private fun hasLiveListenCredentials(endpoint: PulseBarEndpointDraft): Boolean =
         endpoint.workspaceId.trim().isNotEmpty() && endpoint.apiKey.isNotEmpty() && endpoint.endpointUrl.trim().isNotEmpty()
 
@@ -127,8 +164,8 @@ object PulseBarConfigFactory {
     }
 
     /** Shared defaults for a fresh endpoint row. */
-    fun defaultEndpoint(index: Int, randomId: String): PulseBarEndpointDraft = PulseBarEndpointDraft(
-        id = randomId,
+    fun defaultEndpoint(index: Int): PulseBarEndpointDraft = PulseBarEndpointDraft(
+        id = io.github.kt.pulsebar.core.platform.newPulseUuid(),
         name = "Endpoint ${index + 1}",
         enabled = false,
         disconnected = false,
@@ -140,8 +177,8 @@ object PulseBarConfigFactory {
         batchWindowSeconds = 15,
     )
 
-    fun defaultPrimaryEndpoint(randomId: String): PulseBarEndpointDraft =
-        defaultEndpoint(index = 0, randomId = randomId).let {
+    fun defaultPrimaryEndpoint(): PulseBarEndpointDraft =
+        defaultEndpoint(index = 0).let {
             PulseBarEndpointDraft(
                 id = it.id,
                 name = "Primary endpoint",

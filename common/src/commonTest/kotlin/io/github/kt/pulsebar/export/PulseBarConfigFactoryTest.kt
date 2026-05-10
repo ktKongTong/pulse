@@ -102,12 +102,13 @@ class PulseBarConfigFactoryTest {
     }
 
     @Test fun defaultEndpoint_shape() {
-        val d = PulseBarConfigFactory.defaultEndpoint(2, "abc")
-        assertEquals("abc", d.id)
+        val d = PulseBarConfigFactory.defaultEndpoint(2)
         assertEquals("Endpoint 3", d.name)
         assertEquals(false, d.enabled)
         assertEquals("WEBSOCKET", d.transportName)
         assertEquals(15, d.batchWindowSeconds)
+        // id is a platform-generated UUID — just check it's non-empty.
+        assertTrue(d.id.isNotEmpty())
     }
 }
 
