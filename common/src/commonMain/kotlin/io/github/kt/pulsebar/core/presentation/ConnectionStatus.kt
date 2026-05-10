@@ -38,20 +38,23 @@ fun resolveConnectionStatus(
 
 /**
  * Draft-based variant used by the Swift Settings UI, which edits drafts
- * rather than configs. Same logic as the [PulseBarEndpointConfig] form —
- * named separately because Swift Export doesn't disambiguate Kotlin
- * top-level overloads.
+ * rather than configs. Returns the enum's `name` string because Swift
+ * Export's enum-return ref bridge crashes at runtime — see
+ * `PulseBarShared.swift` generated init(__externalRCRefUnsafe:) where
+ * the returned C ref doesn't match any cached case pointer and falls
+ * into `default: fatalError()`. The class-property getter bridge has the
+ * same bug. Returning a String dodges both paths entirely.
  */
 fun resolveDraftConnectionStatus(
     endpoint: PulseBarEndpointDraft,
     sync: PulseBarEndpointSyncState?,
     manuallyDisconnected: Boolean,
-): ConnectionRuntimeStatus = resolveConnectionStatusRaw(
+): String = resolveConnectionStatusRaw(
     enabled = endpoint.enabled,
     endpointUrl = endpoint.endpointUrl,
     sync = sync,
     manuallyDisconnected = manuallyDisconnected,
-)
+).name
 
 private fun resolveConnectionStatusRaw(
     enabled: Boolean,

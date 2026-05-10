@@ -752,9 +752,12 @@ extension ConnectionRuntimeStatus {
     }
 }
 
-/// Swift entry point — delegates to the shared Kotlin resolver and layers
-/// the optimistic "connecting" state on top. The Kotlin function already
-/// knows how to read a `PulseBarEndpointDraft` directly.
+/// Swift entry point — delegates to the shared Kotlin resolver and
+/// layers the optimistic "connecting" state on top. Kotlin returns the
+/// enum's name string (not the enum itself) because Swift Export's
+/// enum-return ref bridge crashes at runtime for ConnectionRuntime
+/// Status — the generated `init(__externalRCRefUnsafe:)` fatalErrors
+/// when the Kotlin-supplied pointer doesn't match any cached case ref.
 private func resolveConnectionStatus(
     endpoint: PulseBarEndpointDraft,
     sync: PulseBarEndpointSyncState?,
@@ -762,11 +765,16 @@ private func resolveConnectionStatus(
     isConnecting: Bool
 ) -> ConnectionRuntimeStatus {
     if isConnecting { return .Reconnecting }
-    return ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.resolveDraftConnectionStatus(
+    let name = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.resolveDraftConnectionStatus(
         endpoint: endpoint,
         sync: sync,
         manuallyDisconnected: manuallyDisconnected
     )
+    switch name {
+    case "Connected": return .Connected
+    case "Reconnecting": return .Reconnecting
+    default: return .Disconnected
+    }
 }
 
 private struct DetailSection<Content: View>: View {
