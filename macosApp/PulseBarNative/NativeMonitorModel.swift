@@ -15,7 +15,7 @@ final class NativeMonitorModel: ObservableObject {
     @Published private(set) var connectingEndpointIDs: Set<String> = []
     @Published private(set) var isMonitoring = false
     @Published var settingsDraft: PulseBarConfigDraft = PulseBarConfigDraft(
-        endpoints: [PulseBarEndpointDraft.pulseDefaultPrimary()],
+        endpoints: [PulseBarConfigFactory.shared.defaultPrimaryEndpoint()],
         idleThresholdSeconds: 300,
         changeStabilityMillis: 1200,
         heartbeatSeconds: 60,
@@ -209,9 +209,9 @@ final class NativeMonitorModel: ObservableObject {
     func addEndpoint() {
         var next = settingsDraft.endpoints
         if next.isEmpty {
-            next.append(.pulseDefaultPrimary())
+            next.append(PulseBarConfigFactory.shared.defaultPrimaryEndpoint())
         } else {
-            next.append(.pulseDefault(index: next.count))
+            next.append(PulseBarConfigFactory.shared.defaultEndpoint(index: Int32(next.count)))
         }
         settingsDraft.endpoints = next
     }

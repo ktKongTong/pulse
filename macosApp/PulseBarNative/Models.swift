@@ -188,17 +188,4 @@ extension PulseBarLiveListenStats {
     }
 }
 
-// MARK: - Kotlin draft construction helpers
-//
-// Thin wrappers around `PulseBarConfigFactory` so the SwiftUI layer doesn't
-// know about random-UUID generation or Kotlin-side default field values.
-
-extension PulseBarEndpointDraft {
-    static func pulseDefault(index: Int) -> PulseBarEndpointDraft {
-        PulseBarConfigFactory.shared.defaultEndpoint(index: Int32(index))
-    }
-
-    static func pulseDefaultPrimary() -> PulseBarEndpointDraft {
-        PulseBarConfigFactory.shared.defaultPrimaryEndpoint()
-    }
-}
+// MARK: - Kotlin Live Listen stats lifts
