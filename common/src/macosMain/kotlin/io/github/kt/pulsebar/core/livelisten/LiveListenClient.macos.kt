@@ -151,6 +151,7 @@ internal class LiveListenClient(
 
     /** Owner-side media state (e.g. what Spotify is playing) — forwarded to the server. */
     fun updateMediaState(next: LiveListenNativeMediaState) {
+        log.i { "updateMediaState permission=${next.permission} playback=${next.playback} capture=${next.capture}" }
         currentMediaState = next
         scope.launch {
             apply(stateMachine.handle(LiveListenStateMachine.Input.MediaStateChanged(next), nowIso()))
@@ -163,6 +164,7 @@ internal class LiveListenClient(
      * when nothing is playing; we only transmit when we have something to say.
      */
     fun updateMedia(next: LiveListenMedia?) {
+        log.i { "updateMedia title=${next?.title} artist=${next?.artist} trackId=${next?.trackId}" }
         currentMedia = next
         if (next == null) return
         scope.launch {
@@ -259,6 +261,11 @@ internal class LiveListenClient(
 
         // Fire the state machine's ConnectionEstablished → emits device.hello
         apply(stateMachine.handle(LiveListenStateMachine.Input.ConnectionEstablished(currentMediaState), nowIso()))
+        // Now that we're in Awaiting phase, re-push the latest media state
+        // (the hello carried whatever was cached at connect time, but the
+        // actual state may have been updated while the TCP handshake was
+        // in flight). This ensures the server sees the real playback state.
+        apply(stateMachine.handle(LiveListenStateMachine.Input.MediaStateChanged(currentMediaState), nowIso()))
         // Replay the last known track metadata so the server doesn't lag behind
         // after a reconnect / fresh connect.
         currentMedia?.let {
@@ -279,27 +286,44 @@ internal class LiveListenClient(
     private suspend fun runInboundLoop(session: ClientWebSocketSession) {
         for (frame in session.incoming) {
             when (frame) {
-                is Frame.Text -> handleInboundText(frame.readText())
-                is Frame.Binary -> log.d { "inbound.binary bytes=${frame.readBytes().size}" }
-                is Frame.Close -> return
-                else -> {}
+                is Frame.Text -> {
+                    val text = frame.readText()
+                    log.i { "ws.recv.text len=${text.length} payload=${text.take(500)}" }
+                    handleInboundText(text)
+                }
+                is Frame.Binary -> log.i { "ws.recv.binary bytes=${frame.readBytes().size}" }
+                is Frame.Close -> {
+                    log.i { "ws.recv.close" }
+                    return
+                }
+                else -> log.d { "ws.recv.other frameType=${frame::class.simpleName}" }
             }
         }
     }
 
     private suspend fun handleInboundText(raw: String) {
         val obj: JsonObject = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: run {
-            log.w { "inbound.text.parse_failed len=${raw.length}" }
+            log.w { "inbound.parse_failed len=${raw.length} raw=${raw.take(200)}" }
             return
         }
         val type = obj["type"]?.jsonPrimitive?.content
         if (type != "command") {
-            log.d { "inbound.text.ignored type=$type" }
+            log.i { "inbound.non_command type=$type keys=${obj.keys}" }
             return
         }
-        val commandObj = obj["command"]?.jsonObject ?: return
-        val commandId = obj["commandId"]?.jsonPrimitive?.content ?: return
-        val commandType = commandObj["type"]?.jsonPrimitive?.content ?: return
+        val commandObj = obj["command"]?.jsonObject ?: run {
+            log.w { "inbound.command.missing_command_obj keys=${obj.keys} raw=${raw.take(300)}" }
+            return
+        }
+        val commandId = obj["commandId"]?.jsonPrimitive?.content ?: run {
+            log.w { "inbound.command.missing_commandId keys=${obj.keys}" }
+            return
+        }
+        val commandType = commandObj["type"]?.jsonPrimitive?.content ?: run {
+            log.w { "inbound.command.missing_command_type commandKeys=${commandObj.keys}" }
+            return
+        }
+        log.i { "inbound.command commandType=$commandType commandId=$commandId" }
 
         when (commandType) {
             "stream.start" -> {
@@ -345,10 +369,12 @@ internal class LiveListenClient(
             when (msg) {
                 is OutboundMessage.Text -> {
                     val payload = encodeFrame(msg.frame)
+                    log.i { "ws.send.text type=${msg.frame::class.simpleName} len=${payload.length} payload=${payload.take(500)}" }
                     session.send(Frame.Text(payload))
                     _stats.update { it.copy(lastSendAtMillis = nowMillis()) }
                 }
                 is OutboundMessage.Binary -> {
+                    log.d { "ws.send.binary bytes=${msg.bytes.size} seq=${msg.seq}" }
                     session.send(Frame.Binary(fin = true, data = msg.bytes))
                     _stats.update {
                         it.copy(
