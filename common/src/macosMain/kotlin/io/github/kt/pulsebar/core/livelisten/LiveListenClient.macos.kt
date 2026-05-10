@@ -210,11 +210,17 @@ internal class LiveListenClient(
             }
 
             val url = buildSessionUrl(config)
-            val reason = runCatching { runSingleSession(config, url) }
-                .exceptionOrNull()
-                ?.takeIf { it !is CancellationException }
-                ?.message
-                ?: "socket closed"
+            val sessionResult = runCatching { runSingleSession(config, url) }
+            val err = sessionResult.exceptionOrNull()?.takeIf { it !is CancellationException }
+            val reason = when {
+                err != null -> "${err::class.simpleName}: ${err.message ?: "(no message)"}"
+                else -> "socket closed (no exception)"
+            }
+            if (err != null) {
+                log.w(err) { "session.failed reason=$reason" }
+            } else {
+                log.i { "session.ended reason=$reason" }
+            }
 
             // Connection lost (either normally or via exception). Update state machine.
             apply(stateMachine.handle(LiveListenStateMachine.Input.ConnectionLost, nowIso()))

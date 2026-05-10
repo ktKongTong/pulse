@@ -166,12 +166,14 @@ export class LiveListenRoom extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    console.log("connection")
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected websocket", { status: 426 });
     }
 
     const url = new URL(request.url);
     const role = this.socketRole(url.pathname);
+      console.log("unknown");
     if (!role) return new Response("Unknown live listen websocket", { status: 404 });
     const workspaceId = url.searchParams.get("workspaceId") ?? this.env.WORKSPACE_ID;
     const roomId = url.searchParams.get("roomId") ?? "live-listen:owner";
@@ -185,7 +187,7 @@ export class LiveListenRoom extends DurableObject<Env> {
     const attachment: LiveListenSocketAttachment = { workspaceId, roomId, socketId, role };
     server.serializeAttachment(attachment);
     this.ctx.acceptWebSocket(server);
-
+      console.log("accept");
     if (role === "observer") {
       this.sendObserverTelemetry(server, state);
     } else if (role === "media-session") {

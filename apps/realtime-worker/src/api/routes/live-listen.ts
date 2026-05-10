@@ -26,14 +26,18 @@ liveListenRoutes.get("/state", zValidator("query", LiveListenQuerySchema), async
 
 liveListenRoutes.get("/device-session", async (c) => {
   if (c.req.header("Upgrade") !== "websocket") {
+  console.log("haha")
     return new Response("Expected websocket", { status: 426 });
   }
+  console.log("haha")
   const url = new URL(c.req.url);
   if (!isValidDeviceCredential(c.req.header("Authorization"), url.searchParams.get("apiKey"), c.env.DEVICE_API_KEY)) {
+      console.log("haha 401")
     return c.json({ error: "unauthorized" }, 401);
   }
   url.searchParams.delete("apiKey");
   url.searchParams.set("deviceId", url.searchParams.get("deviceId") ?? liveListenDeviceId(c.env));
+  console.log("fetch")
   return liveListenRoomFetch(c, url);
 });
 
