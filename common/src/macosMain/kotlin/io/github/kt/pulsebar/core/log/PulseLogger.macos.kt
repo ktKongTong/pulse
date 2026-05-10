@@ -43,10 +43,14 @@ internal actual fun platformLog(
     }
     NSLog("%s", line)
 
-    // Also append to ~/Library/Logs/PulseBarNative/pulse.log
-    val ts = dateFormatter.stringFromDate(NSDate())
-    val fileLine = "$ts $line\n"
-    appendToLogFile(fileLine)
+    // File log stays at Info+ to keep the file readable. Debug-level
+    // entries are still emitted to NSLog (stderr) when launched from a
+    // terminal, so raising the file threshold doesn't hide anything.
+    if (level != PulseLogLevel.Debug) {
+        val ts = dateFormatter.stringFromDate(NSDate())
+        val fileLine = "$ts $line\n"
+        appendToLogFile(fileLine)
+    }
 }
 
 @OptIn(ExperimentalForeignApi::class)
