@@ -164,6 +164,39 @@ struct SettingsDraft: Equatable {
     var interactionPlaybackMode: InteractionPlaybackMode = .playNext
 }
 
+extension SettingsDraft {
+    /// Project the SwiftUI form state into the Kotlin-side primitive draft.
+    var kotlinDraft: PulseBarConfigDraft {
+        PulseBarConfigDraft(
+            endpoints: endpoints.map { $0.kotlinDraft },
+            idleThresholdSeconds: Int32(idleThresholdSeconds),
+            changeStabilityMillis: Int32(changeStabilityMillis),
+            heartbeatSeconds: Int32(heartbeatSeconds),
+            appPollingMillis: Int32(appPollingMillis),
+            pagePollingMillis: Int32(pagePollingMillis),
+            mediaPollingMillis: Int32(mediaPollingMillis),
+            allowWebInteractions: allowWebInteractions,
+            interactionExecutionModeName: interactionExecutionMode.rawValue,
+            interactionPlaybackModeName: interactionPlaybackMode.rawValue
+        )
+    }
+
+    /// Build a Swift SettingsDraft from the Kotlin draft (used when the
+    /// config observer emits a fresh value).
+    init(kotlinDraft: PulseBarConfigDraft) {
+        self.endpoints = kotlinDraft.endpoints.map { EndpointSettingsDraft(kotlin: $0) }
+        self.idleThresholdSeconds = Int(kotlinDraft.idleThresholdSeconds)
+        self.changeStabilityMillis = Int(kotlinDraft.changeStabilityMillis)
+        self.heartbeatSeconds = Int(kotlinDraft.heartbeatSeconds)
+        self.appPollingMillis = Int(kotlinDraft.appPollingMillis)
+        self.pagePollingMillis = Int(kotlinDraft.pagePollingMillis)
+        self.mediaPollingMillis = Int(kotlinDraft.mediaPollingMillis)
+        self.allowWebInteractions = kotlinDraft.allowWebInteractions
+        self.interactionExecutionMode = InteractionExecutionMode(rawValue: kotlinDraft.interactionExecutionModeName) ?? .confirm
+        self.interactionPlaybackMode = InteractionPlaybackMode(rawValue: kotlinDraft.interactionPlaybackModeName) ?? .playNext
+    }
+}
+
 struct EndpointSettingsDraft: Identifiable, Equatable {
     var id: String
     var name: String
@@ -198,6 +231,36 @@ struct EndpointSettingsDraft: Identifiable, Equatable {
     }
 }
 
+extension EndpointSettingsDraft {
+    init(kotlin: PulseBarEndpointDraft) {
+        self.id = kotlin.id
+        self.name = kotlin.name
+        self.enabled = kotlin.enabled
+        self.disconnected = kotlin.disconnected
+        self.transport = TransportOption(rawValue: kotlin.transportName) ?? .websocket
+        self.endpointUrl = kotlin.endpointUrl
+        self.workspaceId = kotlin.workspaceId
+        self.siteId = kotlin.siteId
+        self.apiKey = kotlin.apiKey
+        self.batchWindowSeconds = Int(kotlin.batchWindowSeconds)
+    }
+
+    var kotlinDraft: PulseBarEndpointDraft {
+        PulseBarEndpointDraft(
+            id: id,
+            name: name,
+            enabled: enabled,
+            disconnected: disconnected,
+            transportName: transport.rawValue,
+            endpointUrl: endpointUrl,
+            workspaceId: workspaceId,
+            siteId: siteId,
+            apiKey: apiKey,
+            batchWindowSeconds: Int32(batchWindowSeconds)
+        )
+    }
+}
+
 
 struct LiveListenEndpointConfig: Equatable {
     let id: String
@@ -217,6 +280,23 @@ extension LiveListenEndpointConfig {
         // `/api/v1/live-listen`, `/api/v1/meta`, query, fragment, trailing
         // slash — shared with the Kotlin presence reporter so both sides
         // agree on the same base URL.
+        guard let normalized = ExportedKotlinPackages.io.github.kt.pulsebar.core.platform.normalizePulseBaseUrl(raw: endpoint.endpointUrl),
+              let baseURL = URL(string: normalized) else { return nil }
+        return LiveListenEndpointConfig(
+            id: endpoint.id,
+            name: endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            baseURL: baseURL,
+            workspaceId: workspaceId,
+            apiKey: apiKey
+        )
+    }
+
+    /// Build from the Kotlin-side `PulseBarEndpointDraft` that already comes
+    /// out of `PulseBarConfigFactory.liveListenCandidateEndpoints`.
+    static func fromKotlinDraft(_ endpoint: PulseBarEndpointDraft) -> LiveListenEndpointConfig? {
+        let workspaceId = endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = endpoint.apiKey
+        guard !workspaceId.isEmpty, !apiKey.isEmpty else { return nil }
         guard let normalized = ExportedKotlinPackages.io.github.kt.pulsebar.core.platform.normalizePulseBaseUrl(raw: endpoint.endpointUrl),
               let baseURL = URL(string: normalized) else { return nil }
         return LiveListenEndpointConfig(

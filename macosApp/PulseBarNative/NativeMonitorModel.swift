@@ -18,7 +18,11 @@ final class NativeMonitorModel: ObservableObject {
     @Published var isPaused = false
     @Published var dashboardSelection: DashboardSection = .connection
 
-    private let bridgeWorker = NativeBridgeWorker()
+    /// Kotlin owns all threading — its bridge internally uses coroutines with
+    /// a supervisor Job and its own `Mutex`. We don't need a queue in Swift
+    /// anymore; we just talk to the bridge directly.
+    private let bridge: PulseBarBridge
+    private var cancellables: [PulseBarCancellable] = []
     let liveListenCaptureModel: LiveListenCaptureModel
     private var subscribed = false
 
@@ -30,108 +34,16 @@ final class NativeMonitorModel: ObservableObject {
     }()
 
     init() {
-        self.liveListenCaptureModel = LiveListenCaptureModel(bridge: bridgeWorker)
+        self.bridge = PulseBarBridge()
+        self.liveListenCaptureModel = LiveListenCaptureModel(bridge: LiveListenBridgeAdapter(bridge: bridge))
     }
 
-    final class NativeBridgeWorker: LiveListenBridge, @unchecked Sendable {
-        private let queue = DispatchQueue(label: "io.github.kt.pulsebar.native.bridge", qos: .utility)
-        private var bridge: PulseBarBridge!
-        private var cancellables: [PulseBarCancellable] = []
-
-        init() {
-            queue.sync {
-                bridge = PulseBarBridge()
-            }
-        }
-
-        func subscribeAll(
-            onMenuState: @escaping @MainActor (PulseBarMenuState) -> Void,
-            onConfig: @escaping @MainActor (PulseBarConfig) -> Void,
-            onSyncState: @escaping @MainActor (PulseBarSyncState) -> Void,
-            onInteractionState: @escaping @MainActor (PulseBarInteractionState) -> Void,
-            onTodayStats: @escaping @MainActor (PulseBarTodayStats) -> Void
-        ) {
-            queue.async {
-                self.cancellables.append(self.bridge.observeMenuState { state in
-                    DispatchQueue.main.async { onMenuState(state) }
-                })
-                self.cancellables.append(self.bridge.observeConfig { config in
-                    DispatchQueue.main.async { onConfig(config) }
-                })
-                self.cancellables.append(self.bridge.observeSyncState { state in
-                    DispatchQueue.main.async { onSyncState(state) }
-                })
-                self.cancellables.append(self.bridge.observeInteractionState { state in
-                    DispatchQueue.main.async { onInteractionState(state) }
-                })
-                self.cancellables.append(self.bridge.observeTodayStats { stats in
-                    DispatchQueue.main.async { onTodayStats(stats) }
-                })
-            }
-        }
-
-        func cancelAll() {
-            queue.async {
-                for c in self.cancellables { c.cancel() }
-                self.cancellables.removeAll()
-            }
-        }
-
-        func forceTick() {
-            queue.async { self.bridge.forceTick() }
-        }
-
-        func updateConfig(from draft: SettingsDraft, completion: (@MainActor () -> Void)? = nil) {
-            queue.async {
-                self.bridge.updateConfig(config: NativeMonitorModel.makeConfig(from: draft))
-                if let completion {
-                    DispatchQueue.main.async {
-                        completion()
-                    }
-                }
-            }
-        }
-
-        func retry(completion: @escaping @MainActor () -> Void) {
-            queue.async {
-                _ = self.bridge.retryEndpoint()
-                DispatchQueue.main.async {
-                    completion()
-                }
-            }
-        }
-
-        func mediaCommand(_ command: PulseBarPlaybackCommand) {
-            queue.async {
-                _ = self.bridge.mediaCommand(command: command)
-            }
-        }
-
-        func seekMedia(to progressSeconds: Double) {
-            queue.async {
-                _ = self.bridge.seekMedia(progressSeconds: progressSeconds)
-            }
-        }
-
-        func acceptInteraction(_ requestId: String, completion: @escaping @MainActor () -> Void) {
-            queue.async {
-                _ = self.bridge.acceptInteraction(requestId: requestId)
-                DispatchQueue.main.async {
-                    completion()
-                }
-            }
-        }
-
-        func dismissInteraction(_ requestId: String, completion: @escaping @MainActor () -> Void) {
-            queue.async {
-                _ = self.bridge.dismissInteraction(requestId: requestId)
-                DispatchQueue.main.async {
-                    completion()
-                }
-            }
-        }
-
-        // MARK: LiveListenBridge
+    /// Thin adapter that implements the Swift-side LiveListenBridge protocol
+    /// by delegating directly to the shared PulseBarBridge instance. Kotlin
+    /// is already thread-safe so no DispatchQueue needed.
+    private final class LiveListenBridgeAdapter: LiveListenBridge, @unchecked Sendable {
+        private let bridge: PulseBarBridge
+        init(bridge: PulseBarBridge) { self.bridge = bridge }
 
         func startLiveListen(
             roomId: String,
@@ -143,36 +55,30 @@ final class NativeMonitorModel: ObservableObject {
             channels: Int32,
             chunkDurationMs: Int32
         ) {
-            queue.async {
-                self.bridge.startLiveListen(
-                    roomId: roomId,
-                    deviceId: deviceId,
-                    baseUrl: baseUrl,
-                    workspaceId: workspaceId,
-                    apiKey: apiKey,
-                    sampleRate: sampleRate,
-                    channels: channels,
-                    chunkDurationMs: chunkDurationMs
-                )
-            }
+            bridge.startLiveListen(
+                roomId: roomId,
+                deviceId: deviceId,
+                baseUrl: baseUrl,
+                workspaceId: workspaceId,
+                apiKey: apiKey,
+                sampleRate: sampleRate,
+                channels: channels,
+                chunkDurationMs: chunkDurationMs
+            )
         }
 
-        func stopLiveListen() {
-            queue.async { self.bridge.stopLiveListen() }
-        }
+        func stopLiveListen() { bridge.stopLiveListen() }
 
         func submitLiveListenPcmBase64(_ encoded: String) {
-            queue.async { self.bridge.submitLiveListenPcmBase64(chunkBase64: encoded) }
+            bridge.submitLiveListenPcmBase64(chunkBase64: encoded)
         }
 
         func updateLiveListenMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool) {
-            queue.async {
-                self.bridge.updateLiveListenMediaState(
-                    permissionAllow: permissionAllow,
-                    playbackPlaying: playbackPlaying,
-                    captureRunning: captureRunning
-                )
-            }
+            bridge.updateLiveListenMediaState(
+                permissionAllow: permissionAllow,
+                playbackPlaying: playbackPlaying,
+                captureRunning: captureRunning
+            )
         }
 
         func updateLiveListenMedia(
@@ -185,31 +91,27 @@ final class NativeMonitorModel: ObservableObject {
             durationSeconds: Double,
             isPlaying: Bool
         ) {
-            queue.async {
-                self.bridge.updateLiveListenMedia(
-                    providerId: providerId,
-                    trackId: trackId,
-                    title: title,
-                    artist: artist,
-                    album: album,
-                    artworkUrl: artworkUrl,
-                    durationSeconds: durationSeconds,
-                    isPlaying: isPlaying
-                )
-            }
+            bridge.updateLiveListenMedia(
+                providerId: providerId,
+                trackId: trackId,
+                title: title,
+                artist: artist,
+                album: album,
+                artworkUrl: artworkUrl,
+                durationSeconds: durationSeconds,
+                isPlaying: isPlaying
+            )
         }
 
         func observeLiveListenStats(
             onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
             cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
         ) {
-            queue.async {
-                let cancellable = self.bridge.observeLiveListenStats { stats in
-                    let mapped = LiveListenPublisherStats(from: stats)
-                    DispatchQueue.main.async { onSnapshot(mapped) }
-                }
-                DispatchQueue.main.async { cancellableReceived(cancellable) }
+            let cancellable = bridge.observeLiveListenStats { stats in
+                let mapped = LiveListenPublisherStats(from: stats)
+                DispatchQueue.main.async { onSnapshot(mapped) }
             }
+            DispatchQueue.main.async { cancellableReceived(cancellable) }
         }
     }
 
@@ -223,29 +125,27 @@ final class NativeMonitorModel: ObservableObject {
         isPaused = false
         subscribed = true
 
-        bridgeWorker.subscribeAll(
-            onMenuState: { [weak self] state in
-                self?.applyMenuStateUpdate(state)
-            },
-            onConfig: { [weak self] config in
-                self?.applyConfigUpdate(config)
-            },
-            onSyncState: { [weak self] state in
-                self?.applySyncStateUpdate(state)
-            },
-            onInteractionState: { [weak self] state in
-                self?.applyInteractionStateUpdate(state)
-            },
-            onTodayStats: { [weak self] stats in
-                self?.applyTodayStatsUpdate(stats)
-            }
-        )
+        cancellables.append(bridge.observeMenuState { [weak self] state in
+            Task { @MainActor in self?.applyMenuStateUpdate(state) }
+        })
+        cancellables.append(bridge.observeConfig { [weak self] config in
+            Task { @MainActor in self?.applyConfigUpdate(config) }
+        })
+        cancellables.append(bridge.observeSyncState { [weak self] state in
+            Task { @MainActor in self?.applySyncStateUpdate(state) }
+        })
+        cancellables.append(bridge.observeInteractionState { [weak self] state in
+            Task { @MainActor in self?.applyInteractionStateUpdate(state) }
+        })
+        cancellables.append(bridge.observeTodayStats { [weak self] stats in
+            Task { @MainActor in self?.applyTodayStatsUpdate(stats) }
+        })
 
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
     deinit {
-        bridgeWorker.cancelAll()
+        for c in cancellables { c.cancel() }
     }
 
     func prepareLiveListenCapturePane() {
@@ -285,7 +185,7 @@ final class NativeMonitorModel: ObservableObject {
         }
         isPaused.toggle()
         if !isPaused {
-            bridgeWorker.forceTick()
+            bridge.forceTick()
         }
     }
 
@@ -295,7 +195,7 @@ final class NativeMonitorModel: ObservableObject {
             return
         }
         isPaused = false
-        bridgeWorker.forceTick()
+        bridge.forceTick()
     }
 
     func refreshMenuBarContent() {
@@ -304,7 +204,7 @@ final class NativeMonitorModel: ObservableObject {
             return
         }
         isPaused = false
-        bridgeWorker.forceTick()
+        bridge.forceTick()
     }
 
     private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
@@ -332,7 +232,7 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     private func applyConfigUpdate(_ config: PulseBarConfig) {
-        let draft = Self.mapConfig(config)
+        let draft = SettingsDraft(kotlinDraft: PulseBarConfigFactory.shared.toDraft(config: config))
         if settingsDraft != draft {
             settingsDraft = draft
         }
@@ -361,20 +261,18 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     func saveConfig() {
-        bridgeWorker.updateConfig(from: settingsDraft) { [weak self] in
-            self?.bridgeWorker.forceTick()
-        }
+        bridge.updateConfig(config: PulseBarConfigFactory.shared.fromDraft(draft: settingsDraft.kotlinDraft))
+        bridge.forceTick()
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
     var liveListenEndpoints: [LiveListenEndpointConfig] {
-        let enabled = settingsDraft.endpoints.compactMap { endpoint -> LiveListenEndpointConfig? in
-            guard endpoint.enabled && !endpoint.disconnected else { return nil }
-            return LiveListenEndpointConfig.fromEndpointDraft(endpoint)
-        }
-        if !enabled.isEmpty { return enabled }
-        return settingsDraft.endpoints.compactMap { endpoint in
-            LiveListenEndpointConfig.fromEndpointDraft(endpoint)
+        // Delegate candidate selection to Kotlin (prefers enabled + credentialed,
+        // falls back to any with credentials). Swift only adapts the result into
+        // platform-typed URLs.
+        let candidates = PulseBarConfigFactory.shared.liveListenCandidateEndpoints(draft: settingsDraft.kotlinDraft)
+        return candidates.compactMap { kotlin in
+            LiveListenEndpointConfig.fromKotlinDraft(kotlin)
         }
     }
 
@@ -419,33 +317,30 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     func mediaCommand(_ command: PulseBarPlaybackCommand) {
-        bridgeWorker.mediaCommand(command)
+        _ = bridge.mediaCommand(command: command)
     }
 
     func seekMedia(to progressSeconds: Double) {
-        bridgeWorker.seekMedia(to: progressSeconds)
+        _ = bridge.seekMedia(progressSeconds: progressSeconds)
     }
 
     func acceptInteraction(_ requestId: String) {
-        bridgeWorker.acceptInteraction(requestId) { [weak self] in
-            self?.bridgeWorker.forceTick()
-        }
+        _ = bridge.acceptInteraction(requestId: requestId)
+        bridge.forceTick()
     }
 
     func dismissInteraction(_ requestId: String) {
-        bridgeWorker.dismissInteraction(requestId) { [weak self] in
-            self?.bridgeWorker.forceTick()
-        }
+        _ = bridge.dismissInteraction(requestId: requestId)
+        bridge.forceTick()
     }
 
     func retryEndpoint(endpointID: String? = nil) {
         if let endpointID {
             connectingEndpointIDs.insert(endpointID)
         }
-        bridgeWorker.retry { [weak self] in
-            if let endpointID {
-                self?.connectingEndpointIDs.remove(endpointID)
-            }
+        _ = bridge.retryEndpoint()
+        if let endpointID {
+            connectingEndpointIDs.remove(endpointID)
         }
     }
 
@@ -530,32 +425,6 @@ final class NativeMonitorModel: ObservableObject {
             targetDeviceId: targetDeviceId,
             errorCode: errorCode,
             errorMessage: errorMessage
-        )
-    }
-
-    nonisolated private static func mapEndpointDraft(
-        id: String,
-        name: String,
-        enabled: Bool,
-        disconnected: Bool,
-        transport: TransportOption,
-        endpointURL: String,
-        workspaceId: String,
-        siteId: String,
-        apiKey: String,
-        batchWindowSeconds: Int
-    ) -> EndpointSettingsDraft {
-        EndpointSettingsDraft(
-            id: id,
-            name: name,
-            enabled: enabled,
-            disconnected: disconnected,
-            transport: transport,
-            endpointUrl: endpointURL,
-            workspaceId: workspaceId,
-            siteId: siteId,
-            apiKey: apiKey,
-            batchWindowSeconds: max(batchWindowSeconds, 1)
         )
     }
 
@@ -749,133 +618,4 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
-    nonisolated private static func mapConfig(_ config: PulseBarConfig) -> SettingsDraft {
-        let endpoints: [EndpointSettingsDraft] = config.endpoints.map { endpoint in
-            mapEndpointDraft(
-                id: endpoint.id,
-                name: endpoint.name,
-                enabled: endpoint.enabled,
-                disconnected: endpoint.disconnected,
-                transport: mapTransportName(endpoint.transportName),
-                endpointURL: endpoint.endpointUrl,
-                workspaceId: endpoint.workspaceId,
-                siteId: endpoint.siteId,
-                apiKey: endpoint.apiKey,
-                batchWindowSeconds: Int(endpoint.batchWindowSeconds)
-            )
-        }
-        return SettingsDraft(
-            endpoints: endpoints,
-            idleThresholdSeconds: Int(config.idleThresholdSeconds),
-            changeStabilityMillis: Int(config.changeStabilityMillis),
-            heartbeatSeconds: Int(config.heartbeatSeconds),
-            appPollingMillis: Int(config.appPollingMillis),
-            pagePollingMillis: Int(config.pagePollingMillis),
-            mediaPollingMillis: Int(config.mediaPollingMillis),
-            allowWebInteractions: config.allowWebInteractions,
-            interactionExecutionMode: mapInteractionModeName(config.interactionExecutionModeName),
-            interactionPlaybackMode: mapInteractionPlaybackModeName(config.interactionPlaybackModeName)
-        )
-    }
-
-    nonisolated private static func makeConfig(from draft: SettingsDraft) -> PulseBarConfig {
-        let endpoints = draft.endpoints.map { endpoint in
-            PulseBarEndpointConfig(
-                id: endpoint.id,
-                name: endpoint.name,
-                enabled: endpoint.enabled,
-                disconnected: endpoint.disconnected,
-                transport: mapTransport(endpoint.transport),
-                transportName: endpoint.transport.rawValue,
-                endpointUrl: endpoint.endpointUrl,
-                workspaceId: endpoint.workspaceId,
-                siteId: endpoint.siteId,
-                apiKey: endpoint.apiKey,
-                batchWindowSeconds: Int32(endpoint.batchWindowSeconds)
-            )
-        }
-        return PulseBarConfig(
-            endpoints: endpoints,
-            idleThresholdSeconds: Int32(draft.idleThresholdSeconds),
-            changeStabilityMillis: Int32(draft.changeStabilityMillis),
-            heartbeatSeconds: Int32(draft.heartbeatSeconds),
-            appPollingMillis: Int32(draft.appPollingMillis),
-            pagePollingMillis: Int32(draft.pagePollingMillis),
-            mediaPollingMillis: Int32(draft.mediaPollingMillis),
-            allowWebInteractions: draft.allowWebInteractions,
-            interactionExecutionMode: mapInteractionMode(draft.interactionExecutionMode),
-            interactionExecutionModeName: draft.interactionExecutionMode.rawValue,
-            interactionPlaybackMode: mapInteractionPlaybackMode(draft.interactionPlaybackMode),
-            interactionPlaybackModeName: draft.interactionPlaybackMode.rawValue
-        )
-    }
-
-    nonisolated private static func mapTransport(_ transport: PulseBarTransport) -> TransportOption {
-        switch transport {
-        case .WEBHOOK:
-            return .webhook
-        case .HTTP_BATCH:
-            return .httpBatch
-        default:
-            return .websocket
-        }
-    }
-
-    nonisolated private static func mapTransportName(_ transport: String) -> TransportOption {
-        switch transport {
-        case "WEBHOOK":
-            return .webhook
-        case "HTTP_BATCH":
-            return .httpBatch
-        default:
-            return .websocket
-        }
-    }
-
-    nonisolated private static func mapTransport(_ transport: TransportOption) -> PulseBarTransport {
-        switch transport {
-        case .webhook:
-            return .WEBHOOK
-        case .httpBatch:
-            return .HTTP_BATCH
-        case .websocket:
-            return .WEBSOCKET
-        }
-    }
-
-    nonisolated private static func mapInteractionModeName(_ raw: String) -> InteractionExecutionMode {
-        switch raw {
-        case "AUTO_ENQUEUE":
-            return .autoEnqueue
-        default:
-            return .confirm
-        }
-    }
-
-    nonisolated private static func mapInteractionMode(_ mode: InteractionExecutionMode) -> PulseBarInteractionExecutionMode {
-        switch mode {
-        case .autoEnqueue:
-            return .AUTO_ENQUEUE
-        case .confirm:
-            return .CONFIRM
-        }
-    }
-
-    nonisolated private static func mapInteractionPlaybackModeName(_ raw: String) -> InteractionPlaybackMode {
-        switch raw {
-        case "PLAY_NOW":
-            return .playNow
-        default:
-            return .playNext
-        }
-    }
-
-    nonisolated private static func mapInteractionPlaybackMode(_ mode: InteractionPlaybackMode) -> PulseBarInteractionPlaybackMode {
-        switch mode {
-        case .playNow:
-            return .PLAY_NOW
-        case .playNext:
-            return .PLAY_NEXT
-        }
-    }
 }
