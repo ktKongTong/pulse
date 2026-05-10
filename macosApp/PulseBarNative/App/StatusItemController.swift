@@ -1,65 +1,16 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 @MainActor
-final class PulseBarNativeAppDelegate: NSObject, NSApplicationDelegate {
-    let monitor = NativeMonitorModel()
-    private var statusItemController: PulseBarStatusItemController?
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        monitor.start()
-        monitor.requestLiveListenAudioCapturePermissionAtStartup()
-        statusItemController = PulseBarStatusItemController(monitor: monitor)
-    }
-
-    func applicationDidBecomeActive(_ notification: Notification) {
-        monitor.resumeAndRefresh()
-    }
-}
-
-@main
-struct PulseBarNativeApp: App {
-    @NSApplicationDelegateAdaptor(PulseBarNativeAppDelegate.self) private var appDelegate
-
-    var body: some Scene {
-        Window("PulseBar", id: "dashboard") {
-            PulseBarDashboardView()
-                .environmentObject(appDelegate.monitor)
-                .frame(minWidth: 1080, minHeight: 720)
-        }
-        .defaultSize(width: 1180, height: 780)
-        .commands {
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings…") {
-                    appDelegate.monitor.dashboardSelection = .settings
-                    focusPulseBarDashboardWindow()
-                }
-                .keyboardShortcut(",", modifiers: .command)
-            }
-            CommandGroup(after: .appSettings) {
-                Button(appDelegate.monitor.isMonitoring ? "Stop Monitoring" : "Start Monitoring") {
-                    if appDelegate.monitor.isMonitoring {
-                        appDelegate.monitor.stop()
-                    } else {
-                        appDelegate.monitor.start()
-                    }
-                }
-                .keyboardShortcut("m", modifiers: [.command, .shift])
-            }
-        }
-    }
-}
-
-@MainActor
-private final class PulseBarStatusItemController: NSObject {
-    private let monitor: NativeMonitorModel
+final class StatusItemController: NSObject {
+    private let monitor: MonitorStore
     private let statusItem: NSStatusItem
     private let panel: NSPanel
     private let menu = NSMenu()
     private var localMonitor: Any?
     private var globalMonitor: Any?
 
-    init(monitor: NativeMonitorModel) {
+    init(monitor: MonitorStore) {
         self.monitor = monitor
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.panel = NSPanel(

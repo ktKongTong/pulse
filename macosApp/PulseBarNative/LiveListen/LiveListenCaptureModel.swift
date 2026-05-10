@@ -3,71 +3,17 @@ import Foundation
 @preconcurrency import PulseBarShared
 import SwiftUI
 
-// Short aliases for presentation types living under the Kotlin package namespace.
 private typealias LiveListenStatusInput = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.LiveListenStatusInput
 private typealias LiveListenPresentation = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.LiveListenPresentation
 
-/// Abstracts over the Kotlin bridge so LiveListenCaptureModel can be unit
-/// tested with a fake and so Swift doesn't spawn a second `PulseBarBridge`
-/// instance. The shapes match Kotlin's method signatures exactly so
-/// `PulseBarBridge` can conform directly (see extension below).
-protocol LiveListenBridge: AnyObject, Sendable {
-    func startLiveListen(
-        roomId: String,
-        deviceId: String,
-        baseUrl: String,
-        workspaceId: String,
-        apiKey: String,
-        sampleRate: Int32,
-        channels: Int32,
-        chunkDurationMs: Int32
-    )
-    func stopLiveListen()
-    func submitLiveListenPcmBase64(chunkBase64: String)
-    func updateLiveListenMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool)
-    func updateLiveListenMedia(
-        providerId: String?,
-        trackId: String?,
-        title: String?,
-        artist: String?,
-        album: String?,
-        artworkUrl: String?,
-        durationSeconds: Double,
-        isPlaying: Bool
-    )
-    /// Observer plumbing needs a bit more ceremony because Kotlin delivers
-    /// values on Dispatchers.Default. Implementations must hop onto main.
-    /// We hand the Kotlin stats class through directly — Swift consumes it
-    /// via the computed-property extensions on `PulseBarLiveListenStats`.
-    func observeLiveListenStats(
-        onSnapshot: @escaping @MainActor (PulseBarLiveListenStats) -> Void,
-        cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
-    )
-}
-
-/// Make the Kotlin bridge a LiveListenBridge directly. Most methods are
-/// pass-through; only observeLiveListenStats needs a trampoline because the
-/// Kotlin callback is unlabeled + arrives off the main thread.
-extension PulseBarBridge: @retroactive @unchecked Sendable {}
-extension PulseBarBridge: LiveListenBridge {
-    func observeLiveListenStats(
-        onSnapshot: @escaping @MainActor (PulseBarLiveListenStats) -> Void,
-        cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
-    ) {
-        let cancellable = observeLiveListenStats { stats in
-            DispatchQueue.main.async { MainActor.assumeIsolated { onSnapshot(stats) } }
-        }
-        DispatchQueue.main.async { MainActor.assumeIsolated { cancellableReceived(cancellable) } }
-    }
-}
-
-/// UI-facing Live Listen coordinator. Owns the thin Swift `LiveListenCaptureService`
-/// for CoreAudio capture, observes telemetry from Kotlin's `LiveListenClient`
-/// via the `PulseBarBridge`, and exposes everything the debug pane needs
-/// through `@Published` properties.
+/// UI-facing Live Listen coordinator. Owns the thin Swift
+/// `LiveListenCaptureService` for CoreAudio capture, observes telemetry
+/// from Kotlin's `LiveListenClient` via `PulseBarBridge`, and exposes
+/// everything the debug pane needs through `@Published` properties.
 ///
-/// All state-machine logic, WebSocket transport, WAV framing, and reconnect
-/// scheduling live in Kotlin. Swift only forwards PCM bytes and binds UI.
+/// All state-machine logic, WebSocket transport, WAV framing, and
+/// reconnect scheduling live in Kotlin. Swift only forwards PCM bytes
+/// and binds UI.
 @MainActor
 final class LiveListenCaptureModel: ObservableObject {
     private static let mediaStreamAllowedKey = "PulseBarNative.liveListen.mediaStreamAllowed"
@@ -97,15 +43,11 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     var serverConnectionText: String {
-        LiveListenPresentation.shared.serverConnectionText(
-            input: buildStatusInput()
-        )
+        LiveListenPresentation.shared.serverConnectionText(input: buildStatusInput())
     }
 
     var serverEndpointText: String {
-        endpoints.map { endpoint in
-            "\(endpoint.displayName): \(endpoint.baseUrl)"
-        }.joined(separator: "\n")
+        endpoints.map { "\($0.displayName): \($0.baseUrl)" }.joined(separator: "\n")
     }
 
     var captureActivityText: String {
@@ -128,7 +70,7 @@ final class LiveListenCaptureModel: ObservableObject {
     private var endpoints: [LiveListenEndpointResolved] = []
     private var activeEndpointId: String?
     private let service = LiveListenCaptureService()
-    private var meterTask: Task<Void, Never>?
+    private lazy var session = LiveListenCaptureSession(service: service)
     private var startupPermissionTask: Task<Void, Never>?
     private var lastPublishedMediaSignature: String?
     private var currentMedia: PulseBarMedia?
@@ -149,7 +91,6 @@ final class LiveListenCaptureModel: ObservableObject {
 
     deinit {
         statsCancellable?.cancel()
-        meterTask?.cancel()
         startupPermissionTask?.cancel()
     }
 
@@ -167,14 +108,14 @@ final class LiveListenCaptureModel: ObservableObject {
         publisherStats = snapshot
         updateAggregatePublisherState()
         if snapshot.captureRequested && !previouslyRequested {
-            appendLiveListenCaptureDebugLog("server requested capture start")
+            log("server requested capture start")
             startServerDrivenCapture()
         } else if !snapshot.captureRequested && previouslyRequested && isCapturing {
-            appendLiveListenCaptureDebugLog("server requested capture stop")
+            log("server requested capture stop")
             stopCapture()
         }
         if isCapturing && snapshot.connectionStateParsed == .FAILED {
-            appendLiveListenCaptureDebugLog("live listen failed during capture")
+            log("live listen failed during capture")
             stopCapture()
             statusText = "Live Listen connection failed"
         } else if isCapturing {
@@ -185,66 +126,13 @@ final class LiveListenCaptureModel: ObservableObject {
         }
     }
 
-    /// Invoked when the Kotlin state machine reports captureRequested=true
-    /// (the server has issued stream.start). Picks the preferred capture
-    /// source, kicks off CoreAudio, and forwards PCM chunks to the bridge.
-    private func startServerDrivenCapture() {
-        guard !isCapturing else { return }
-        guard mediaStreamPermission == .allow else {
-            appendLiveListenCaptureDebugLog("server started stream but owner disallowed media")
-            return
-        }
-        // Prefer the provider the tick loop just surfaced (so we tap the right
-        // app if multiple media players are running).
-        selectPreferredSource(
-            preferredProvider: currentMedia?.providerId,
-            preferredBundleId: nil
-        )
-        guard let selectedSource else {
-            appendLiveListenCaptureDebugLog("server started stream but no capture source available")
-            return
-        }
-        errorMessage = nil
-        statusText = "Starting stream…"
-        isCapturing = true
-        meter = LiveListenCaptureMeter()
-        pushMediaStateToBridge(captureRunning: true)
-
-        meterTask?.cancel()
-        meterTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try service.ensureAudioCapturePermissionForBackgroundStart()
-                let worker = self.worker
-                let stream = try await service.capture(source: selectedSource) { data in
-                    let encoded = data.base64EncodedString()
-                    worker.submitLiveListenPcmBase64(chunkBase64: encoded)
-                }
-                for try await update in stream {
-                    meter = update.meter
-                    statusText = Self.streamStatusText(
-                        sourceName: selectedSource.name,
-                        publisherStats: publisherStats
-                    )
-                }
-            } catch {
-                appendLiveListenCaptureDebugLog("server-driven capture failed error=\(error.localizedDescription)")
-                errorMessage = error.localizedDescription
-                statusText = "Stream failed"
-            }
-            pushMediaStateToBridge(captureRunning: false)
-            isCapturing = false
-            updateAggregatePublisherState()
-        }
-    }
-
     // MARK: - Public commands
 
     func updateEndpoints(_ endpoints: [LiveListenEndpointResolved]) {
         self.endpoints = endpoints
         if endpoints.isEmpty {
             if isCapturing {
-                appendLiveListenCaptureDebugLog("stopping capture because no live listen endpoints remain")
+                log("stopping capture because no live listen endpoints remain")
                 stopCapture()
             } else {
                 worker.stopLiveListen()
@@ -255,11 +143,6 @@ final class LiveListenCaptureModel: ObservableObject {
             return
         }
 
-        // Open (or re-open) the device-session WebSocket to the first endpoint as
-        // soon as we know about it. The server decides when to issue `stream.start`
-        // / `stream.stop` — Swift only opens the socket and forwards PCM once
-        // capture kicks in. LiveListenClient.start() is idempotent for identical
-        // configs, so this is safe to call every time updateEndpoints() fires.
         let primary = endpoints.first
         if let primary, activeEndpointId != primary.id {
             activeEndpointId = primary.id
@@ -280,18 +163,18 @@ final class LiveListenCaptureModel: ObservableObject {
             guard let self else { return }
             let initialStatus = service.audioCapturePermissionStatus()
             audioCapturePermissionStatus = initialStatus
-            appendLiveListenCaptureDebugLog("startup audio permission begin status=\(initialStatus.rawValue)")
+            log("startup audio permission begin status=\(initialStatus.rawValue)")
             do {
                 try await service.ensureAudioCapturePermissionForUI()
                 let status = service.audioCapturePermissionStatus()
                 audioCapturePermissionStatus = status
-                appendLiveListenCaptureDebugLog("startup audio permission ok status=\(status.rawValue)")
+                log("startup audio permission ok status=\(status.rawValue)")
             } catch {
                 let status = service.audioCapturePermissionStatus()
                 audioCapturePermissionStatus = status
                 errorMessage = error.localizedDescription
                 publisherStatusText = "Audio capture permission required"
-                appendLiveListenCaptureDebugLog("startup audio permission failed status=\(status.rawValue) error=\(error.localizedDescription)")
+                log("startup audio permission failed status=\(status.rawValue) error=\(error.localizedDescription)")
             }
             startupPermissionTask = nil
         }
@@ -320,7 +203,6 @@ final class LiveListenCaptureModel: ObservableObject {
 
         pushMediaStateToBridge()
 
-        // Forward track metadata so the server can show what's playing
         if let media, media.isPlaying {
             worker.updateLiveListenMedia(
                 providerId: media.providerId,
@@ -347,7 +229,7 @@ final class LiveListenCaptureModel: ObservableObject {
 
         if isCapturing && (mediaStreamPermission != .allow || media?.isPlaying != true) {
             let stopReason = mediaStreamPermission == .allow ? "no_playable_media" : "live_listen_disabled"
-            appendLiveListenCaptureDebugLog("media stream stopped during capture reason=\(stopReason) media=\(media?.title ?? "nil")")
+            log("media stream stopped during capture reason=\(stopReason) media=\(media?.title ?? "nil")")
             stopCapture()
             statusText = mediaStreamPermission == .allow ? "Media stopped" : "Media stream disabled"
         }
@@ -360,7 +242,7 @@ final class LiveListenCaptureModel: ObservableObject {
         UserDefaults.standard.set(allowed, forKey: Self.mediaStreamAllowedKey)
         pushMediaStateToBridge()
         if !allowed && isCapturing {
-            appendLiveListenCaptureDebugLog("owner disabled media stream during capture")
+            log("owner disabled media stream during capture")
             stopCapture()
             statusText = "Media stream disabled"
         }
@@ -389,45 +271,37 @@ final class LiveListenCaptureModel: ObservableObject {
         }
     }
 
-    func startCaptureOnly(seconds: Double = 10) {
-        guard !isCapturing, let selectedSource else { return }
+    // MARK: - Capture modes
+
+    /// Invoked when the Kotlin state machine reports `captureRequested=true`
+    /// (the server has issued `stream.start`). Picks the preferred capture
+    /// source, kicks off CoreAudio via the session, and forwards PCM chunks
+    /// to the bridge.
+    private func startServerDrivenCapture() {
+        guard !isCapturing else { return }
+        guard mediaStreamPermission == .allow else {
+            log("server started stream but owner disallowed media")
+            return
+        }
+        selectPreferredSource(preferredProvider: currentMedia?.providerId, preferredBundleId: nil)
+        guard let source = selectedSource else {
+            log("server started stream but no capture source available")
+            return
+        }
         errorMessage = nil
-        statusText = "Starting capture…"
+        statusText = "Starting stream…"
         isCapturing = true
         meter = LiveListenCaptureMeter()
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulse-live-listen-")
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("wav")
-        try? FileManager.default.createDirectory(
-            at: outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        pushMediaStateToBridge(captureRunning: true)
 
-        meterTask?.cancel()
-        meterTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let stream = try await service.capture(source: selectedSource, outputURL: outputURL, seconds: seconds)
-                statusText = "Capturing \(selectedSource.name)…"
-                for try await update in stream {
-                    meter = update.meter
-                    statusText = update.statusText
-                }
-                lastSampleURL = outputURL
-                statusText = "Captured sample"
-            } catch {
-                errorMessage = error.localizedDescription
-                statusText = "Capture failed"
-            }
-            isCapturing = false
-        }
+        runStreamingSession(source: source)
     }
 
+    /// Manual debug entry: "Start native stream" button in the capture pane.
     func startNativeStream(roomId: String = "live-listen:owner", deviceId: String = "owner") {
-        appendLiveListenCaptureDebugLog("startNativeStream called room=\(roomId) device=\(deviceId) isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoints=\(endpoints.map { $0.baseUrl }.joined(separator: ","))")
-        guard !isCapturing, let selectedSource else {
-            appendLiveListenCaptureDebugLog("startNativeStream ignored isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil")")
+        log("startNativeStream called room=\(roomId) device=\(deviceId) isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoints=\(endpoints.map { $0.baseUrl }.joined(separator: ","))")
+        guard !isCapturing, let source = selectedSource else {
+            log("startNativeStream ignored isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil")")
             return
         }
         guard !endpoints.isEmpty else {
@@ -451,43 +325,85 @@ final class LiveListenCaptureModel: ObservableObject {
         meter = LiveListenCaptureMeter()
 
         connectToActiveEndpoint(roomId: roomId, deviceId: deviceId)
+        runStreamingSession(source: source, isManual: true)
+    }
 
-        meterTask?.cancel()
-        meterTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                appendLiveListenCaptureDebugLog("audio permission preflight begin")
-                try service.ensureAudioCapturePermissionForBackgroundStart()
-                appendLiveListenCaptureDebugLog("audio permission preflight ok")
-                pushMediaStateToBridge(captureRunning: true)
+    /// Fixed-duration debug sample that writes a WAV file and surfaces its URL.
+    func startCaptureOnly(seconds: Double = 10) {
+        guard !isCapturing, let source = selectedSource else { return }
+        errorMessage = nil
+        statusText = "Starting capture…"
+        isCapturing = true
+        meter = LiveListenCaptureMeter()
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-live-listen-")
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
+        try? FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
 
-                // Deliver every captured chunk straight to the Kotlin bridge.
-                // The Swift render callback is real-time safe; `submitPcm` on
-                // the bridge is a non-blocking `trySend` into a buffered channel.
-                let worker = self.worker
-                let stream = try await service.capture(source: selectedSource) { data in
-                    let encoded = data.base64EncodedString()
-                    worker.submitLiveListenPcmBase64(chunkBase64: encoded)
+        session.runSample(
+            source: source,
+            outputURL: outputURL,
+            seconds: seconds,
+            onMeter: { [weak self] m in
+                self?.meter = m
+            },
+            onStatus: { [weak self] s in
+                self?.statusText = s
+            },
+            onError: { [weak self] error in
+                self?.errorMessage = error.localizedDescription
+                self?.statusText = "Capture failed"
+            },
+            onFinish: { [weak self] in
+                guard let self else { return }
+                if errorMessage == nil {
+                    lastSampleURL = outputURL
+                    statusText = "Captured sample"
                 }
-                statusText = "Waiting for \(selectedSource.name) audio…"
-                for try await update in stream {
-                    meter = update.meter
-                    statusText = Self.streamStatusText(
-                        sourceName: selectedSource.name,
-                        publisherStats: publisherStats
-                    )
-                }
-            } catch {
-                appendLiveListenCaptureDebugLog("stream failed error=\(error.localizedDescription)")
+                isCapturing = false
+            }
+        )
+    }
+
+    private func runStreamingSession(source: LiveListenCaptureSource, isManual: Bool = false) {
+        let worker = self.worker
+        if isManual {
+            log("audio permission preflight begin")
+        }
+        session.runStreaming(
+            source: source,
+            preflightPermission: true,
+            pcmHandler: { data in
+                let encoded = data.base64EncodedString()
+                worker.submitLiveListenPcmBase64(chunkBase64: encoded)
+            },
+            onMeter: { [weak self] m in
+                guard let self else { return }
+                meter = m
+                statusText = Self.streamStatusText(
+                    sourceName: source.name,
+                    publisherStats: publisherStats
+                )
+            },
+            onError: { [weak self] error in
+                guard let self else { return }
+                log("\(isManual ? "stream" : "server-driven capture") failed error=\(error.localizedDescription)")
                 errorMessage = error.localizedDescription
                 statusText = "Stream failed"
-                publisherStatusText = "Publisher failed"
+                if isManual { publisherStatusText = "Publisher failed" }
+            },
+            onFinish: { [weak self] in
+                guard let self else { return }
+                if isManual { worker.stopLiveListen() }
+                pushMediaStateToBridge(captureRunning: false)
+                isCapturing = false
+                updateAggregatePublisherState()
             }
-            worker.stopLiveListen()
-            pushMediaStateToBridge(captureRunning: false)
-            isCapturing = false
-            updateAggregatePublisherState()
-        }
+        )
     }
 
     func reconnectServer() {
@@ -500,9 +416,7 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     func stopCapture() {
-        service.stop()
-        meterTask?.cancel()
-        meterTask = nil
+        session.cancel()
         worker.stopLiveListen()
         pushMediaStateToBridge(captureRunning: false)
         isCapturing = false
@@ -510,7 +424,7 @@ final class LiveListenCaptureModel: ObservableObject {
         updateAggregatePublisherState()
     }
 
-    // MARK: - Private
+    // MARK: - Private helpers
 
     private func connectToActiveEndpoint(roomId: String, deviceId: String) {
         guard let endpoint = endpoints.first(where: { $0.id == activeEndpointId }) ?? endpoints.first else { return }
@@ -567,7 +481,6 @@ final class LiveListenCaptureModel: ObservableObject {
         )
     }
 
-    /// Builds the primitive input the Kotlin presentation helpers need.
     private func buildStatusInput() -> LiveListenStatusInput {
         let activeConnected = publisherStats.connectionStateParsed == .CONNECTED && activeEndpointId != nil
         return Self.makeStatusInput(
@@ -600,40 +513,7 @@ final class LiveListenCaptureModel: ObservableObject {
         )
     }
 
-    private func appendLiveListenCaptureDebugLog(_ message: String) {
+    private func log(_ message: String) {
         PulseNativeLog.debug(.liveListenSession, "capture \(message)")
     }
-}
-
-// MARK: - SwiftUI-facing per-endpoint status
-
-/// Platform-only aggregate used by the multi-endpoint capture pane. Carries
-/// a full `PulseBarLiveListenStats` (Kotlin class) plus the platform-level
-/// display fields (endpoint URL / workspace id / human-readable name).
-struct LiveListenEndpointPublisherStatus: Identifiable, Equatable {
-    let id: String
-    let name: String
-    let endpointURL: String
-    let workspaceId: String
-    let statusText: String
-    let stats: PulseBarLiveListenStats
-
-    static func == (lhs: LiveListenEndpointPublisherStatus, rhs: LiveListenEndpointPublisherStatus) -> Bool {
-        lhs.id == rhs.id &&
-            lhs.name == rhs.name &&
-            lhs.endpointURL == rhs.endpointURL &&
-            lhs.workspaceId == rhs.workspaceId &&
-            lhs.statusText == rhs.statusText &&
-            lhs.stats === rhs.stats
-    }
-}
-
-enum LiveListenMediaStreamPermission: String {
-    case allow
-    case disallow
-}
-
-enum LiveListenMediaPlaybackStatus: String {
-    case playing
-    case paused
 }

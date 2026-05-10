@@ -4,7 +4,7 @@ import SwiftUI
 private typealias Formatters = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.PulseBarFormatters
 
 struct LiveListenCapturePane: View {
-    @EnvironmentObject private var monitor: NativeMonitorModel
+    @EnvironmentObject private var monitor: MonitorStore
 
     private var model: LiveListenCaptureModel { monitor.liveListenCaptureModel }
 

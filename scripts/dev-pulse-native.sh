@@ -71,7 +71,7 @@ EOF
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 swiftc \
-  "$ROOT"/macosApp/PulseBarNative/*.swift \
+  $(find "$ROOT"/macosApp/PulseBarNative -name '*.swift' -type f) \
   -I "$PRODUCTS" \
   -F "$PRODUCTS" \
   -L "$PRODUCTS" \

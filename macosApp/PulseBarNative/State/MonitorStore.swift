@@ -3,8 +3,20 @@ import Combine
 import Foundation
 @preconcurrency import PulseBarShared
 
+/// Root `ObservableObject` for the SwiftUI tree. Fans out Kotlin bridge
+/// observer callbacks onto `@Published` properties grouped by feature.
+///
+/// Views inject this object via `.environmentObject(...)` from
+/// `PulseBarNativeApp` / `StatusItemController`.
+///
+/// Threading: Kotlin owns all side effects (the Kotlin bridge uses its
+/// own `CoroutineScope(SupervisorJob() + Dispatchers.Default)` + internal
+/// `Mutex`). Swift is a pure consumer + command issuer.
 @MainActor
-final class NativeMonitorModel: ObservableObject {
+final class MonitorStore: ObservableObject {
+
+    // MARK: - Published state
+
     @Published private(set) var snapshot: PulseBarSnapshot?
     @Published private(set) var todayStats: [PulseBarUsageRow] = []
     @Published private(set) var todayTotalSeconds: Int = 0
@@ -29,9 +41,8 @@ final class NativeMonitorModel: ObservableObject {
     @Published var isPaused = false
     @Published var dashboardSelection: DashboardSection = .connection
 
-    /// Kotlin owns all threading — its bridge internally uses coroutines with
-    /// a supervisor Job and its own `Mutex`. We don't need a queue in Swift
-    /// anymore; we just talk to the bridge directly.
+    // MARK: - Dependencies
+
     private let bridge: PulseBarBridge
     private var cancellables: [PulseBarCancellable] = []
     let liveListenCaptureModel: LiveListenCaptureModel
@@ -42,41 +53,11 @@ final class NativeMonitorModel: ObservableObject {
         self.liveListenCaptureModel = LiveListenCaptureModel(bridge: bridge)
     }
 
-    // MARK: - Nonisolated observer subscribers
-    //
-    // These are explicitly nonisolated so the closures they pass to Kotlin
-    // don't inherit @MainActor isolation. We then dispatch onto main inside
-    // the closure and invoke the caller's @MainActor handler there.
-
-    nonisolated private static func subscribeMenu(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarMenuState) -> Void) -> PulseBarCancellable {
-        bridge.observeMenuState { state in
-            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(state) } }
-        }
+    deinit {
+        for c in cancellables { c.cancel() }
     }
 
-    nonisolated private static func subscribeConfig(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarConfig) -> Void) -> PulseBarCancellable {
-        bridge.observeConfig { config in
-            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(config) } }
-        }
-    }
-
-    nonisolated private static func subscribeSync(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarSyncState) -> Void) -> PulseBarCancellable {
-        bridge.observeSyncState { state in
-            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(state) } }
-        }
-    }
-
-    nonisolated private static func subscribeInteraction(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarInteractionState) -> Void) -> PulseBarCancellable {
-        bridge.observeInteractionState { state in
-            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(state) } }
-        }
-    }
-
-    nonisolated private static func subscribeToday(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarTodayStats) -> Void) -> PulseBarCancellable {
-        bridge.observeTodayStats { stats in
-            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(stats) } }
-        }
-    }
+    // MARK: - Lifecycle
 
     func start() {
         PulseNativeLog.info(.liveListenSession, "monitor.start")
@@ -88,22 +69,39 @@ final class NativeMonitorModel: ObservableObject {
         isPaused = false
         subscribed = true
 
-        // Kotlin delivers observer callbacks on Dispatchers.Default. Use the
-        // nonisolated subscribe helpers above so the closure captured by
-        // Kotlin isn't inherited-@MainActor (which would trip Swift 6 at
-        // runtime), then hop to @MainActor explicitly.
-        cancellables.append(Self.subscribeMenu(bridge: bridge, onMain: { [weak self] state in self?.applyMenuStateUpdate(state) }))
-        cancellables.append(Self.subscribeConfig(bridge: bridge, onMain: { [weak self] config in self?.applyConfigUpdate(config) }))
-        cancellables.append(Self.subscribeSync(bridge: bridge, onMain: { [weak self] state in self?.applySyncStateUpdate(state) }))
-        cancellables.append(Self.subscribeInteraction(bridge: bridge, onMain: { [weak self] state in self?.applyInteractionStateUpdate(state) }))
-        cancellables.append(Self.subscribeToday(bridge: bridge, onMain: { [weak self] stats in self?.applyTodayStatsUpdate(stats) }))
+        cancellables.append(MonitorBridgeSubscriptions.menuState(bridge: bridge) { [weak self] s in self?.applyMenuStateUpdate(s) })
+        cancellables.append(MonitorBridgeSubscriptions.config(bridge: bridge) { [weak self] c in self?.applyConfigUpdate(c) })
+        cancellables.append(MonitorBridgeSubscriptions.syncState(bridge: bridge) { [weak self] s in self?.applySyncStateUpdate(s) })
+        cancellables.append(MonitorBridgeSubscriptions.interactionState(bridge: bridge) { [weak self] s in self?.applyInteractionStateUpdate(s) })
+        cancellables.append(MonitorBridgeSubscriptions.todayStats(bridge: bridge) { [weak self] s in self?.applyTodayStatsUpdate(s) })
 
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
-    deinit {
-        for c in cancellables { c.cancel() }
+    func stop() {
+        isMonitoring = false
+        isPaused = true
     }
+
+    func togglePaused() {
+        if !isMonitoring { start(); return }
+        isPaused.toggle()
+        if !isPaused { bridge.forceTick() }
+    }
+
+    func resumeAndRefresh() {
+        if !isMonitoring { start(); return }
+        isPaused = false
+        bridge.forceTick()
+    }
+
+    func refreshMenuBarContent() {
+        if !isMonitoring { start(); return }
+        isPaused = false
+        bridge.forceTick()
+    }
+
+    // MARK: - Live Listen convenience
 
     func prepareLiveListenCapturePane() {
         liveListenCaptureModel.refreshSources()
@@ -130,79 +128,16 @@ final class NativeMonitorModel: ObservableObject {
         liveListenCaptureModel.stopCapture()
     }
 
-    func stop() {
-        isMonitoring = false
-        isPaused = true
+    var liveListenEndpoints: [LiveListenEndpointResolved] {
+        PulseBarConfigFactory.shared.resolvedLiveListenEndpoints(draft: settingsDraft)
     }
 
-    func togglePaused() {
-        if !isMonitoring {
-            start()
-            return
-        }
-        isPaused.toggle()
-        if !isPaused {
-            bridge.forceTick()
-        }
-    }
-
-    func resumeAndRefresh() {
-        if !isMonitoring {
-            start()
-            return
-        }
-        isPaused = false
-        bridge.forceTick()
-    }
-
-    func refreshMenuBarContent() {
-        if !isMonitoring {
-            start()
-            return
-        }
-        isPaused = false
-        bridge.forceTick()
-    }
-
-    private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
-        // Kotlin's menu state flow is a StateFlow that already de-dupes on
-        // structural equality. We re-publish unconditionally; SwiftUI
-        // diffing handles the rest.
-        snapshot = state.snapshot
-        liveListenCaptureModel.updateCurrentMedia(state.snapshot?.media)
-    }
-
-    private func applyTodayStatsUpdate(_ stats: PulseBarTodayStats) {
-        todayStats = stats.topRows
-        todayTotalSeconds = Int(stats.totalSeconds)
-    }
-
-    private func applyConfigUpdate(_ config: PulseBarConfig) {
-        settingsDraft = PulseBarConfigFactory.shared.toDraft(config: config)
-        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
-    }
-
-    private func applySyncStateUpdate(_ state: PulseBarSyncState) {
-        syncState = state
-        clearFinishedConnectingEndpoints(state)
-    }
-
-    private func applyInteractionStateUpdate(_ state: PulseBarInteractionState) {
-        interactionItems = state.items
-        interactionPendingCount = Int(state.pendingCount)
-        interactionLastStatus = state.lastStatus
-    }
+    // MARK: - Settings commands
 
     func saveConfig() {
         bridge.updateConfig(config: PulseBarConfigFactory.shared.fromDraft(draft: settingsDraft))
         bridge.forceTick()
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
-    }
-
-    var liveListenEndpoints: [LiveListenEndpointResolved] {
-        // Kotlin does the selection + trimming + URL normalization and also
-        // produces the displayName. Swift just passes the value through.
-        PulseBarConfigFactory.shared.resolvedLiveListenEndpoints(draft: settingsDraft)
     }
 
     func addEndpoint() {
@@ -241,6 +176,8 @@ final class NativeMonitorModel: ObservableObject {
         retryEndpoint(endpointID: endpointID)
     }
 
+    // MARK: - Media / interaction commands
+
     func mediaCommand(_ command: PulseBarPlaybackCommand) {
         _ = bridge.mediaCommand(command: command)
     }
@@ -267,6 +204,34 @@ final class NativeMonitorModel: ObservableObject {
         if let endpointID {
             connectingEndpointIDs.remove(endpointID)
         }
+    }
+
+    // MARK: - Observer handlers
+
+    private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
+        snapshot = state.snapshot
+        liveListenCaptureModel.updateCurrentMedia(state.snapshot?.media)
+    }
+
+    private func applyTodayStatsUpdate(_ stats: PulseBarTodayStats) {
+        todayStats = stats.topRows
+        todayTotalSeconds = Int(stats.totalSeconds)
+    }
+
+    private func applyConfigUpdate(_ config: PulseBarConfig) {
+        settingsDraft = PulseBarConfigFactory.shared.toDraft(config: config)
+        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
+    }
+
+    private func applySyncStateUpdate(_ state: PulseBarSyncState) {
+        syncState = state
+        clearFinishedConnectingEndpoints(state)
+    }
+
+    private func applyInteractionStateUpdate(_ state: PulseBarInteractionState) {
+        interactionItems = state.items
+        interactionPendingCount = Int(state.pendingCount)
+        interactionLastStatus = state.lastStatus
     }
 
     private func clearFinishedConnectingEndpoints(_ syncState: PulseBarSyncState) {
