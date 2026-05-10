@@ -800,6 +800,7 @@ export class LiveListenRoom extends DurableObject<Env> {
       state.audioFlow.availableFromSeq = 0;
       state.audioRing = [];
     }
+    console.log("sending, start command")
     state.audioFlow.state = "starting";
     const command = this.streamCommand(state, mode);
     for (const socket of this.ctx.getWebSockets()) {

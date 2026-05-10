@@ -444,10 +444,14 @@ internal class LiveListenClient(
                     outbound.send(OutboundMessage.Binary(out.bytes, out.seq))
                     _stats.update { it.copy(isSending = true, queuedChunks = it.queuedChunks + 1) }
                 }
-                LiveListenStateMachine.Output.StartCapture -> log.i { "capture.start_requested" }
+                LiveListenStateMachine.Output.StartCapture -> {
+                    log.i { "capture.start_requested" }
+                    _stats.update { it.copy(captureRequested = true) }
+                }
                 LiveListenStateMachine.Output.StopCapture -> {
                     log.i { "capture.stop_requested" }
                     pcmBuffer = ByteArray(0)
+                    _stats.update { it.copy(captureRequested = false) }
                 }
             }
         }

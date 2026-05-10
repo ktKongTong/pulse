@@ -145,8 +145,16 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     private func applyStatsSnapshot(_ snapshot: LiveListenPublisherStats) {
+        let previouslyRequested = publisherStats.captureRequested
         publisherStats = snapshot
         updateAggregatePublisherState()
+        if snapshot.captureRequested && !previouslyRequested {
+            appendLiveListenCaptureDebugLog("server requested capture start")
+            startServerDrivenCapture()
+        } else if !snapshot.captureRequested && previouslyRequested && isCapturing {
+            appendLiveListenCaptureDebugLog("server requested capture stop")
+            stopCapture()
+        }
         if isCapturing && snapshot.connectionState == .failed {
             appendLiveListenCaptureDebugLog("live listen failed during capture")
             stopCapture()
@@ -156,6 +164,59 @@ final class LiveListenCaptureModel: ObservableObject {
                 sourceName: selectedSource?.name ?? "selected source",
                 publisherStats: snapshot
             )
+        }
+    }
+
+    /// Invoked when the Kotlin state machine reports captureRequested=true
+    /// (the server has issued stream.start). Picks the preferred capture
+    /// source, kicks off CoreAudio, and forwards PCM chunks to the bridge.
+    private func startServerDrivenCapture() {
+        guard !isCapturing else { return }
+        guard mediaStreamPermission == .allow else {
+            appendLiveListenCaptureDebugLog("server started stream but owner disallowed media")
+            return
+        }
+        // Prefer the provider the tick loop just surfaced (so we tap the right
+        // app if multiple media players are running).
+        selectPreferredSource(
+            preferredProvider: currentMedia?.providerId,
+            preferredBundleId: nil
+        )
+        guard let selectedSource else {
+            appendLiveListenCaptureDebugLog("server started stream but no capture source available")
+            return
+        }
+        errorMessage = nil
+        statusText = "Starting stream…"
+        isCapturing = true
+        meter = LiveListenCaptureMeter()
+        pushMediaStateToBridge(captureRunning: true)
+
+        meterTask?.cancel()
+        meterTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try service.ensureAudioCapturePermissionForBackgroundStart()
+                let worker = self.worker
+                let stream = try await service.capture(source: selectedSource) { data in
+                    let encoded = data.base64EncodedString()
+                    worker.submitLiveListenPcmBase64(encoded)
+                }
+                for try await update in stream {
+                    meter = update.meter
+                    statusText = Self.streamStatusText(
+                        sourceName: selectedSource.name,
+                        publisherStats: publisherStats
+                    )
+                }
+            } catch {
+                appendLiveListenCaptureDebugLog("server-driven capture failed error=\(error.localizedDescription)")
+                errorMessage = error.localizedDescription
+                statusText = "Stream failed"
+            }
+            pushMediaStateToBridge(captureRunning: false)
+            isCapturing = false
+            updateAggregatePublisherState()
         }
     }
 
@@ -556,6 +617,7 @@ struct LiveListenPublisherStats: Equatable, Sendable {
     var lastChunkBytes: UInt64 = 0
     var chunkDurationMs: Int = 500
     var statusText: String = "Live Listen client idle"
+    var captureRequested: Bool = false
 }
 
 enum LiveListenPublisherConnectionState: String, Sendable, Equatable {
@@ -598,6 +660,7 @@ extension LiveListenPublisherStats {
         self.lastChunkBytes = UInt64(max(0, stats.lastChunkBytes))
         self.chunkDurationMs = Int(stats.chunkDurationMs)
         self.statusText = stats.statusText
+        self.captureRequested = stats.captureRequested
     }
 
     private static func dateOrNil(millis: Int64) -> Date? {

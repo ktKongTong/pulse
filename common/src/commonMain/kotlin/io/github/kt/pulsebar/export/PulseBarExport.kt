@@ -234,6 +234,8 @@ class PulseBarLiveListenStats(
     val lastChunkBytes: Long,
     val chunkDurationMs: Int,
     val statusText: String,
+    /** True when the server has issued stream.start and wants the host to pump PCM. */
+    val captureRequested: Boolean,
 )
 
 expect class PulseBarBridge() {

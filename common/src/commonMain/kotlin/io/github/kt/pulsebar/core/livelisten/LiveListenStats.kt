@@ -34,6 +34,12 @@ data class LiveListenStats(
     val lastChunkBytes: Long = 0L,
     val chunkDurationMs: Int = 500,
     val statusText: String = "Live Listen client idle",
+    /**
+     * True when the server has issued `stream.start` and expects the host
+     * to pump PCM. Hosts should start CoreAudio capture when this flips
+     * true and stop when it flips back to false.
+     */
+    val captureRequested: Boolean = false,
 ) {
     enum class ConnectionState { Idle, Connecting, Connected, Reconnecting, Stopping, Stopped, Failed }
 }

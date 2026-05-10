@@ -888,6 +888,7 @@ private fun LiveListenStats.toExport(): PulseBarLiveListenStats =
         lastChunkBytes = lastChunkBytes,
         chunkDurationMs = chunkDurationMs,
         statusText = statusText,
+        captureRequested = captureRequested,
     )
 
 private fun LiveListenStats.ConnectionState.toExport(): PulseBarLiveListenConnectionState = when (this) {
