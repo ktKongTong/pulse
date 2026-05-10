@@ -46,6 +46,8 @@ class LiveListenEndpointResolved(
     val id: String,
     val name: String,
     val baseUrl: String,
+    /** The name to show in UI (falls back to host or the full URL). */
+    val displayName: String,
     val workspaceId: String,
     val apiKey: String,
 )
@@ -139,10 +141,24 @@ object PulseBarConfigFactory {
                 id = candidate.id,
                 name = candidate.name.trim(),
                 baseUrl = baseUrl,
+                displayName = candidate.name.trim().ifEmpty { extractHostOrUrl(baseUrl) },
                 workspaceId = workspaceId,
                 apiKey = apiKey,
             )
         }
+
+    /** Pull the `host` portion out of `scheme://host[:port]/...`, or the
+     *  whole string if there's no `://`. Swift used `URL.host ?? absoluteString`
+     *  for the same effect. */
+    private fun extractHostOrUrl(baseUrl: String): String {
+        val schemeEnd = baseUrl.indexOf("://")
+        if (schemeEnd < 0) return baseUrl
+        val afterScheme = baseUrl.substring(schemeEnd + 3)
+        val endIndex = afterScheme.indexOfAny(charArrayOf('/', '?', '#'))
+        val hostPort = if (endIndex < 0) afterScheme else afterScheme.substring(0, endIndex)
+        val colonIndex = hostPort.indexOf(':')
+        return if (colonIndex < 0) hostPort.ifEmpty { baseUrl } else hostPort.substring(0, colonIndex).ifEmpty { baseUrl }
+    }
 
     private fun hasLiveListenCredentials(endpoint: PulseBarEndpointDraft): Boolean =
         endpoint.workspaceId.trim().isNotEmpty() && endpoint.apiKey.isNotEmpty() && endpoint.endpointUrl.trim().isNotEmpty()

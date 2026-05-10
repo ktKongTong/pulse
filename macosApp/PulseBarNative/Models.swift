@@ -1,14 +1,8 @@
 import Foundation
 @preconcurrency import PulseBarShared
 
-// MARK: - Swift-only UI state
-//
-// The Swift layer no longer mirrors any Kotlin class. SwiftUI binds straight
-// to `PulseBarSnapshot`, `PulseBarMedia`, `PulseBarUsageRow`, `PulseBarInteractionItem`,
-// `PulseBarSyncState`, `PulseBarEndpointSyncState`, `PulseBarConfigDraft`,
-// `PulseBarEndpointDraft`, `PulseBarLiveListenStats`. The only Swift types that
-// remain are things SwiftUI navigation state or AppKit-bound values need.
-
+/// SwiftUI navigation selection. Pure shell concern (SF Symbol names are
+/// Apple-only); nothing to move to Kotlin.
 enum DashboardSection: String, CaseIterable, Identifiable {
     case connection
     case reporting
@@ -33,49 +27,17 @@ enum DashboardSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// Platform-typed Live Listen endpoint (carries a Swift `URL` that has been
-/// normalized via Kotlin's shared `normalizePulseBaseUrl`). The Kotlin side
-/// stores `endpointUrl: String`; this is the single adapter point between the
-/// string and the Swift URL used by `URLSession` for the device-session WS.
-struct LiveListenEndpointConfig: Equatable {
-    let id: String
-    let name: String
-    let baseURL: URL
-    let workspaceId: String
-    let apiKey: String
-}
-
-extension LiveListenEndpointConfig {
-    /// Wrap the Kotlin-resolved endpoint. All trimming + URL normalization
-    /// happens in `PulseBarConfigFactory.resolvedLiveListenEndpoints` on
-    /// the Kotlin side; Swift's only job is parsing the `baseUrl` string
-    /// into a Foundation `URL`.
-    static func fromResolved(_ resolved: LiveListenEndpointResolved) -> LiveListenEndpointConfig? {
-        guard let baseURL = URL(string: resolved.baseUrl) else { return nil }
-        return LiveListenEndpointConfig(
-            id: resolved.id,
-            name: resolved.name,
-            baseURL: baseURL,
-            workspaceId: resolved.workspaceId,
-            apiKey: resolved.apiKey
-        )
-    }
-}
-
-// MARK: - Kotlin-type lifts
+// MARK: - Kotlin-type adapters
 //
-// The Kotlin export types carry epoch-millis accessors (produced via
-// NSISO8601DateFormatter on the Kotlin side) and optional URL strings.
-// These computed properties turn those into native Swift `Date` / `URL`
-// for Foundation APIs. No parsing happens here — the Kotlin side owns
-// every ISO8601 formatter.
+// The only Swift-side additions to the Kotlin export types are:
+//  - `Identifiable` conformances so SwiftUI `ForEach` + `.tag(_:)` work
+//  - `@unchecked Sendable` markings for the cross-actor observer hop
+//  - `artworkURL` / `connectionStateParsed` — both wrap Swift-Export quirks
+//    (optional-String-to-URL and the enum-getter crash respectively).
+//
+// Everything else (ISO8601 parsing, UUID generation, time formatting,
+// sentinel-to-optional lifts, endpoint normalization) is owned by Kotlin.
 
-private func pulseDate(fromMillis millis: Int64?) -> Date? {
-    guard let millis, millis > 0 else { return nil }
-    return Date(timeIntervalSince1970: TimeInterval(millis) / 1000.0)
-}
-
-// SwiftUI `ForEach` + `.tag(_:)` need these Kotlin classes to be Identifiable.
 extension PulseBarUsageRow: @retroactive Identifiable {
     public var id: String { key }
 }
@@ -84,93 +46,20 @@ extension PulseBarInteractionItem: @retroactive Identifiable {
     public var id: String { requestId }
 }
 
-extension PulseBarEndpointSyncState: @retroactive Identifiable {
-    // `val id: String` already satisfies the protocol.
-}
+extension PulseBarEndpointSyncState: @retroactive Identifiable {}
+extension PulseBarEndpointDraft: @retroactive Identifiable {}
+extension LiveListenEndpointResolved: @retroactive Identifiable {}
 
-extension PulseBarEndpointDraft: @retroactive Identifiable {
-    // `var id: String` already satisfies the protocol.
-}
-
-// Cross-actor hop for Live Listen stats observer needs Sendable markings.
 extension PulseBarLiveListenStats: @retroactive @unchecked Sendable {}
 extension PulseBarMedia: @retroactive @unchecked Sendable {}
 extension PulseBarSnapshot: @retroactive @unchecked Sendable {}
 
-// MARK: - Kotlin snapshot / media lifts
-
-extension PulseBarSnapshot {
-    /// ISO8601 → Date via the Kotlin parser. Falls back to `Date()` when
-    /// the string is missing (matches pre-refactor behaviour).
-    var observedAt: Date {
-        pulseDate(fromMillis: snapshotObservedAtEpochMillis(snapshot: self)) ?? Date()
-    }
-}
-
 extension PulseBarMedia {
-    var artworkURL: URL? {
-        artworkUrl.flatMap(URL.init(string:))
-    }
-
-    /// `0` means "duration unknown" on the Kotlin side.
-    var durationSecondsOrNil: Int? {
-        let value = Int(durationSeconds)
-        return value > 0 ? value : nil
-    }
-
-    var trackNumberOrNil: Int? {
-        trackNumber.flatMap { $0 > 0 ? Int($0) : nil }
-    }
-
-    var discNumberOrNil: Int? {
-        discNumber.flatMap { $0 > 0 ? Int($0) : nil }
-    }
+    /// Wrap the Kotlin `String?` URL in a Foundation `URL` for `AsyncImage`.
+    var artworkURL: URL? { artworkUrl.flatMap(URL.init(string:)) }
 }
-
-// MARK: - Kotlin interaction / sync lifts
-
-extension PulseBarInteractionItem {
-    var issuedAt: Date { pulseDate(fromMillis: interactionIssuedAtEpochMillis(item: self)) ?? Date() }
-    var updatedAt: Date { pulseDate(fromMillis: interactionUpdatedAtEpochMillis(item: self)) ?? Date() }
-}
-
-extension PulseBarEndpointSyncState {
-    var lastAttemptAt: Date? { pulseDate(fromMillis: endpointLastAttemptAtEpochMillis(state: self)) }
-    var lastProbeAt: Date? { pulseDate(fromMillis: endpointLastProbeAtEpochMillis(state: self)) }
-    var lastSuccessAt: Date? { pulseDate(fromMillis: endpointLastSuccessAtEpochMillis(state: self)) }
-    var lastFailureAt: Date? { pulseDate(fromMillis: endpointLastFailureAtEpochMillis(state: self)) }
-    var acknowledgedAt: Date? { pulseDate(fromMillis: endpointAcknowledgedAtEpochMillis(state: self)) }
-}
-
-// MARK: - Kotlin Live Listen stats lifts
-//
-// The Kotlin `PulseBarLiveListenStats` uses sentinel primitives (`0L` for
-// "never", `-1L` for "none") so Swift Export can avoid KotlinLong?. These
-// helpers turn the sentinels into Swift `Date?` / numeric optionals at the
-// read site.
 
 extension PulseBarLiveListenStats {
-    var lastConnectedAt: Date? { pulseDate(fromMillis: lastConnectedAtMillis) }
-    var lastDisconnectedAt: Date? { pulseDate(fromMillis: lastDisconnectedAtMillis) }
-    var nextReconnectAt: Date? { pulseDate(fromMillis: nextReconnectAtMillis) }
-    var lastSendAt: Date? { pulseDate(fromMillis: lastSendAtMillis) }
-
-    var sendBitrateKbpsOrNil: Double? {
-        sendBitrateKbps > 0 ? sendBitrateKbps : nil
-    }
-
-    var reconnectDelaySecondsOrNil: Double? {
-        reconnectDelaySeconds > 0 ? reconnectDelaySeconds : nil
-    }
-
-    var queuedFirstSequenceOrNil: Int64? {
-        queuedFirstSequence >= 0 ? queuedFirstSequence : nil
-    }
-
-    var queuedLastSequenceOrNil: Int64? {
-        queuedLastSequence >= 0 ? queuedLastSequence : nil
-    }
-
     /// Parse the Kotlin enum from its string name. Going through
     /// `connectionStateName` avoids Swift Export's `__externalRCRefUnsafe`
     /// enum-getter path, which asserts at runtime when the enum is read
@@ -187,5 +76,3 @@ extension PulseBarLiveListenStats {
         }
     }
 }
-
-// MARK: - Kotlin Live Listen stats lifts

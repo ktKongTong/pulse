@@ -70,11 +70,11 @@ object PulseBarFormatters {
         return "${minutes}m ago"
     }
 
-    /**
-     * Human sequence-range label: `-`, `#123`, or `#100-#123`. Both
-     * sentinel inputs (`-1`) collapse to `-`; matching first/last collapse
-     * to `#<seq>`.
-     */
+/**
+ * Human sequence-range label: `-`, `#123`, or `#100-#123`. Both
+ * sentinel inputs (`-1`) collapse to `-`; matching first/last collapse
+ * to `#<seq>`.
+ */
     fun formatQueueRange(firstSeq: Long, lastSeq: Long): String {
         if (firstSeq < 0L || lastSeq < 0L) return "-"
         if (firstSeq == lastSeq) return "#$firstSeq"

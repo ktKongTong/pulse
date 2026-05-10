@@ -79,6 +79,11 @@ class PulseBarMedia(
     val collectionLinkUrl: String?
 )
 
+/** `0` means "duration unknown" on the wire — project to null so UIs
+ *  don't have to special-case zero at every read site. */
+fun mediaDurationSecondsOrNull(media: PulseBarMedia): Int? =
+    if (media.durationSeconds > 0) media.durationSeconds else null
+
 class PulseBarSnapshot(
     val appName: String,
     val bundleId: String,
@@ -195,6 +200,15 @@ fun endpointLastFailureAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
 fun endpointAcknowledgedAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
     io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.acknowledgedAtIso8601)
 
+fun endpointLastProbeWallClock(state: PulseBarEndpointSyncState): String =
+    io.github.kt.pulsebar.core.platform.formatWallClockTime(endpointLastProbeAtEpochMillis(state))
+
+fun endpointLastSuccessWallClock(state: PulseBarEndpointSyncState): String =
+    io.github.kt.pulsebar.core.platform.formatWallClockTime(endpointLastSuccessAtEpochMillis(state))
+
+fun endpointLastFailureWallClock(state: PulseBarEndpointSyncState): String =
+    io.github.kt.pulsebar.core.platform.formatWallClockTime(endpointLastFailureAtEpochMillis(state))
+
 class PulseBarSyncState(
     val enabled: Boolean,
     val enabledEndpointCount: Int,
@@ -263,6 +277,39 @@ class PulseBarLiveListenStats(
     /** True when the server has issued stream.start and wants the host to pump PCM. */
     val captureRequested: Boolean,
 )
+
+/**
+ * Send-bitrate, null when the client hasn't measured yet. `0.0` is the
+ * wire sentinel for "unknown".
+ */
+fun liveListenSendBitrateKbpsOrNull(stats: PulseBarLiveListenStats): Double? =
+    if (stats.sendBitrateKbps > 0.0) stats.sendBitrateKbps else null
+
+/** Human `Xs ago` / `now` age for the stat's last-send timestamp. */
+fun liveListenLastSendAge(stats: PulseBarLiveListenStats, nowMillis: Long): String =
+    io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatAge(
+        if (stats.lastSendAtMillis > 0L) stats.lastSendAtMillis else null, nowMillis,
+    )
+
+fun liveListenLastConnectedAge(stats: PulseBarLiveListenStats, nowMillis: Long): String =
+    io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatAge(
+        if (stats.lastConnectedAtMillis > 0L) stats.lastConnectedAtMillis else null, nowMillis,
+    )
+
+fun liveListenLastDisconnectedAge(stats: PulseBarLiveListenStats, nowMillis: Long): String =
+    io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatAge(
+        if (stats.lastDisconnectedAtMillis > 0L) stats.lastDisconnectedAtMillis else null, nowMillis,
+    )
+
+fun liveListenQueueRange(stats: PulseBarLiveListenStats): String =
+    io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatQueueRange(
+        stats.queuedFirstSequence, stats.queuedLastSequence,
+    )
+
+fun liveListenSendBitrateDisplay(stats: PulseBarLiveListenStats): String =
+    io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatOptionalDouble(
+        liveListenSendBitrateKbpsOrNull(stats),
+    )
 
 /**
  * Factory for [PulseBarLiveListenStats] default instances. Lets the Swift

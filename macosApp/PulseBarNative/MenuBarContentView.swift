@@ -127,7 +127,7 @@ struct MenuBarContentView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     MediaSeekBar(
                         progressSeconds: media.progressSeconds,
-                        durationSeconds: Double(media.durationSecondsOrNil ?? 0),
+                        durationSeconds: Double(mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0),
                         accentColor: .accentColor,
                         onSeek: { monitor.seekMedia(to: $0) }
                     )
@@ -168,7 +168,7 @@ struct MenuBarContentView: View {
     private func remainingClockText(_ media: PulseBarMedia) -> String {
         // Kotlin owns the clock formatting; menubar wants just the leading
         // negative-remaining segment ("-M:SS") without the " / total" suffix.
-        let duration = media.durationSecondsOrNil ?? 0
+        let duration = mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0
         let progress = Int(media.progressSeconds.rounded())
         let remaining = max(0, duration - progress)
         return "-\(Formatters.shared.formatClock(seconds: Int32(remaining)))"
@@ -356,7 +356,7 @@ struct PulseBarMediaCard: View {
 
             MediaSeekBar(
                 progressSeconds: media.progressSeconds,
-                durationSeconds: Double(media.durationSecondsOrNil ?? 0),
+                durationSeconds: Double(mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0),
                 accentColor: .accentColor,
                 onSeek: onSeek
             )
@@ -576,6 +576,6 @@ func pulseClock(_ seconds: Int) -> String {
 
 func pulseProgressText(_ media: PulseBarMedia) -> String {
     let progress = Int(media.progressSeconds.rounded())
-    let duration = media.durationSecondsOrNil ?? 0
+    let duration = mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0
     return "\(pulseClock(progress)) / \(pulseClock(duration))"
 }

@@ -117,7 +117,7 @@ final class NativeMonitorModel: ObservableObject {
     func startDebugNativeLiveListenStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
         liveListenCaptureModel.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
         let endpoints = liveListenEndpoints
-        let endpointList = endpoints.map { $0.baseURL.absoluteString }.joined(separator: ",")
+        let endpointList = endpoints.map { $0.baseUrl }.joined(separator: ",")
         let source = liveListenCaptureModel.selectedSource?.name ?? "nil"
         PulseNativeLog.info(.liveListenSession, "debug.stream.start endpoints=\(endpointList) source=\(source)")
         liveListenCaptureModel.updateEndpoints(endpoints)
@@ -199,11 +199,10 @@ final class NativeMonitorModel: ObservableObject {
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
-    var liveListenEndpoints: [LiveListenEndpointConfig] {
-        // Kotlin does the selection + trimming + URL normalization; Swift
-        // only wraps the already-normalized `baseUrl` string in a `URL`.
-        let resolved = PulseBarConfigFactory.shared.resolvedLiveListenEndpoints(draft: settingsDraft)
-        return resolved.compactMap { LiveListenEndpointConfig.fromResolved($0) }
+    var liveListenEndpoints: [LiveListenEndpointResolved] {
+        // Kotlin does the selection + trimming + URL normalization and also
+        // produces the displayName. Swift just passes the value through.
+        PulseBarConfigFactory.shared.resolvedLiveListenEndpoints(draft: settingsDraft)
     }
 
     func addEndpoint() {

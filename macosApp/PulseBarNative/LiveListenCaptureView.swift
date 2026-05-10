@@ -51,9 +51,9 @@ struct LiveListenCapturePane: View {
                 if !endpoints.isEmpty {
                     ForEach(endpoints, id: \.id) { endpoint in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(endpoint.name.isEmpty ? endpoint.baseURL.absoluteString : endpoint.name)
+                            Text(endpoint.displayName)
                                 .font(.caption.weight(.semibold))
-                            Text(endpoint.baseURL.absoluteString)
+                            Text(endpoint.baseUrl)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
@@ -134,7 +134,7 @@ struct LiveListenCapturePane: View {
                 }
 
                 HStack(spacing: 18) {
-                    StatPill(title: "ws kbps", value: formatOptional(model.publisherStats.sendBitrateKbpsOrNil))
+                    StatPill(title: "ws kbps", value: liveListenSendBitrateDisplay(stats: model.publisherStats))
                     StatPill(title: "chunks", value: "\(model.publisherStats.chunksSent)")
                     StatPill(title: "bytes", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.bytesSent), countStyle: .binary))
                     StatPill(title: "queued frames", value: "\(model.publisherStats.bufferedFrames)")
@@ -163,8 +163,8 @@ struct LiveListenCapturePane: View {
 
                 HStack(spacing: 18) {
                     StatPill(title: "next reconnect", value: model.nextReconnectText)
-                    StatPill(title: "queue seq", value: queueRange(model.publisherStats))
-                    StatPill(title: "last send", value: formatAge(model.publisherStats.lastSendAt))
+                    StatPill(title: "queue seq", value: liveListenQueueRange(stats: model.publisherStats))
+                    StatPill(title: "last send", value: liveListenLastSendAge(stats: model.publisherStats, nowMillis: nowMillis()))
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -172,8 +172,8 @@ struct LiveListenCapturePane: View {
                     DetailRow(title: "Audio capture permission", value: model.audioCapturePermissionStatus.rawValue)
                     DetailRow(title: "Current media", value: model.currentMediaLabel)
                     DetailRow(title: "Playback reason", value: model.mediaPlaybackReason)
-                    DetailRow(title: "Connected", value: formatAge(model.publisherStats.lastConnectedAt))
-                    DetailRow(title: "Disconnected", value: formatAge(model.publisherStats.lastDisconnectedAt))
+                    DetailRow(title: "Connected", value: liveListenLastConnectedAge(stats: model.publisherStats, nowMillis: nowMillis()))
+                    DetailRow(title: "Disconnected", value: liveListenLastDisconnectedAge(stats: model.publisherStats, nowMillis: nowMillis()))
                     DetailRow(title: "Last error", value: model.publisherStats.lastErrorMessage ?? "-")
                 }
 
@@ -197,12 +197,7 @@ struct LiveListenCapturePane: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(model.endpointPublisherStats) { endpoint in
-                    EndpointPublisherMeterRow(
-                        endpoint: endpoint,
-                        formatOptional: formatOptional,
-                        formatAge: formatAge,
-                        queueRange: queueRange
-                    )
+                    EndpointPublisherMeterRow(endpoint: endpoint)
                 }
             }
         }
@@ -280,19 +275,8 @@ struct LiveListenCapturePane: View {
         Formatters.shared.formatOptionalDouble(value: value)
     }
 
-    private func queueRange(_ stats: PulseBarLiveListenStats) -> String {
-        Formatters.shared.formatQueueRange(
-            firstSeq: stats.queuedFirstSequence,
-            lastSeq: stats.queuedLastSequence
-        )
-    }
-
-    private func formatAge(_ date: Date?) -> String {
-        let millis: Int64? = date.map { Int64($0.timeIntervalSince1970 * 1000.0) }
-        return Formatters.shared.formatAge(
-            fromMillis: millis,
-            nowMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
-        )
+    private func nowMillis() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000.0)
     }
 
     private func sourceLabel(_ source: LiveListenCaptureSource) -> String {
@@ -370,9 +354,6 @@ private struct StatPill: View {
 
 private struct EndpointPublisherMeterRow: View {
     let endpoint: LiveListenEndpointPublisherStatus
-    let formatOptional: (Double?) -> String
-    let formatAge: (Date?) -> String
-    let queueRange: (PulseBarLiveListenStats) -> String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -391,13 +372,13 @@ private struct EndpointPublisherMeterRow: View {
                 .truncationMode(.middle)
                 .textSelection(.enabled)
             HStack(spacing: 10) {
-                MiniStat(title: "kbps", value: formatOptional(endpoint.stats.sendBitrateKbpsOrNil))
+                MiniStat(title: "kbps", value: liveListenSendBitrateDisplay(stats: endpoint.stats))
                 MiniStat(title: "chunks", value: "\(endpoint.stats.chunksSent)")
                 MiniStat(title: "bytes", value: ByteCountFormatter.string(fromByteCount: Int64(endpoint.stats.bytesSent), countStyle: .binary))
                 MiniStat(title: "chunk ms", value: "\(endpoint.stats.chunkDurationMs)")
                 MiniStat(title: "queue", value: "\(endpoint.stats.queuedChunks)")
-                MiniStat(title: "seq", value: queueRange(endpoint.stats))
-                MiniStat(title: "last", value: formatAge(endpoint.stats.lastSendAt))
+                MiniStat(title: "seq", value: liveListenQueueRange(stats: endpoint.stats))
+                MiniStat(title: "last", value: liveListenLastSendAge(stats: endpoint.stats, nowMillis: Int64(Date().timeIntervalSince1970 * 1000.0)))
             }
             if let error = endpoint.stats.lastErrorMessage, !error.isEmpty {
                 Text(error)

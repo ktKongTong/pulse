@@ -303,9 +303,9 @@ private struct ConnectionDetailPane: View {
                             ("Status", status.title),
                             ("Enabled", endpoint.enabled ? "Enabled" : "Disabled"),
                             ("Reason", disconnectedReason),
-                            ("Last probe", formatWallClock(sync?.lastProbeAt)),
-                            ("Last success", formatWallClock(sync?.lastSuccessAt)),
-                            ("Last failure", formatWallClock(sync?.lastFailureAt)),
+                            ("Last probe", sync.map(endpointLastProbeWallClock) ?? "-"),
+                            ("Last success", sync.map(endpointLastSuccessWallClock) ?? "-"),
+                            ("Last failure", sync.map(endpointLastFailureWallClock) ?? "-"),
                         ])
                     }
 
@@ -915,11 +915,4 @@ private enum InstalledAppCatalog {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return [.other] + sorted
     }
-}
-
-private func formatWallClock(_ date: Date?) -> String {
-    let millis: Int64? = date.map { Int64($0.timeIntervalSince1970 * 1000.0) }
-    return ExportedKotlinPackages.io.github.kt.pulsebar.core.platform.formatWallClockTime(
-        epochMillis: millis
-    )
 }

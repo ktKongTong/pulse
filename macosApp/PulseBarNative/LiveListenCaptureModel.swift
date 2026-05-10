@@ -104,8 +104,7 @@ final class LiveListenCaptureModel: ObservableObject {
 
     var serverEndpointText: String {
         endpoints.map { endpoint in
-            let name = endpoint.name.isEmpty ? endpoint.baseURL.host ?? endpoint.baseURL.absoluteString : endpoint.name
-            return "\(name): \(endpoint.baseURL.absoluteString)"
+            "\(endpoint.displayName): \(endpoint.baseUrl)"
         }.joined(separator: "\n")
     }
 
@@ -126,7 +125,7 @@ final class LiveListenCaptureModel: ObservableObject {
 
     // MARK: - Internal state
 
-    private var endpoints: [LiveListenEndpointConfig] = []
+    private var endpoints: [LiveListenEndpointResolved] = []
     private var activeEndpointId: String?
     private let service = LiveListenCaptureService()
     private var meterTask: Task<Void, Never>?
@@ -241,7 +240,7 @@ final class LiveListenCaptureModel: ObservableObject {
 
     // MARK: - Public commands
 
-    func updateEndpoints(_ endpoints: [LiveListenEndpointConfig]) {
+    func updateEndpoints(_ endpoints: [LiveListenEndpointResolved]) {
         self.endpoints = endpoints
         if endpoints.isEmpty {
             if isCapturing {
@@ -426,7 +425,7 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     func startNativeStream(roomId: String = "live-listen:owner", deviceId: String = "owner") {
-        appendLiveListenCaptureDebugLog("startNativeStream called room=\(roomId) device=\(deviceId) isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoints=\(endpoints.map { $0.baseURL.absoluteString }.joined(separator: ","))")
+        appendLiveListenCaptureDebugLog("startNativeStream called room=\(roomId) device=\(deviceId) isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoints=\(endpoints.map { $0.baseUrl }.joined(separator: ","))")
         guard !isCapturing, let selectedSource else {
             appendLiveListenCaptureDebugLog("startNativeStream ignored isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil")")
             return
@@ -519,7 +518,7 @@ final class LiveListenCaptureModel: ObservableObject {
         worker.startLiveListen(
             roomId: roomId,
             deviceId: deviceId,
-            baseUrl: endpoint.baseURL.absoluteString,
+            baseUrl: endpoint.baseUrl,
             workspaceId: endpoint.workspaceId,
             apiKey: endpoint.apiKey,
             sampleRate: 48_000,
@@ -543,8 +542,8 @@ final class LiveListenCaptureModel: ObservableObject {
             let active = endpoint.id == activeEndpointId
             return LiveListenEndpointPublisherStatus(
                 id: endpoint.id,
-                name: endpoint.name.isEmpty ? endpoint.baseURL.host ?? endpoint.baseURL.absoluteString : endpoint.name,
-                endpointURL: endpoint.baseURL.absoluteString,
+                name: endpoint.displayName,
+                endpointURL: endpoint.baseUrl,
                 workspaceId: endpoint.workspaceId,
                 statusText: active ? publisherStats.statusText : "Standby",
                 stats: active ? publisherStats : idleStats
@@ -588,7 +587,8 @@ final class LiveListenCaptureModel: ObservableObject {
         activeConnected: Bool
     ) -> LiveListenStatusInput {
         let connectedAt = activeConnected ? Int32(1) : Int32(0)
-        let nextReconnectMillis: Int64? = stats.nextReconnectAt.map { Int64($0.timeIntervalSince1970 * 1000.0) }
+        // Kotlin uses `0L` as the "no scheduled reconnect" sentinel.
+        let nextReconnectMillis: Int64? = stats.nextReconnectAtMillis > 0 ? stats.nextReconnectAtMillis : nil
         return LiveListenStatusInput(
             connectionStateName: stats.connectionStateName,
             isSending: stats.isSending,
