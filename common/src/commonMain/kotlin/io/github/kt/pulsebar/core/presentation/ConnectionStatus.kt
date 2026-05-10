@@ -1,6 +1,7 @@
 package io.github.kt.pulsebar.core.presentation
 
 import io.github.kt.pulsebar.export.PulseBarEndpointConfig
+import io.github.kt.pulsebar.export.PulseBarEndpointDraft
 import io.github.kt.pulsebar.export.PulseBarEndpointSyncState
 
 /**
@@ -28,12 +29,41 @@ fun resolveConnectionStatus(
     endpoint: PulseBarEndpointConfig,
     sync: PulseBarEndpointSyncState?,
     manuallyDisconnected: Boolean,
+): ConnectionRuntimeStatus = resolveConnectionStatusRaw(
+    enabled = endpoint.enabled,
+    endpointUrl = endpoint.endpointUrl,
+    sync = sync,
+    manuallyDisconnected = manuallyDisconnected,
+)
+
+/**
+ * Draft-based variant used by the Swift Settings UI, which edits drafts
+ * rather than configs. Same logic as the [PulseBarEndpointConfig] form —
+ * named separately because Swift Export doesn't disambiguate Kotlin
+ * top-level overloads.
+ */
+fun resolveDraftConnectionStatus(
+    endpoint: PulseBarEndpointDraft,
+    sync: PulseBarEndpointSyncState?,
+    manuallyDisconnected: Boolean,
+): ConnectionRuntimeStatus = resolveConnectionStatusRaw(
+    enabled = endpoint.enabled,
+    endpointUrl = endpoint.endpointUrl,
+    sync = sync,
+    manuallyDisconnected = manuallyDisconnected,
+)
+
+private fun resolveConnectionStatusRaw(
+    enabled: Boolean,
+    endpointUrl: String,
+    sync: PulseBarEndpointSyncState?,
+    manuallyDisconnected: Boolean,
 ): ConnectionRuntimeStatus {
-    if (manuallyDisconnected || !endpoint.enabled) {
+    if (manuallyDisconnected || !enabled) {
         return ConnectionRuntimeStatus.Disconnected
     }
     if (sync == null) {
-        return if (endpoint.endpointUrl.trim().isEmpty()) {
+        return if (endpointUrl.trim().isEmpty()) {
             ConnectionRuntimeStatus.Disconnected
         } else {
             ConnectionRuntimeStatus.Reconnecting

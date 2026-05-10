@@ -213,13 +213,11 @@ private struct ConnectionPane: View {
     }
 
     private func connectionStatus(_ endpoint: PulseBarEndpointDraft) -> ConnectionRuntimeStatus {
-        if monitor.connectingEndpointIDs.contains(endpoint.id) {
-            return .reconnecting
-        }
-        return ConnectionRuntimeStatus.resolve(
+        resolveConnectionStatus(
             endpoint: endpoint,
             sync: monitor.syncState?.endpoints.first { $0.id == endpoint.id },
-            manuallyDisconnected: endpoint.disconnected
+            manuallyDisconnected: endpoint.disconnected,
+            isConnecting: monitor.connectingEndpointIDs.contains(endpoint.id)
         )
     }
 }
@@ -275,13 +273,11 @@ private struct ConnectionDetailPane: View {
     }
 
     private var status: ConnectionRuntimeStatus {
-        if monitor.connectingEndpointIDs.contains(endpoint.id) {
-            return .reconnecting
-        }
-        return ConnectionRuntimeStatus.resolve(
+        resolveConnectionStatus(
             endpoint: endpoint,
             sync: sync,
-            manuallyDisconnected: endpoint.disconnected
+            manuallyDisconnected: endpoint.disconnected,
+            isConnecting: isConnecting
         )
     }
 
@@ -385,7 +381,7 @@ private struct ConnectionDetailPane: View {
 
                 HStack(spacing: 10) {
                     Button(connectionActionTitle) {
-                        if status == .connected {
+                        if status == .Connected {
                             monitor.disconnectEndpoint(endpoint.id)
                         } else {
                             monitor.connectEndpoint(endpoint.id)
@@ -421,7 +417,7 @@ private struct ConnectionDetailPane: View {
     }
 
     private var connectionActionTitle: String {
-        EndpointPresentation.shared.connectionActionTitle(input: buildRuntimeInput(), status: status.kotlinRuntime)
+        EndpointPresentation.shared.connectionActionTitle(input: buildRuntimeInput(), status: status)
     }
 
     private var deliveryDetail: String {
@@ -741,62 +737,36 @@ private struct GlobalSettingsPane: View {
     }
 }
 
-private enum ConnectionRuntimeStatus: Equatable {
-    case connected
-    case disconnected
-    case reconnecting
+/// SwiftUI uses the Kotlin `ConnectionRuntimeStatus` enum directly; the
+/// platform-only extension adds SwiftUI's Color accessor.
+private typealias ConnectionRuntimeStatus = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.ConnectionRuntimeStatus
 
-    var title: String {
-        switch self {
-        case .connected: return "connected"
-        case .disconnected: return "disconnected"
-        case .reconnecting: return "reconnecting"
-        }
-    }
-
-    /// Bridge to the Kotlin presentation-core enum of the same name.
-    var kotlinRuntime: ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.ConnectionRuntimeStatus {
-        switch self {
-        case .connected: return .Connected
-        case .disconnected: return .Disconnected
-        case .reconnecting: return .Reconnecting
-        }
-    }
-
+extension ConnectionRuntimeStatus {
     var color: Color {
         switch self {
-        case .connected: return .green
-        case .disconnected: return .red
-        case .reconnecting: return .yellow
+        case .Connected: return .green
+        case .Disconnected: return .red
+        case .Reconnecting: return .yellow
+        default: return .secondary
         }
     }
+}
 
-    static func resolve(
-        endpoint: PulseBarEndpointDraft,
-        sync: PulseBarEndpointSyncState?,
-        manuallyDisconnected: Bool
-    ) -> ConnectionRuntimeStatus {
-        if manuallyDisconnected || !endpoint.enabled {
-            return .disconnected
-        }
-        guard let sync else {
-            return endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .disconnected : .reconnecting
-        }
-        if sync.status == "disabled" ||
-            sync.status == "disconnected" ||
-            sync.lastStatus == "skip:endpoint_disabled" ||
-            sync.lastStatus == "skip:endpoint_disconnected" {
-            return .reconnecting
-        }
-        switch sync.status {
-        case "healthy":
-            return .connected
-        case "probing", "checking_server", "idle":
-            return .reconnecting
-        default:
-            return .disconnected
-        }
-    }
+/// Swift entry point — delegates to the shared Kotlin resolver and layers
+/// the optimistic "connecting" state on top. The Kotlin function already
+/// knows how to read a `PulseBarEndpointDraft` directly.
+private func resolveConnectionStatus(
+    endpoint: PulseBarEndpointDraft,
+    sync: PulseBarEndpointSyncState?,
+    manuallyDisconnected: Bool,
+    isConnecting: Bool
+) -> ConnectionRuntimeStatus {
+    if isConnecting { return .Reconnecting }
+    return ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.resolveDraftConnectionStatus(
+        endpoint: endpoint,
+        sync: sync,
+        manuallyDisconnected: manuallyDisconnected
+    )
 }
 
 private struct DetailSection<Content: View>: View {

@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 @preconcurrency import PulseBarShared
 
+private typealias Formatters = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.PulseBarFormatters
+
 struct MediaGlassBackground: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
@@ -164,10 +166,12 @@ struct MenuBarContentView: View {
     }
 
     private func remainingClockText(_ media: PulseBarMedia) -> String {
+        // Kotlin owns the clock formatting; menubar wants just the leading
+        // negative-remaining segment ("-M:SS") without the " / total" suffix.
         let duration = media.durationSecondsOrNil ?? 0
         let progress = Int(media.progressSeconds.rounded())
         let remaining = max(0, duration - progress)
-        return "-\(pulseClock(remaining))"
+        return "-\(Formatters.shared.formatClock(seconds: Int32(remaining)))"
     }
 }
 
@@ -253,13 +257,7 @@ private struct UsageRowView: View {
     }
 
     private var durationText: String {
-        let total = Int(row.totalSeconds)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 { return String(format: "%dh %02dm", h, m) }
-        if m > 0 { return String(format: "%dm %02ds", m, s) }
-        return "\(s)s"
+        Formatters.shared.formatDurationHuman(seconds: Int32(row.totalSeconds))
     }
 }
 
@@ -573,11 +571,7 @@ private final class AppIconCache {
 }
 
 func pulseClock(_ seconds: Int) -> String {
-    let h = seconds / 3600
-    let m = (seconds % 3600) / 60
-    let s = seconds % 60
-    if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
-    return String(format: "%d:%02d", m, s)
+    Formatters.shared.formatClock(seconds: Int32(seconds))
 }
 
 func pulseProgressText(_ media: PulseBarMedia) -> String {

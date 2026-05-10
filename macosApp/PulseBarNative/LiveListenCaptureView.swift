@@ -1,6 +1,8 @@
 import SwiftUI
 @preconcurrency import PulseBarShared
 
+private typealias Formatters = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.PulseBarFormatters
+
 struct LiveListenCapturePane: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
 
@@ -285,11 +287,11 @@ struct LiveListenCapturePane: View {
     }
 
     private func formatAge(_ date: Date?) -> String {
-        guard let date else { return "-" }
-        let age = max(0, Date().timeIntervalSince(date))
-        if age < 1 { return "now" }
-        if age < 60 { return String(format: "%.0fs ago", age) }
-        return String(format: "%.0fm ago", age / 60)
+        let millis: Int64? = date.map { Int64($0.timeIntervalSince1970 * 1000.0) }
+        return Formatters.shared.formatAge(
+            fromMillis: millis,
+            nowMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
+        )
     }
 
     private func sourceLabel(_ source: LiveListenCaptureSource) -> String {
