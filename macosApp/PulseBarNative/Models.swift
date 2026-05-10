@@ -1,87 +1,13 @@
 import Foundation
 @preconcurrency import PulseBarShared
 
-struct MediaInfo: Equatable, Identifiable {
-    let id: String
-    let providerId: String
-    let source: String
-    let itemType: String
-    let title: String
-    let artist: String
-    let album: String?
-    let albumArtist: String?
-    let artworkURL: URL?
-    let progressSeconds: Double
-    let durationSeconds: Int?
-    let link: String?
-    let isPlaying: Bool
-    let trackNumber: Int?
-    let discNumber: Int?
-    let collectionId: String?
-    let collectionTitle: String?
-    let collectionLink: String?
-}
-
-struct InteractionItem: Identifiable, Equatable {
-    let id: String
-    let requestId: String
-    let status: String
-    let provider: String
-    let uri: String
-    let title: String?
-    let issuedAt: Date
-    let updatedAt: Date
-    let targetDeviceId: String?
-    let errorCode: String?
-    let errorMessage: String?
-}
-
-struct UsageRow: Identifiable, Equatable {
-    let id: String
-    let key: String
-    let label: String
-    let bundleId: String
-    let totalSeconds: Int
-}
-
-struct LiveSnapshot: Equatable {
-    let appName: String
-    let bundleId: String
-    let pageTitle: String?
-    let observedAt: Date
-    let media: MediaInfo?
-}
-
-struct EndpointSyncStatusInfo: Identifiable, Equatable {
-    let id: String
-    let name: String
-    let enabled: Bool
-    let transportName: String
-    let endpointURL: String
-    let status: String
-    let lastStatus: String?
-    let pendingCount: Int
-    let needsAttention: Bool
-    let lastAttemptAt: Date?
-    let lastProbeAt: Date?
-    let lastSuccessAt: Date?
-    let lastFailureAt: Date?
-    let lastErrorMessage: String?
-    let diagnosticMessage: String?
-    let acknowledgedSeqMax: Int
-    let acknowledgedAt: Date?
-}
-
-struct SyncStatusInfo: Equatable {
-    let enabled: Bool
-    let enabledEndpointCount: Int
-    let totalEndpointCount: Int
-    let status: String
-    let lastStatus: String?
-    let pendingCount: Int
-    let needsAttention: Bool
-    let endpoints: [EndpointSyncStatusInfo]
-}
+// MARK: - Swift-only UI state
+//
+// The Swift layer no longer mirrors any Kotlin class. SwiftUI binds straight
+// to `PulseBarSnapshot`, `PulseBarMedia`, `PulseBarUsageRow`, `PulseBarInteractionItem`,
+// `PulseBarSyncState`, `PulseBarEndpointSyncState`, `PulseBarConfigDraft`,
+// `PulseBarEndpointDraft`, `PulseBarLiveListenStats`. The only Swift types that
+// remain are things SwiftUI navigation state or AppKit-bound values need.
 
 enum DashboardSection: String, CaseIterable, Identifiable {
     case connection
@@ -107,161 +33,10 @@ enum DashboardSection: String, CaseIterable, Identifiable {
     }
 }
 
-enum TransportOption: String, CaseIterable, Identifiable {
-    case websocket = "WEBSOCKET"
-    case webhook = "WEBHOOK"
-    case httpBatch = "HTTP_BATCH"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .websocket: return "WebSocket"
-        case .webhook: return "Webhook"
-        case .httpBatch: return "HTTP Batch"
-        }
-    }
-}
-
-enum InteractionExecutionMode: String, CaseIterable, Identifiable {
-    case confirm = "CONFIRM"
-    case autoEnqueue = "AUTO_ENQUEUE"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .confirm: return "Confirm First"
-        case .autoEnqueue: return "Auto Enqueue"
-        }
-    }
-}
-
-enum InteractionPlaybackMode: String, CaseIterable, Identifiable {
-    case playNow = "PLAY_NOW"
-    case playNext = "PLAY_NEXT"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .playNow: return "Play Now"
-        case .playNext: return "Play Next"
-        }
-    }
-}
-
-struct SettingsDraft: Equatable {
-    var endpoints: [EndpointSettingsDraft] = [EndpointSettingsDraft.defaultPrimary()]
-    var idleThresholdSeconds = 300
-    var changeStabilityMillis = 1200
-    var heartbeatSeconds = 60
-    var appPollingMillis = 500
-    var pagePollingMillis = 2000
-    var mediaPollingMillis = 500
-    var allowWebInteractions = true
-    var interactionExecutionMode: InteractionExecutionMode = .confirm
-    var interactionPlaybackMode: InteractionPlaybackMode = .playNext
-}
-
-extension SettingsDraft {
-    /// Project the SwiftUI form state into the Kotlin-side primitive draft.
-    var kotlinDraft: PulseBarConfigDraft {
-        PulseBarConfigDraft(
-            endpoints: endpoints.map { $0.kotlinDraft },
-            idleThresholdSeconds: Int32(idleThresholdSeconds),
-            changeStabilityMillis: Int32(changeStabilityMillis),
-            heartbeatSeconds: Int32(heartbeatSeconds),
-            appPollingMillis: Int32(appPollingMillis),
-            pagePollingMillis: Int32(pagePollingMillis),
-            mediaPollingMillis: Int32(mediaPollingMillis),
-            allowWebInteractions: allowWebInteractions,
-            interactionExecutionModeName: interactionExecutionMode.rawValue,
-            interactionPlaybackModeName: interactionPlaybackMode.rawValue
-        )
-    }
-
-    /// Build a Swift SettingsDraft from the Kotlin draft (used when the
-    /// config observer emits a fresh value).
-    init(kotlinDraft: PulseBarConfigDraft) {
-        self.endpoints = kotlinDraft.endpoints.map { EndpointSettingsDraft(kotlin: $0) }
-        self.idleThresholdSeconds = Int(kotlinDraft.idleThresholdSeconds)
-        self.changeStabilityMillis = Int(kotlinDraft.changeStabilityMillis)
-        self.heartbeatSeconds = Int(kotlinDraft.heartbeatSeconds)
-        self.appPollingMillis = Int(kotlinDraft.appPollingMillis)
-        self.pagePollingMillis = Int(kotlinDraft.pagePollingMillis)
-        self.mediaPollingMillis = Int(kotlinDraft.mediaPollingMillis)
-        self.allowWebInteractions = kotlinDraft.allowWebInteractions
-        self.interactionExecutionMode = InteractionExecutionMode(rawValue: kotlinDraft.interactionExecutionModeName) ?? .confirm
-        self.interactionPlaybackMode = InteractionPlaybackMode(rawValue: kotlinDraft.interactionPlaybackModeName) ?? .playNext
-    }
-}
-
-struct EndpointSettingsDraft: Identifiable, Equatable {
-    var id: String
-    var name: String
-    var enabled: Bool
-    var disconnected: Bool
-    var transport: TransportOption
-    var endpointUrl: String
-    var workspaceId: String
-    var siteId: String
-    var apiKey: String
-    var batchWindowSeconds: Int
-
-    static func `default`(index: Int) -> EndpointSettingsDraft {
-        EndpointSettingsDraft(
-            id: UUID().uuidString.lowercased(),
-            name: "Endpoint \(index + 1)",
-            enabled: false,
-            disconnected: false,
-            transport: .websocket,
-            endpointUrl: "",
-            workspaceId: "",
-            siteId: "",
-            apiKey: "",
-            batchWindowSeconds: 15
-        )
-    }
-
-    static func defaultPrimary() -> EndpointSettingsDraft {
-        var draft = EndpointSettingsDraft.default(index: 0)
-        draft.name = "Primary endpoint"
-        return draft
-    }
-}
-
-extension EndpointSettingsDraft {
-    init(kotlin: PulseBarEndpointDraft) {
-        self.id = kotlin.id
-        self.name = kotlin.name
-        self.enabled = kotlin.enabled
-        self.disconnected = kotlin.disconnected
-        self.transport = TransportOption(rawValue: kotlin.transportName) ?? .websocket
-        self.endpointUrl = kotlin.endpointUrl
-        self.workspaceId = kotlin.workspaceId
-        self.siteId = kotlin.siteId
-        self.apiKey = kotlin.apiKey
-        self.batchWindowSeconds = Int(kotlin.batchWindowSeconds)
-    }
-
-    var kotlinDraft: PulseBarEndpointDraft {
-        PulseBarEndpointDraft(
-            id: id,
-            name: name,
-            enabled: enabled,
-            disconnected: disconnected,
-            transportName: transport.rawValue,
-            endpointUrl: endpointUrl,
-            workspaceId: workspaceId,
-            siteId: siteId,
-            apiKey: apiKey,
-            batchWindowSeconds: Int32(batchWindowSeconds)
-        )
-    }
-}
-
-
+/// Platform-typed Live Listen endpoint (carries a Swift `URL` that has been
+/// normalized via Kotlin's shared `normalizePulseBaseUrl`). The Kotlin side
+/// stores `endpointUrl: String`; this is the single adapter point between the
+/// string and the Swift URL used by `URLSession` for the device-session WS.
 struct LiveListenEndpointConfig: Equatable {
     let id: String
     let name: String
@@ -270,9 +45,10 @@ struct LiveListenEndpointConfig: Equatable {
     let apiKey: String
 }
 
-
 extension LiveListenEndpointConfig {
-    static func fromEndpointDraft(_ endpoint: EndpointSettingsDraft) -> LiveListenEndpointConfig? {
+    /// Build from the Kotlin-side `PulseBarEndpointDraft` that already comes
+    /// out of `PulseBarConfigFactory.liveListenCandidateEndpoints`.
+    static func fromKotlinDraft(_ endpoint: PulseBarEndpointDraft) -> LiveListenEndpointConfig? {
         let workspaceId = endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = endpoint.apiKey
         guard !workspaceId.isEmpty, !apiKey.isEmpty else { return nil }
@@ -290,21 +66,179 @@ extension LiveListenEndpointConfig {
             apiKey: apiKey
         )
     }
+}
 
-    /// Build from the Kotlin-side `PulseBarEndpointDraft` that already comes
-    /// out of `PulseBarConfigFactory.liveListenCandidateEndpoints`.
-    static func fromKotlinDraft(_ endpoint: PulseBarEndpointDraft) -> LiveListenEndpointConfig? {
-        let workspaceId = endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let apiKey = endpoint.apiKey
-        guard !workspaceId.isEmpty, !apiKey.isEmpty else { return nil }
-        guard let normalized = ExportedKotlinPackages.io.github.kt.pulsebar.core.platform.normalizePulseBaseUrl(raw: endpoint.endpointUrl),
-              let baseURL = URL(string: normalized) else { return nil }
-        return LiveListenEndpointConfig(
-            id: endpoint.id,
-            name: endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines),
-            baseURL: baseURL,
-            workspaceId: workspaceId,
-            apiKey: apiKey
+// MARK: - Kotlin-type extensions
+//
+// The Kotlin export types carry either sentinel primitives (`0L` millis,
+// `-1L` sequence, `""` empty) or string representations (ISO8601 dates,
+// `String?` URLs). These tiny computed properties lift those into natural
+// Swift types at the read site without allocating a parallel mirror struct.
+
+private let pulseIso8601Queue = DispatchQueue(label: "io.github.kt.pulsebar.iso8601")
+
+nonisolated(unsafe) private let pulseIso8601Formatter: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+
+/// Parses an ISO8601 string into a Swift `Date`. We synchronize access to
+/// the shared formatter by copying the string through it under a global
+/// dispatch queue — the Apple formatter is not `Sendable` and Swift 6
+/// strict concurrency rejects cross-actor use without a gate.
+private func pulseDate(fromIso8601 value: String?) -> Date? {
+    guard let value, !value.isEmpty else { return nil }
+    return pulseIso8601Queue.sync {
+        if let date = pulseIso8601Formatter.date(from: value) { return date }
+        // Fall back to non-fractional seconds (some server payloads drop them)
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: value)
+    }
+}
+
+// SwiftUI `ForEach` + `.tag(_:)` need these Kotlin classes to be Identifiable.
+extension PulseBarUsageRow: @retroactive Identifiable {
+    public var id: String { key }
+}
+
+extension PulseBarInteractionItem: @retroactive Identifiable {
+    public var id: String { requestId }
+}
+
+extension PulseBarEndpointSyncState: @retroactive Identifiable {
+    // `val id: String` already satisfies the protocol.
+}
+
+extension PulseBarEndpointDraft: @retroactive Identifiable {
+    // `var id: String` already satisfies the protocol.
+}
+
+// Cross-actor hop for Live Listen stats observer needs Sendable markings.
+extension PulseBarLiveListenStats: @retroactive @unchecked Sendable {}
+extension PulseBarMedia: @retroactive @unchecked Sendable {}
+extension PulseBarSnapshot: @retroactive @unchecked Sendable {}
+
+// MARK: - Kotlin snapshot / media lifts
+
+extension PulseBarSnapshot {
+    /// ISO8601 → Date. Falls back to `Date()` to match the pre-refactor
+    /// behaviour of `mapSnapshotObject` (the view code never observed a
+    /// nil case anyway).
+    var observedAt: Date {
+        pulseDate(fromIso8601: observedAtIso8601) ?? Date()
+    }
+}
+
+extension PulseBarMedia {
+    var artworkURL: URL? {
+        artworkUrl.flatMap(URL.init(string:))
+    }
+
+    /// `0` means "duration unknown" on the Kotlin side.
+    var durationSecondsOrNil: Int? {
+        let value = Int(durationSeconds)
+        return value > 0 ? value : nil
+    }
+
+    var trackNumberOrNil: Int? {
+        trackNumber.flatMap { $0 > 0 ? Int($0) : nil }
+    }
+
+    var discNumberOrNil: Int? {
+        discNumber.flatMap { $0 > 0 ? Int($0) : nil }
+    }
+
+    /// Stable identifier for SwiftUI animation / de-dup keys. Falls back to
+    /// a composite when the Kotlin `trackId` is nil (e.g. iTunes-style
+    /// providers without a persistent id).
+    var stableIdentifier: String {
+        trackId ?? "\(providerId)|\(title)|\(artist)"
+    }
+}
+
+// MARK: - Kotlin interaction / sync lifts
+
+extension PulseBarInteractionItem {
+    var issuedAt: Date { pulseDate(fromIso8601: issuedAtIso8601) ?? Date() }
+    var updatedAt: Date { pulseDate(fromIso8601: updatedAtIso8601) ?? Date() }
+}
+
+extension PulseBarEndpointSyncState {
+    var lastAttemptAt: Date? { pulseDate(fromIso8601: lastAttemptAtIso8601) }
+    var lastProbeAt: Date? { pulseDate(fromIso8601: lastProbeAtIso8601) }
+    var lastSuccessAt: Date? { pulseDate(fromIso8601: lastSuccessAtIso8601) }
+    var lastFailureAt: Date? { pulseDate(fromIso8601: lastFailureAtIso8601) }
+    var acknowledgedAt: Date? { pulseDate(fromIso8601: acknowledgedAtIso8601) }
+}
+
+// MARK: - Kotlin Live Listen stats lifts
+//
+// The Kotlin `PulseBarLiveListenStats` uses sentinel primitives (`0L` for
+// "never", `-1L` for "none") so Swift Export can avoid KotlinLong?. These
+// helpers turn the sentinels into Swift `Date?` / numeric optionals at the
+// read site.
+
+extension PulseBarLiveListenStats {
+    var lastConnectedAt: Date? { Self.dateOrNil(millis: lastConnectedAtMillis) }
+    var lastDisconnectedAt: Date? { Self.dateOrNil(millis: lastDisconnectedAtMillis) }
+    var nextReconnectAt: Date? { Self.dateOrNil(millis: nextReconnectAtMillis) }
+    var lastSendAt: Date? { Self.dateOrNil(millis: lastSendAtMillis) }
+
+    var sendBitrateKbpsOrNil: Double? {
+        sendBitrateKbps > 0 ? sendBitrateKbps : nil
+    }
+
+    var reconnectDelaySecondsOrNil: Double? {
+        reconnectDelaySeconds > 0 ? reconnectDelaySeconds : nil
+    }
+
+    var queuedFirstSequenceOrNil: Int64? {
+        queuedFirstSequence >= 0 ? queuedFirstSequence : nil
+    }
+
+    var queuedLastSequenceOrNil: Int64? {
+        queuedLastSequence >= 0 ? queuedLastSequence : nil
+    }
+
+    /// Parse the Kotlin enum from its string name. Going through
+    /// `connectionStateName` avoids Swift Export's `__externalRCRefUnsafe`
+    /// enum-getter path, which asserts at runtime when the enum is read
+    /// via a class getter.
+    var connectionStateParsed: PulseBarLiveListenConnectionState {
+        switch connectionStateName {
+        case "CONNECTING": return .CONNECTING
+        case "CONNECTED": return .CONNECTED
+        case "RECONNECTING": return .RECONNECTING
+        case "STOPPING": return .STOPPING
+        case "STOPPED": return .STOPPED
+        case "FAILED": return .FAILED
+        default: return .IDLE
+        }
+    }
+
+    private static func dateOrNil(millis: Int64) -> Date? {
+        millis > 0 ? Date(timeIntervalSince1970: TimeInterval(millis) / 1000.0) : nil
+    }
+}
+
+// MARK: - Kotlin draft construction helpers
+//
+// Thin wrappers around `PulseBarConfigFactory` so the SwiftUI layer doesn't
+// know about random-UUID generation or Kotlin-side default field values.
+
+extension PulseBarEndpointDraft {
+    static func pulseDefault(index: Int) -> PulseBarEndpointDraft {
+        PulseBarConfigFactory.shared.defaultEndpoint(
+            index: Int32(index),
+            randomId: UUID().uuidString.lowercased()
+        )
+    }
+
+    static func pulseDefaultPrimary() -> PulseBarEndpointDraft {
+        PulseBarConfigFactory.shared.defaultPrimaryEndpoint(
+            randomId: UUID().uuidString.lowercased()
         )
     }
 }

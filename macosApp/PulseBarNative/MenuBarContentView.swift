@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+@preconcurrency import PulseBarShared
 
 struct MediaGlassBackground: ViewModifier {
     func body(content: Content) -> some View {
@@ -78,7 +79,7 @@ struct MenuBarContentView: View {
         }
     }
 
-    private func mediaSection(_ media: MediaInfo) -> some View {
+    private func mediaSection(_ media: PulseBarMedia) -> some View {
         HStack(alignment: .center, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
                 AsyncImage(url: media.artworkURL) { image in
@@ -124,7 +125,7 @@ struct MenuBarContentView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     MediaSeekBar(
                         progressSeconds: media.progressSeconds,
-                        durationSeconds: Double(media.durationSeconds ?? 0),
+                        durationSeconds: Double(media.durationSecondsOrNil ?? 0),
                         accentColor: .accentColor,
                         onSeek: { monitor.seekMedia(to: $0) }
                     )
@@ -162,8 +163,8 @@ struct MenuBarContentView: View {
         }
     }
 
-    private func remainingClockText(_ media: MediaInfo) -> String {
-        let duration = media.durationSeconds ?? 0
+    private func remainingClockText(_ media: PulseBarMedia) -> String {
+        let duration = media.durationSecondsOrNil ?? 0
         let progress = Int(media.progressSeconds.rounded())
         let remaining = max(0, duration - progress)
         return "-\(pulseClock(remaining))"
@@ -171,7 +172,7 @@ struct MenuBarContentView: View {
 }
 
 struct PulseBarCurrentAppCard: View {
-    let snapshot: LiveSnapshot
+    let snapshot: PulseBarSnapshot
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -203,7 +204,8 @@ struct PulseBarCurrentAppCard: View {
 }
 
 private struct UsageRowView: View {
-    let row: UsageRow
+    let row: PulseBarUsageRow
+
     let totalSeconds: Int
 
     private var percentage: Int {
@@ -251,9 +253,10 @@ private struct UsageRowView: View {
     }
 
     private var durationText: String {
-        let h = row.totalSeconds / 3600
-        let m = (row.totalSeconds % 3600) / 60
-        let s = row.totalSeconds % 60
+        let total = Int(row.totalSeconds)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
         if h > 0 { return String(format: "%dh %02dm", h, m) }
         if m > 0 { return String(format: "%dm %02ds", m, s) }
         return "\(s)s"
@@ -284,7 +287,7 @@ private extension String {
 }
 
 struct PulseBarMediaCard: View {
-    let media: MediaInfo
+    let media: PulseBarMedia
     let onPrevious: () -> Void
     let onTogglePlayPause: () -> Void
     let onNext: () -> Void
@@ -355,7 +358,7 @@ struct PulseBarMediaCard: View {
 
             MediaSeekBar(
                 progressSeconds: media.progressSeconds,
-                durationSeconds: Double(media.durationSeconds ?? 0),
+                durationSeconds: Double(media.durationSecondsOrNil ?? 0),
                 accentColor: .accentColor,
                 onSeek: onSeek
             )
@@ -577,8 +580,8 @@ func pulseClock(_ seconds: Int) -> String {
     return String(format: "%d:%02d", m, s)
 }
 
-func pulseProgressText(_ media: MediaInfo) -> String {
+func pulseProgressText(_ media: PulseBarMedia) -> String {
     let progress = Int(media.progressSeconds.rounded())
-    let duration = media.durationSeconds ?? 0
+    let duration = media.durationSecondsOrNil ?? 0
     return "\(pulseClock(progress)) / \(pulseClock(duration))"
 }

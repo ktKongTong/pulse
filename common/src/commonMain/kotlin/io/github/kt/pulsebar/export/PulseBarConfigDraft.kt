@@ -8,33 +8,33 @@ package io.github.kt.pulsebar.export
  * about the enum name conventions.
  *
  * This is the type Swift's Settings UI (or any future desktop shell)
- * binds to. All fields are value-types the Swift export can round-trip
- * without externalRCRef reflection.
+ * binds to. Fields are `var` so SwiftUI can mutate them through
+ * `ReferenceWritableKeyPath` bindings without a Swift-side mirror struct.
  */
 class PulseBarEndpointDraft(
-    val id: String,
-    val name: String,
-    val enabled: Boolean,
-    val disconnected: Boolean,
-    val transportName: String,
-    val endpointUrl: String,
-    val workspaceId: String,
-    val siteId: String,
-    val apiKey: String,
-    val batchWindowSeconds: Int,
+    var id: String,
+    var name: String,
+    var enabled: Boolean,
+    var disconnected: Boolean,
+    var transportName: String,
+    var endpointUrl: String,
+    var workspaceId: String,
+    var siteId: String,
+    var apiKey: String,
+    var batchWindowSeconds: Int,
 )
 
 class PulseBarConfigDraft(
-    val endpoints: List<PulseBarEndpointDraft>,
-    val idleThresholdSeconds: Int,
-    val changeStabilityMillis: Int,
-    val heartbeatSeconds: Int,
-    val appPollingMillis: Int,
-    val pagePollingMillis: Int,
-    val mediaPollingMillis: Int,
-    val allowWebInteractions: Boolean,
-    val interactionExecutionModeName: String,
-    val interactionPlaybackModeName: String,
+    var endpoints: List<PulseBarEndpointDraft>,
+    var idleThresholdSeconds: Int,
+    var changeStabilityMillis: Int,
+    var heartbeatSeconds: Int,
+    var appPollingMillis: Int,
+    var pagePollingMillis: Int,
+    var mediaPollingMillis: Int,
+    var allowWebInteractions: Boolean,
+    var interactionExecutionModeName: String,
+    var interactionPlaybackModeName: String,
 )
 
 /**

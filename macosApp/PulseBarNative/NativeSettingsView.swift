@@ -56,7 +56,7 @@ struct PulseBarDashboardView: View {
 }
 
 private struct SidebarMediaSummary: View {
-    let media: MediaInfo?
+    let media: PulseBarMedia?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -102,13 +102,13 @@ private struct ConnectionPane: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
     @State private var selectedEndpointID: String?
     @State private var editingEndpointID: String?
-    @State private var deleteCandidate: EndpointSettingsDraft?
+    @State private var deleteCandidateID: String?
 
-    private var endpoints: [EndpointSettingsDraft] {
+    private var endpoints: [PulseBarEndpointDraft] {
         monitor.settingsDraft.endpoints
     }
 
-    private var selectedEndpoint: EndpointSettingsDraft? {
+    private var selectedEndpoint: PulseBarEndpointDraft? {
         guard let selectedEndpointID else { return endpoints.first }
         return endpoints.first { $0.id == selectedEndpointID } ?? endpoints.first
     }
@@ -125,7 +125,7 @@ private struct ConnectionPane: View {
                 ConnectionDetailPane(
                     endpoint: endpoint,
                     edit: { editingEndpointID = endpoint.id },
-                    delete: { deleteCandidate = endpoint }
+                    delete: { deleteCandidateID = endpoint.id }
                 )
                 .environmentObject(monitor)
             } else {
@@ -135,7 +135,7 @@ private struct ConnectionPane: View {
             }
         }
         .onAppear(perform: ensureSelection)
-        .onChange(of: monitor.settingsDraft.endpoints) { _, _ in ensureSelection() }
+        .onChange(of: monitor.settingsDraft.endpoints.map(\.id)) { _, _ in ensureSelection() }
         .sheet(
             isPresented: Binding(
                 get: { editingEndpointID != nil },
@@ -151,18 +151,18 @@ private struct ConnectionPane: View {
         .alert(
             "Delete Connection?",
             isPresented: Binding(
-                get: { deleteCandidate != nil },
-                set: { if !$0 { deleteCandidate = nil } }
+                get: { deleteCandidateID != nil },
+                set: { if !$0 { deleteCandidateID = nil } }
             )
         ) {
             Button("Delete", role: .destructive) {
-                if let id = deleteCandidate?.id {
+                if let id = deleteCandidateID {
                     monitor.removeEndpoint(id)
                 }
-                deleteCandidate = nil
+                deleteCandidateID = nil
             }
             Button("Cancel", role: .cancel) {
-                deleteCandidate = nil
+                deleteCandidateID = nil
             }
         } message: {
             Text("This removes the endpoint configuration from PulseBar.")
@@ -212,7 +212,7 @@ private struct ConnectionPane: View {
         }
     }
 
-    private func connectionStatus(_ endpoint: EndpointSettingsDraft) -> ConnectionRuntimeStatus {
+    private func connectionStatus(_ endpoint: PulseBarEndpointDraft) -> ConnectionRuntimeStatus {
         if monitor.connectingEndpointIDs.contains(endpoint.id) {
             return .reconnecting
         }
@@ -225,7 +225,7 @@ private struct ConnectionPane: View {
 }
 
 private struct ConnectionListItem: View {
-    let endpoint: EndpointSettingsDraft
+    let endpoint: PulseBarEndpointDraft
     let status: ConnectionRuntimeStatus
 
     private var displayName: String {
@@ -262,11 +262,11 @@ private struct ConnectionListItem: View {
 private struct ConnectionDetailPane: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
 
-    let endpoint: EndpointSettingsDraft
+    let endpoint: PulseBarEndpointDraft
     let edit: () -> Void
     let delete: () -> Void
 
-    private var sync: EndpointSyncStatusInfo? {
+    private var sync: PulseBarEndpointSyncState? {
         monitor.syncState?.endpoints.first { $0.id == endpoint.id }
     }
 
@@ -438,7 +438,7 @@ private struct ConnectionDetailPane: View {
 
         let model = monitor.liveListenCaptureModel
         if let liveListenEndpoint {
-            if liveListenEndpoint.stats.connectionState == .connected, model.isCapturing {
+            if liveListenEndpoint.stats.connectionStateParsed == .CONNECTED, model.isCapturing {
                 return liveListenEndpoint.stats.isSending ? "Sending audio packets" : model.statusText
             }
             return liveListenEndpoint.statusText
@@ -489,12 +489,26 @@ private struct EndpointEditorSheet: View {
                 .font(.title.weight(.semibold))
 
             VStack(alignment: .leading, spacing: 16) {
-                LabeledField(title: "Name", text: endpointBinding(\.name))
-                LabeledField(title: "Endpoint URL", text: endpointBinding(\.endpointUrl))
-                LabeledField(title: "Workspace ID", text: endpointBinding(\.workspaceId))
-                LabeledField(title: "Site ID", text: endpointBinding(\.siteId))
-                LabeledSecureField(title: "API Key", text: endpointBinding(\.apiKey))
-                NumericField(title: "Batch Window", unit: "s", value: endpointBinding(\.batchWindowSeconds))
+                LabeledField(title: "Name", text: endpointString(get: { $0.name }, set: { $0.name = $1 }))
+                LabeledField(title: "Endpoint URL", text: endpointString(get: { $0.endpointUrl }, set: { $0.endpointUrl = $1 }))
+                LabeledField(title: "Workspace ID", text: endpointString(get: { $0.workspaceId }, set: { $0.workspaceId = $1 }))
+                LabeledField(title: "Site ID", text: endpointString(get: { $0.siteId }, set: { $0.siteId = $1 }))
+                LabeledSecureField(title: "API Key", text: endpointString(get: { $0.apiKey }, set: { $0.apiKey = $1 }))
+                NumericField(
+                    title: "Batch Window",
+                    unit: "s",
+                    value: Binding<Int>(
+                        get: {
+                            guard let endpoint = monitor.settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return 15 }
+                            return Int(endpoint.batchWindowSeconds)
+                        },
+                        set: { value in
+                            guard let endpoint = monitor.settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
+                            endpoint.batchWindowSeconds = Int32(value)
+                            monitor.objectWillChange.send()
+                        }
+                    )
+                )
             }
 
             Spacer()
@@ -514,19 +528,21 @@ private struct EndpointEditorSheet: View {
         .padding(28)
     }
 
-    private func endpointBinding<T>(_ keyPath: WritableKeyPath<EndpointSettingsDraft, T>) -> Binding<T> {
-        Binding(
+    private func endpointString(
+        get: @escaping (PulseBarEndpointDraft) -> String,
+        set: @escaping (PulseBarEndpointDraft, String) -> Void
+    ) -> Binding<String> {
+        Binding<String>(
             get: {
-                guard let endpoint = monitor.settingsDraft.endpoints.first(where: { $0.id == endpointID }) else {
-                    return EndpointSettingsDraft.defaultPrimary()[keyPath: keyPath]
-                }
-                return endpoint[keyPath: keyPath]
+                guard let endpoint = monitor.settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return "" }
+                return get(endpoint)
             },
             set: { value in
-                guard let index = monitor.settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
-                    return
-                }
-                monitor.settingsDraft.endpoints[index][keyPath: keyPath] = value
+                guard let endpoint = monitor.settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
+                set(endpoint, value)
+                // `settingsDraft` is a Kotlin class reference — @Published won't
+                // fire on internal field mutations, so nudge SwiftUI manually.
+                monitor.objectWillChange.send()
             }
         )
     }
@@ -682,7 +698,13 @@ private struct GlobalSettingsPane: View {
                     NumericField(
                         title: "App Sampling Interval",
                         unit: "ms",
-                        value: draftBinding(\.appPollingMillis)
+                        value: Binding<Int>(
+                            get: { Int(monitor.settingsDraft.appPollingMillis) },
+                            set: {
+                                monitor.settingsDraft.appPollingMillis = Int32($0)
+                                monitor.objectWillChange.send()
+                            }
+                        )
                     )
                 }
 
@@ -690,7 +712,13 @@ private struct GlobalSettingsPane: View {
                     NumericField(
                         title: "Switch Detection Stability",
                         unit: "ms",
-                        value: draftBinding(\.changeStabilityMillis)
+                        value: Binding<Int>(
+                            get: { Int(monitor.settingsDraft.changeStabilityMillis) },
+                            set: {
+                                monitor.settingsDraft.changeStabilityMillis = Int32($0)
+                                monitor.objectWillChange.send()
+                            }
+                        )
                     )
                 }
 
@@ -710,13 +738,6 @@ private struct GlobalSettingsPane: View {
             .padding(32)
             .frame(maxWidth: 760, alignment: .leading)
         }
-    }
-
-    private func draftBinding<T>(_ keyPath: WritableKeyPath<SettingsDraft, T>) -> Binding<T> {
-        Binding(
-            get: { monitor.settingsDraft[keyPath: keyPath] },
-            set: { monitor.settingsDraft[keyPath: keyPath] = $0 }
-        )
     }
 }
 
@@ -751,8 +772,8 @@ private enum ConnectionRuntimeStatus: Equatable {
     }
 
     static func resolve(
-        endpoint: EndpointSettingsDraft,
-        sync: EndpointSyncStatusInfo?,
+        endpoint: PulseBarEndpointDraft,
+        sync: PulseBarEndpointSyncState?,
         manuallyDisconnected: Bool
     ) -> ConnectionRuntimeStatus {
         if manuallyDisconnected || !endpoint.enabled {

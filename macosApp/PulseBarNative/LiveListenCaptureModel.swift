@@ -37,8 +37,10 @@ protocol LiveListenBridge: AnyObject, Sendable {
     )
     /// Observer plumbing needs a bit more ceremony because Kotlin delivers
     /// values on Dispatchers.Default. Implementations must hop onto main.
+    /// We hand the Kotlin stats class through directly — Swift consumes it
+    /// via the computed-property extensions on `PulseBarLiveListenStats`.
     func observeLiveListenStats(
-        onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
+        onSnapshot: @escaping @MainActor (PulseBarLiveListenStats) -> Void,
         cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
     )
 }
@@ -49,12 +51,11 @@ protocol LiveListenBridge: AnyObject, Sendable {
 extension PulseBarBridge: @retroactive @unchecked Sendable {}
 extension PulseBarBridge: LiveListenBridge {
     func observeLiveListenStats(
-        onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
+        onSnapshot: @escaping @MainActor (PulseBarLiveListenStats) -> Void,
         cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
     ) {
         let cancellable = observeLiveListenStats { stats in
-            let mapped = LiveListenPublisherStats(from: stats)
-            DispatchQueue.main.async { MainActor.assumeIsolated { onSnapshot(mapped) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { onSnapshot(stats) } }
         }
         DispatchQueue.main.async { MainActor.assumeIsolated { cancellableReceived(cancellable) } }
     }
@@ -81,7 +82,7 @@ final class LiveListenCaptureModel: ObservableObject {
     @Published private(set) var lastSampleURL: URL?
     @Published private(set) var errorMessage: String?
     @Published private(set) var publisherStatusText = "Publisher idle"
-    @Published private(set) var publisherStats = LiveListenPublisherStats()
+    @Published private(set) var publisherStats: PulseBarLiveListenStats = PulseBarLiveListenStatsFactory.shared.idle()
     @Published private(set) var endpointPublisherStats: [LiveListenEndpointPublisherStatus] = []
     @Published private(set) var mediaStreamPermission: LiveListenMediaStreamPermission = .allow
     @Published private(set) var mediaPlaybackStatus: LiveListenMediaPlaybackStatus = .paused
@@ -131,7 +132,7 @@ final class LiveListenCaptureModel: ObservableObject {
     private var meterTask: Task<Void, Never>?
     private var startupPermissionTask: Task<Void, Never>?
     private var lastPublishedMediaSignature: String?
-    private var currentMedia: MediaInfo?
+    private var currentMedia: PulseBarMedia?
     private let worker: LiveListenBridge
     private var statsCancellable: PulseBarCancellable?
 
@@ -162,7 +163,7 @@ final class LiveListenCaptureModel: ObservableObject {
         }
     }
 
-    private func applyStatsSnapshot(_ snapshot: LiveListenPublisherStats) {
+    private func applyStatsSnapshot(_ snapshot: PulseBarLiveListenStats) {
         let previouslyRequested = publisherStats.captureRequested
         publisherStats = snapshot
         updateAggregatePublisherState()
@@ -173,7 +174,7 @@ final class LiveListenCaptureModel: ObservableObject {
             appendLiveListenCaptureDebugLog("server requested capture stop")
             stopCapture()
         }
-        if isCapturing && snapshot.connectionState == .failed {
+        if isCapturing && snapshot.connectionStateParsed == .FAILED {
             appendLiveListenCaptureDebugLog("live listen failed during capture")
             stopCapture()
             statusText = "Live Listen connection failed"
@@ -304,7 +305,7 @@ final class LiveListenCaptureModel: ObservableObject {
         }
     }
 
-    func updateCurrentMedia(_ media: MediaInfo?) {
+    func updateCurrentMedia(_ media: PulseBarMedia?) {
         let signature = Self.mediaSignature(media)
         guard signature != lastPublishedMediaSignature else { return }
         lastPublishedMediaSignature = signature
@@ -324,12 +325,12 @@ final class LiveListenCaptureModel: ObservableObject {
         if let media, media.isPlaying {
             worker.updateLiveListenMedia(
                 providerId: media.providerId,
-                trackId: media.id,
+                trackId: media.trackId,
                 title: media.title,
                 artist: media.artist,
                 album: media.album,
-                artworkUrl: media.artworkURL?.absoluteString,
-                durationSeconds: Double(media.durationSeconds ?? 0),
+                artworkUrl: media.artworkUrl,
+                durationSeconds: Double(media.durationSeconds),
                 isPlaying: media.isPlaying
             )
         } else {
@@ -537,6 +538,7 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     private func updateAggregatePublisherState() {
+        let idleStats = PulseBarLiveListenStatsFactory.shared.idle()
         endpointPublisherStats = endpoints.map { endpoint in
             let active = endpoint.id == activeEndpointId
             return LiveListenEndpointPublisherStatus(
@@ -545,20 +547,20 @@ final class LiveListenCaptureModel: ObservableObject {
                 endpointURL: endpoint.baseURL.absoluteString,
                 workspaceId: endpoint.workspaceId,
                 statusText: active ? publisherStats.statusText : "Standby",
-                stats: active ? publisherStats : LiveListenPublisherStats()
+                stats: active ? publisherStats : idleStats
             )
         }
         if endpoints.isEmpty {
             publisherStatusText = "Configure a Live Listen endpoint in Settings"
         } else {
-            let activeActive = publisherStats.connectionState == .connected ? 1 : 0
+            let activeActive = publisherStats.connectionStateParsed == .CONNECTED ? 1 : 0
             publisherStatusText = "Live Listen device sessions connected \(activeActive)/\(endpoints.count)"
         }
     }
 
     private static func streamStatusText(
         sourceName: String,
-        publisherStats: LiveListenPublisherStats
+        publisherStats: PulseBarLiveListenStats
     ) -> String {
         LiveListenPresentation.shared.streamStatusText(
             sourceName: sourceName,
@@ -568,7 +570,7 @@ final class LiveListenCaptureModel: ObservableObject {
 
     /// Builds the primitive input the Kotlin presentation helpers need.
     private func buildStatusInput() -> LiveListenStatusInput {
-        let activeConnected = publisherStats.connectionState == .connected && activeEndpointId != nil
+        let activeConnected = publisherStats.connectionStateParsed == .CONNECTED && activeEndpointId != nil
         return Self.makeStatusInput(
             stats: publisherStats,
             isCapturing: isCapturing,
@@ -579,7 +581,7 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     private static func makeStatusInput(
-        stats: LiveListenPublisherStats,
+        stats: PulseBarLiveListenStats,
         isCapturing: Bool,
         capturedFrames: Int64,
         endpointCount: Int32,
@@ -588,7 +590,7 @@ final class LiveListenCaptureModel: ObservableObject {
         let connectedAt = activeConnected ? Int32(1) : Int32(0)
         let nextReconnectMillis: Int64? = stats.nextReconnectAt.map { Int64($0.timeIntervalSince1970 * 1000.0) }
         return LiveListenStatusInput(
-            connectionStateName: stats.connectionState.rawValue.uppercased(),
+            connectionStateName: stats.connectionStateName,
             isSending: stats.isSending,
             isCapturing: isCapturing,
             capturedFrames: capturedFrames,
@@ -598,17 +600,17 @@ final class LiveListenCaptureModel: ObservableObject {
         )
     }
 
-    private static func mediaSignature(_ media: MediaInfo?) -> String {
+    private static func mediaSignature(_ media: PulseBarMedia?) -> String {
         guard let media else { return "none" }
         return [
-            media.id,
+            media.stableIdentifier,
             media.providerId,
             media.source,
             media.title,
             media.artist,
             media.album ?? "",
-            media.link ?? "",
-            String(media.durationSeconds ?? 0),
+            media.linkUrl ?? "",
+            String(media.durationSeconds),
             media.isPlaying ? "playing" : "paused",
         ].joined(separator: "|")
     }
@@ -618,111 +620,27 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 }
 
-// MARK: - SwiftUI-facing stat types
+// MARK: - SwiftUI-facing per-endpoint status
 
-/// Mirror of the Kotlin `PulseBarLiveListenStats` class adapted for Swift
-/// presentation code. Keeping the shape stable means the existing views don't
-/// need to know about the Kotlin types directly.
-struct LiveListenPublisherStats: Equatable, Sendable {
-    var connectionState: LiveListenPublisherConnectionState = .idle
-    var webSocketURL: String?
-    var lastConnectedAt: Date?
-    var lastDisconnectedAt: Date?
-    var nextReconnectAt: Date?
-    var reconnectDelaySeconds: Double?
-    var lastSendAt: Date?
-    var lastErrorMessage: String?
-    var acceptedFrames: UInt64 = 0
-    var acceptedBytes: UInt64 = 0
-    var droppedFrames: UInt64 = 0
-    var droppedChunks: UInt64 = 0
-    var lastSequence: UInt64 = 0
-    var bufferedFrames: UInt64 = 0
-    var queuedChunks: Int = 0
-    var queuedBytes: UInt64 = 0
-    var queuedFirstSequence: UInt64?
-    var queuedLastSequence: UInt64?
-    var isSending: Bool = false
-    var maxQueuedChunks: Int = 0
-    var reconnectCount: UInt64 = 0
-    var reconnectAttempt: Int = 0
-    var chunksSent: UInt64 = 0
-    var bytesSent: UInt64 = 0
-    var sendBitrateKbps: Double?
-    var lastChunkBytes: UInt64 = 0
-    var chunkDurationMs: Int = 500
-    var statusText: String = "Live Listen client idle"
-    var captureRequested: Bool = false
-}
-
-enum LiveListenPublisherConnectionState: String, Sendable, Equatable {
-    case idle
-    case connecting
-    case connected
-    case reconnecting
-    case stopping
-    case stopped
-    case failed
-}
-
-extension LiveListenPublisherStats {
-    init(from stats: PulseBarLiveListenStats) {
-        // Parse the enum via `connectionStateName` — the Kotlin enum
-        // exported through Swift Export's __externalRCRefUnsafe path
-        // asserts at runtime when read via a class getter (the ref
-        // doesn't match any cached case pointer). String lookup dodges
-        // that issue entirely.
-        self.connectionState = switch stats.connectionStateName {
-            case "CONNECTING": .connecting
-            case "CONNECTED": .connected
-            case "RECONNECTING": .reconnecting
-            case "STOPPING": .stopping
-            case "STOPPED": .stopped
-            case "FAILED": .failed
-            default: .idle
-        }
-        self.webSocketURL = stats.webSocketUrl
-        self.lastConnectedAt = LiveListenPublisherStats.dateOrNil(millis: stats.lastConnectedAtMillis)
-        self.lastDisconnectedAt = LiveListenPublisherStats.dateOrNil(millis: stats.lastDisconnectedAtMillis)
-        self.nextReconnectAt = LiveListenPublisherStats.dateOrNil(millis: stats.nextReconnectAtMillis)
-        self.reconnectDelaySeconds = stats.reconnectDelaySeconds > 0 ? stats.reconnectDelaySeconds : nil
-        self.lastSendAt = LiveListenPublisherStats.dateOrNil(millis: stats.lastSendAtMillis)
-        self.lastErrorMessage = stats.lastErrorMessage
-        self.acceptedFrames = UInt64(max(0, stats.acceptedFrames))
-        self.acceptedBytes = UInt64(max(0, stats.acceptedBytes))
-        self.droppedFrames = UInt64(max(0, stats.droppedFrames))
-        self.droppedChunks = UInt64(max(0, stats.droppedChunks))
-        self.lastSequence = UInt64(max(0, stats.lastSequence))
-        self.bufferedFrames = UInt64(max(0, stats.bufferedFrames))
-        self.queuedChunks = Int(stats.queuedChunks)
-        self.queuedBytes = UInt64(max(0, stats.queuedBytes))
-        self.queuedFirstSequence = stats.queuedFirstSequence >= 0 ? UInt64(stats.queuedFirstSequence) : nil
-        self.queuedLastSequence = stats.queuedLastSequence >= 0 ? UInt64(stats.queuedLastSequence) : nil
-        self.isSending = stats.isSending
-        self.maxQueuedChunks = Int(stats.maxQueuedChunks)
-        self.reconnectCount = UInt64(max(0, stats.reconnectCount))
-        self.reconnectAttempt = Int(stats.reconnectAttempt)
-        self.chunksSent = UInt64(max(0, stats.chunksSent))
-        self.bytesSent = UInt64(max(0, stats.bytesSent))
-        self.sendBitrateKbps = stats.sendBitrateKbps > 0 ? stats.sendBitrateKbps : nil
-        self.lastChunkBytes = UInt64(max(0, stats.lastChunkBytes))
-        self.chunkDurationMs = Int(stats.chunkDurationMs)
-        self.statusText = stats.statusText
-        self.captureRequested = stats.captureRequested
-    }
-
-    private static func dateOrNil(millis: Int64) -> Date? {
-        millis > 0 ? Date(timeIntervalSince1970: TimeInterval(millis) / 1000.0) : nil
-    }
-}
-
+/// Platform-only aggregate used by the multi-endpoint capture pane. Carries
+/// a full `PulseBarLiveListenStats` (Kotlin class) plus the platform-level
+/// display fields (endpoint URL / workspace id / human-readable name).
 struct LiveListenEndpointPublisherStatus: Identifiable, Equatable {
     let id: String
     let name: String
     let endpointURL: String
     let workspaceId: String
     let statusText: String
-    let stats: LiveListenPublisherStats
+    let stats: PulseBarLiveListenStats
+
+    static func == (lhs: LiveListenEndpointPublisherStatus, rhs: LiveListenEndpointPublisherStatus) -> Bool {
+        lhs.id == rhs.id &&
+            lhs.name == rhs.name &&
+            lhs.endpointURL == rhs.endpointURL &&
+            lhs.workspaceId == rhs.workspaceId &&
+            lhs.statusText == rhs.statusText &&
+            lhs.stats === rhs.stats
+    }
 }
 
 enum LiveListenMediaStreamPermission: String {

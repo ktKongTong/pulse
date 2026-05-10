@@ -1,4 +1,5 @@
 import SwiftUI
+@preconcurrency import PulseBarShared
 
 struct LiveListenCapturePane: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
@@ -131,7 +132,7 @@ struct LiveListenCapturePane: View {
                 }
 
                 HStack(spacing: 18) {
-                    StatPill(title: "ws kbps", value: formatOptional(model.publisherStats.sendBitrateKbps))
+                    StatPill(title: "ws kbps", value: formatOptional(model.publisherStats.sendBitrateKbpsOrNil))
                     StatPill(title: "chunks", value: "\(model.publisherStats.chunksSent)")
                     StatPill(title: "bytes", value: ByteCountFormatter.string(fromByteCount: Int64(model.publisherStats.bytesSent), countStyle: .binary))
                     StatPill(title: "queued frames", value: "\(model.publisherStats.bufferedFrames)")
@@ -278,8 +279,8 @@ struct LiveListenCapturePane: View {
         return value.formatted(.number.precision(.fractionLength(1)))
     }
 
-    private func queueRange(_ stats: LiveListenPublisherStats) -> String {
-        guard let first = stats.queuedFirstSequence, let last = stats.queuedLastSequence else { return "-" }
+    private func queueRange(_ stats: PulseBarLiveListenStats) -> String {
+        guard let first = stats.queuedFirstSequenceOrNil, let last = stats.queuedLastSequenceOrNil else { return "-" }
         return first == last ? "#\(first)" : "#\(first)-#\(last)"
     }
 
@@ -368,7 +369,7 @@ private struct EndpointPublisherMeterRow: View {
     let endpoint: LiveListenEndpointPublisherStatus
     let formatOptional: (Double?) -> String
     let formatAge: (Date?) -> String
-    let queueRange: (LiveListenPublisherStats) -> String
+    let queueRange: (PulseBarLiveListenStats) -> String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -376,7 +377,7 @@ private struct EndpointPublisherMeterRow: View {
                 Text(endpoint.name)
                     .font(.caption.weight(.semibold))
                 Spacer()
-                Text(endpoint.stats.connectionState.rawValue)
+                Text(endpoint.stats.connectionStateName)
                     .font(.caption.monospaced())
                     .foregroundStyle(connectionColor)
             }
@@ -387,7 +388,7 @@ private struct EndpointPublisherMeterRow: View {
                 .truncationMode(.middle)
                 .textSelection(.enabled)
             HStack(spacing: 10) {
-                MiniStat(title: "kbps", value: formatOptional(endpoint.stats.sendBitrateKbps))
+                MiniStat(title: "kbps", value: formatOptional(endpoint.stats.sendBitrateKbpsOrNil))
                 MiniStat(title: "chunks", value: "\(endpoint.stats.chunksSent)")
                 MiniStat(title: "bytes", value: ByteCountFormatter.string(fromByteCount: Int64(endpoint.stats.bytesSent), countStyle: .binary))
                 MiniStat(title: "chunk ms", value: "\(endpoint.stats.chunkDurationMs)")
@@ -413,12 +414,12 @@ private struct EndpointPublisherMeterRow: View {
     }
 
     private var connectionColor: Color {
-        switch endpoint.stats.connectionState {
-        case .connected:
+        switch endpoint.stats.connectionStateParsed {
+        case .CONNECTED:
             return .green
-        case .connecting, .reconnecting:
+        case .CONNECTING, .RECONNECTING:
             return .orange
-        case .failed:
+        case .FAILED:
             return .red
         default:
             return .secondary

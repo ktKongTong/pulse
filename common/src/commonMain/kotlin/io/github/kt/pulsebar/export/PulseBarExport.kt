@@ -238,6 +238,46 @@ class PulseBarLiveListenStats(
     val captureRequested: Boolean,
 )
 
+/**
+ * Factory for [PulseBarLiveListenStats] default instances. Lets the Swift
+ * shell avoid constructing a 30-field class inline for the "no stats yet"
+ * placeholder state.
+ */
+object PulseBarLiveListenStatsFactory {
+    fun idle(): PulseBarLiveListenStats = PulseBarLiveListenStats(
+        connectionState = PulseBarLiveListenConnectionState.IDLE,
+        connectionStateName = PulseBarLiveListenConnectionState.IDLE.name,
+        webSocketUrl = null,
+        lastConnectedAtMillis = 0L,
+        lastDisconnectedAtMillis = 0L,
+        nextReconnectAtMillis = 0L,
+        reconnectDelaySeconds = 0.0,
+        lastSendAtMillis = 0L,
+        lastErrorMessage = null,
+        acceptedFrames = 0L,
+        acceptedBytes = 0L,
+        droppedFrames = 0L,
+        droppedChunks = 0L,
+        lastSequence = 0L,
+        bufferedFrames = 0L,
+        queuedChunks = 0,
+        queuedBytes = 0L,
+        queuedFirstSequence = -1L,
+        queuedLastSequence = -1L,
+        isSending = false,
+        maxQueuedChunks = 0,
+        reconnectCount = 0L,
+        reconnectAttempt = 0,
+        chunksSent = 0L,
+        bytesSent = 0L,
+        sendBitrateKbps = 0.0,
+        lastChunkBytes = 0L,
+        chunkDurationMs = 500,
+        statusText = "Live Listen client idle",
+        captureRequested = false,
+    )
+}
+
 expect class PulseBarBridge() {
     fun readMenuState(): PulseBarMenuState
     fun readConfig(): PulseBarConfig

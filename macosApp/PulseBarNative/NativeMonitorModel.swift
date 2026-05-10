@@ -5,16 +5,27 @@ import Foundation
 
 @MainActor
 final class NativeMonitorModel: ObservableObject {
-    @Published private(set) var snapshot: LiveSnapshot?
-    @Published private(set) var todayStats: [UsageRow] = []
+    @Published private(set) var snapshot: PulseBarSnapshot?
+    @Published private(set) var todayStats: [PulseBarUsageRow] = []
     @Published private(set) var todayTotalSeconds: Int = 0
-    @Published private(set) var interactionItems: [InteractionItem] = []
+    @Published private(set) var interactionItems: [PulseBarInteractionItem] = []
     @Published private(set) var interactionPendingCount: Int = 0
     @Published private(set) var interactionLastStatus: String?
-    @Published private(set) var syncState: SyncStatusInfo?
+    @Published private(set) var syncState: PulseBarSyncState?
     @Published private(set) var connectingEndpointIDs: Set<String> = []
     @Published private(set) var isMonitoring = false
-    @Published var settingsDraft = SettingsDraft()
+    @Published var settingsDraft: PulseBarConfigDraft = PulseBarConfigDraft(
+        endpoints: [PulseBarEndpointDraft.pulseDefaultPrimary()],
+        idleThresholdSeconds: 300,
+        changeStabilityMillis: 1200,
+        heartbeatSeconds: 60,
+        appPollingMillis: 500,
+        pagePollingMillis: 2000,
+        mediaPollingMillis: 500,
+        allowWebInteractions: true,
+        interactionExecutionModeName: "CONFIRM",
+        interactionPlaybackModeName: "PLAY_NEXT"
+    )
     @Published var isPaused = false
     @Published var dashboardSelection: DashboardSection = .connection
 
@@ -25,13 +36,6 @@ final class NativeMonitorModel: ObservableObject {
     private var cancellables: [PulseBarCancellable] = []
     let liveListenCaptureModel: LiveListenCaptureModel
     private var subscribed = false
-
-    nonisolated(unsafe) private static let iso8601Formatter = ISO8601DateFormatter()
-    private static let dayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
 
     init() {
         self.bridge = PulseBarBridge()
@@ -85,7 +89,7 @@ final class NativeMonitorModel: ObservableObject {
         subscribed = true
 
         // Kotlin delivers observer callbacks on Dispatchers.Default. Use the
-        // nonisolated subscribe helpers below so the closure captured by
+        // nonisolated subscribe helpers above so the closure captured by
         // Kotlin isn't inherited-@MainActor (which would trip Swift 6 at
         // runtime), then hop to @MainActor explicitly.
         cancellables.append(Self.subscribeMenu(bridge: bridge, onMain: { [weak self] state in self?.applyMenuStateUpdate(state) }))
@@ -161,60 +165,36 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
-        let mapped = Self.mapSnapshotObject(state.snapshot)
-        applySnapshotIfNeeded(mapped)
-        liveListenCaptureModel.updateCurrentMedia(mapped?.media)
+        // Kotlin's menu state flow is a StateFlow that already de-dupes on
+        // structural equality. We re-publish unconditionally; SwiftUI
+        // diffing handles the rest.
+        snapshot = state.snapshot
+        liveListenCaptureModel.updateCurrentMedia(state.snapshot?.media)
     }
 
     private func applyTodayStatsUpdate(_ stats: PulseBarTodayStats) {
-        let rows = stats.topRows.map { row in
-            Self.mapUsageRow(
-                key: row.key,
-                label: row.label,
-                bundleId: row.bundleId,
-                totalSeconds: Int(row.totalSeconds),
-            )
-        }
-        if todayStats != rows {
-            todayStats = rows
-        }
-        let total = Int(stats.totalSeconds)
-        if todayTotalSeconds != total {
-            todayTotalSeconds = total
-        }
+        todayStats = stats.topRows
+        todayTotalSeconds = Int(stats.totalSeconds)
     }
 
     private func applyConfigUpdate(_ config: PulseBarConfig) {
-        let draft = SettingsDraft(kotlinDraft: PulseBarConfigFactory.shared.toDraft(config: config))
-        if settingsDraft != draft {
-            settingsDraft = draft
-        }
+        settingsDraft = PulseBarConfigFactory.shared.toDraft(config: config)
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
 
     private func applySyncStateUpdate(_ state: PulseBarSyncState) {
-        let mapped = Self.mapSyncStateObject(state)
-        if syncState != mapped {
-            syncState = mapped
-        }
-        clearFinishedConnectingEndpoints(mapped)
+        syncState = state
+        clearFinishedConnectingEndpoints(state)
     }
 
     private func applyInteractionStateUpdate(_ state: PulseBarInteractionState) {
-        let mapped = Self.mapInteractionStateObject(state)
-        if interactionItems != mapped.items {
-            interactionItems = mapped.items
-        }
-        if interactionPendingCount != mapped.pendingCount {
-            interactionPendingCount = mapped.pendingCount
-        }
-        if interactionLastStatus != mapped.lastStatus {
-            interactionLastStatus = mapped.lastStatus
-        }
+        interactionItems = state.items
+        interactionPendingCount = Int(state.pendingCount)
+        interactionLastStatus = state.lastStatus
     }
 
     func saveConfig() {
-        bridge.updateConfig(config: PulseBarConfigFactory.shared.fromDraft(draft: settingsDraft.kotlinDraft))
+        bridge.updateConfig(config: PulseBarConfigFactory.shared.fromDraft(draft: settingsDraft))
         bridge.forceTick()
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
@@ -223,47 +203,43 @@ final class NativeMonitorModel: ObservableObject {
         // Delegate candidate selection to Kotlin (prefers enabled + credentialed,
         // falls back to any with credentials). Swift only adapts the result into
         // platform-typed URLs.
-        let candidates = PulseBarConfigFactory.shared.liveListenCandidateEndpoints(draft: settingsDraft.kotlinDraft)
+        let candidates = PulseBarConfigFactory.shared.liveListenCandidateEndpoints(draft: settingsDraft)
         return candidates.compactMap { kotlin in
             LiveListenEndpointConfig.fromKotlinDraft(kotlin)
         }
     }
 
     func addEndpoint() {
-        if settingsDraft.endpoints.isEmpty {
-            settingsDraft.endpoints.append(.defaultPrimary())
+        var next = settingsDraft.endpoints
+        if next.isEmpty {
+            next.append(.pulseDefaultPrimary())
         } else {
-            settingsDraft.endpoints.append(.default(index: settingsDraft.endpoints.count))
+            next.append(.pulseDefault(index: next.count))
         }
+        settingsDraft.endpoints = next
     }
 
     func removeEndpoint(_ endpointID: String) {
-        settingsDraft.endpoints.removeAll { $0.id == endpointID }
+        settingsDraft.endpoints = settingsDraft.endpoints.filter { $0.id != endpointID }
         saveConfig()
     }
 
     func setEndpointEnabled(_ endpointID: String, enabled: Bool) {
-        guard let index = settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
-            return
-        }
-        settingsDraft.endpoints[index].enabled = enabled
+        guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
+        endpoint.enabled = enabled
         saveConfig()
     }
 
     func disconnectEndpoint(_ endpointID: String) {
-        guard let index = settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
-            return
-        }
-        settingsDraft.endpoints[index].disconnected = true
+        guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
+        endpoint.disconnected = true
         connectingEndpointIDs.remove(endpointID)
         saveConfig()
     }
 
     func connectEndpoint(_ endpointID: String) {
-        guard let index = settingsDraft.endpoints.firstIndex(where: { $0.id == endpointID }) else {
-            return
-        }
-        settingsDraft.endpoints[index].disconnected = false
+        guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
+        endpoint.disconnected = false
         connectingEndpointIDs.insert(endpointID)
         saveConfig()
         retryEndpoint(endpointID: endpointID)
@@ -297,263 +273,7 @@ final class NativeMonitorModel: ObservableObject {
         }
     }
 
-    nonisolated private static func mapMedia(
-        providerId: String,
-        source: String,
-        itemType: String,
-        title: String,
-        artist: String,
-        album: String?,
-        albumArtist: String?,
-        artworkURL: String?,
-        progressSeconds: Double,
-        durationSeconds: Int,
-        linkURL: String?,
-        trackId: String?,
-        isPlaying: Bool,
-        trackNumber: NSNumber?,
-        discNumber: NSNumber?,
-        collectionId: String?,
-        collectionTitle: String?,
-        collectionLinkURL: String?
-    ) -> MediaInfo {
-        MediaInfo(
-            id: trackId ?? UUID().uuidString,
-            providerId: providerId,
-            source: source,
-            itemType: itemType,
-            title: title,
-            artist: artist,
-            album: album,
-            albumArtist: albumArtist,
-            artworkURL: artworkURL.flatMap(URL.init(string:)),
-            progressSeconds: progressSeconds,
-            durationSeconds: durationSeconds > 0 ? durationSeconds : nil,
-            link: linkURL,
-            isPlaying: isPlaying,
-            trackNumber: trackNumber.map(\.intValue).flatMap { $0 > 0 ? $0 : nil },
-            discNumber: discNumber.map(\.intValue).flatMap { $0 > 0 ? $0 : nil },
-            collectionId: collectionId,
-            collectionTitle: collectionTitle,
-            collectionLink: collectionLinkURL
-        )
-    }
-
-    nonisolated private static func mapUsageRow(
-        key: String,
-        label: String,
-        bundleId: String,
-        totalSeconds: Int
-    ) -> UsageRow {
-        UsageRow(
-            id: key,
-            key: key,
-            label: label,
-            bundleId: bundleId,
-            totalSeconds: totalSeconds
-        )
-    }
-
-    nonisolated private static func mapInteractionItem(
-        requestId: String,
-        status: String,
-        provider: String,
-        uri: String,
-        title: String?,
-        issuedAtIso8601: String,
-        updatedAtIso8601: String,
-        targetDeviceId: String?,
-        errorCode: String?,
-        errorMessage: String?
-    ) -> InteractionItem {
-        return InteractionItem(
-            id: requestId,
-            requestId: requestId,
-            status: status,
-            provider: provider,
-            uri: uri,
-            title: title,
-            issuedAt: iso8601Formatter.date(from: issuedAtIso8601) ?? Date(),
-            updatedAt: iso8601Formatter.date(from: updatedAtIso8601) ?? Date(),
-            targetDeviceId: targetDeviceId,
-            errorCode: errorCode,
-            errorMessage: errorMessage
-        )
-    }
-
-    nonisolated private static func mapEndpointSyncState(
-        id: String,
-        name: String,
-        enabled: Bool,
-        transportName: String,
-        endpointURL: String,
-        status: String,
-        lastStatus: String?,
-        pendingCount: Int,
-        needsAttention: Bool,
-        lastAttemptAtIso8601: String?,
-        lastProbeAtIso8601: String?,
-        lastSuccessAtIso8601: String?,
-        lastFailureAtIso8601: String?,
-        lastErrorMessage: String?,
-        diagnosticMessage: String?,
-        acknowledgedSeqMax: Int,
-        acknowledgedAtIso8601: String?
-    ) -> EndpointSyncStatusInfo {
-        EndpointSyncStatusInfo(
-            id: id,
-            name: name,
-            enabled: enabled,
-            transportName: transportName,
-            endpointURL: endpointURL,
-            status: status,
-            lastStatus: lastStatus,
-            pendingCount: pendingCount,
-            needsAttention: needsAttention,
-            lastAttemptAt: lastAttemptAtIso8601.flatMap(iso8601Formatter.date(from:)),
-            lastProbeAt: lastProbeAtIso8601.flatMap(iso8601Formatter.date(from:)),
-            lastSuccessAt: lastSuccessAtIso8601.flatMap(iso8601Formatter.date(from:)),
-            lastFailureAt: lastFailureAtIso8601.flatMap(iso8601Formatter.date(from:)),
-            lastErrorMessage: lastErrorMessage,
-            diagnosticMessage: diagnosticMessage,
-            acknowledgedSeqMax: acknowledgedSeqMax,
-            acknowledgedAt: acknowledgedAtIso8601.flatMap(iso8601Formatter.date(from:))
-        )
-    }
-
-    nonisolated private static func mapSyncState(
-        enabled: Bool,
-        enabledEndpointCount: Int,
-        totalEndpointCount: Int,
-        status: String,
-        lastStatus: String?,
-        pendingCount: Int,
-        needsAttention: Bool,
-        endpoints: [EndpointSyncStatusInfo]
-    ) -> SyncStatusInfo {
-        SyncStatusInfo(
-            enabled: enabled,
-            enabledEndpointCount: enabledEndpointCount,
-            totalEndpointCount: totalEndpointCount,
-            status: status,
-            lastStatus: lastStatus,
-            pendingCount: pendingCount,
-            needsAttention: needsAttention,
-            endpoints: endpoints
-        )
-    }
-
-    private static func todayIsoString() -> String {
-        dayFormatter.string(from: Date())
-    }
-
-    nonisolated private static func mapSnapshotObject(_ snapshot: PulseBarSnapshot?) -> LiveSnapshot? {
-        guard let snapshot else { return nil }
-        let media = snapshot.media.map { media in
-            mapMedia(
-                providerId: media.providerId,
-                source: media.source,
-                itemType: media.itemType,
-                title: media.title,
-                artist: media.artist,
-                album: media.album,
-                albumArtist: media.albumArtist,
-                artworkURL: media.artworkUrl,
-                progressSeconds: media.progressSeconds,
-                durationSeconds: Int(media.durationSeconds),
-                linkURL: media.linkUrl,
-                trackId: media.trackId,
-                isPlaying: media.isPlaying,
-                trackNumber: media.trackNumber.map(NSNumber.init(value:)),
-                discNumber: media.discNumber.map(NSNumber.init(value:)),
-                collectionId: media.collectionId,
-                collectionTitle: media.collectionTitle,
-                collectionLinkURL: media.collectionLinkUrl
-            )
-        }
-        // snapshot.appName already carries the resolved display name from
-        // the Kotlin side (see PulseBarBridge.resolvedApplicationName, which
-        // delegates to resolveAppDisplayName on macOS).
-        return LiveSnapshot(
-            appName: snapshot.appName,
-            bundleId: snapshot.bundleId,
-            pageTitle: snapshot.pageTitle,
-            observedAt: iso8601Formatter.date(from: snapshot.observedAtIso8601) ?? Date(),
-            media: media
-        )
-    }
-
-    nonisolated private static func mapStatsPage(_ page: PulseBarStatsPage) -> (items: [UsageRow], totalSeconds: Int) {
-        (
-            page.items.map { row in
-                mapUsageRow(
-                    key: row.key,
-                    label: row.label,
-                    bundleId: row.bundleId,
-                    totalSeconds: Int(row.totalSeconds)
-                )
-            },
-            Int(page.totalSeconds)
-        )
-    }
-
-    nonisolated private static func mapInteractionStateObject(
-        _ state: PulseBarInteractionState
-    ) -> (items: [InteractionItem], pendingCount: Int, lastStatus: String?) {
-        (
-            state.items.map { item in
-                mapInteractionItem(
-                    requestId: item.requestId,
-                    status: item.status,
-                    provider: item.provider,
-                    uri: item.uri,
-                    title: item.title,
-                    issuedAtIso8601: item.issuedAtIso8601,
-                    updatedAtIso8601: item.updatedAtIso8601,
-                    targetDeviceId: item.targetDeviceId,
-                    errorCode: item.errorCode,
-                    errorMessage: item.errorMessage
-                )
-            },
-            Int(state.pendingCount),
-            state.lastStatus
-        )
-    }
-
-    nonisolated private static func mapSyncStateObject(_ state: PulseBarSyncState) -> SyncStatusInfo {
-        mapSyncState(
-            enabled: state.enabled,
-            enabledEndpointCount: Int(state.enabledEndpointCount),
-            totalEndpointCount: Int(state.totalEndpointCount),
-            status: state.status,
-            lastStatus: state.lastStatus,
-            pendingCount: Int(state.pendingCount),
-            needsAttention: state.needsAttention,
-            endpoints: state.endpoints.map { endpoint in
-                mapEndpointSyncState(
-                    id: endpoint.id,
-                    name: endpoint.name,
-                    enabled: endpoint.enabled,
-                    transportName: endpoint.transportName,
-                    endpointURL: endpoint.endpointUrl,
-                    status: endpoint.status,
-                    lastStatus: endpoint.lastStatus,
-                    pendingCount: Int(endpoint.pendingCount),
-                    needsAttention: endpoint.needsAttention,
-                    lastAttemptAtIso8601: endpoint.lastAttemptAtIso8601,
-                    lastProbeAtIso8601: endpoint.lastProbeAtIso8601,
-                    lastSuccessAtIso8601: endpoint.lastSuccessAtIso8601,
-                    lastFailureAtIso8601: endpoint.lastFailureAtIso8601,
-                    lastErrorMessage: endpoint.lastErrorMessage,
-                    diagnosticMessage: endpoint.diagnosticMessage,
-                    acknowledgedSeqMax: Int(endpoint.acknowledgedSeqMax),
-                    acknowledgedAtIso8601: endpoint.acknowledgedAtIso8601
-                )
-            }
-        )
-    }
-
-    private func clearFinishedConnectingEndpoints(_ syncState: SyncStatusInfo) {
+    private func clearFinishedConnectingEndpoints(_ syncState: PulseBarSyncState) {
         guard !connectingEndpointIDs.isEmpty else { return }
         for endpoint in syncState.endpoints where connectingEndpointIDs.contains(endpoint.id) {
             if endpoint.status != "disabled" && endpoint.status != "disconnected" {
@@ -561,14 +281,4 @@ final class NativeMonitorModel: ObservableObject {
             }
         }
     }
-
-    private func applySnapshotIfNeeded(_ nextSnapshot: LiveSnapshot?) {
-        // Kotlin's menu state flow is a StateFlow that already de-dupes on
-        // structural equality; the only remaining job here is to republish
-        // when the mapped LiveSnapshot differs from what SwiftUI already has.
-        if snapshot != nextSnapshot {
-            snapshot = nextSnapshot
-        }
-    }
-
 }
