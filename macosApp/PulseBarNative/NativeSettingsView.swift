@@ -754,10 +754,12 @@ extension ConnectionRuntimeStatus {
 
 /// Swift entry point — delegates to the shared Kotlin resolver and
 /// layers the optimistic "connecting" state on top. Kotlin returns the
-/// enum's name string (not the enum itself) because Swift Export's
-/// enum-return ref bridge crashes at runtime for ConnectionRuntime
-/// Status — the generated `init(__externalRCRefUnsafe:)` fatalErrors
-/// when the Kotlin-supplied pointer doesn't match any cached case ref.
+/// enum's `name` string (not the enum itself) because of Swift Export's
+/// enum-return crash — see `docs/app/swift-export-enum-bug.md`
+/// (KT-83730). The generated `ConnectionRuntimeStatus
+/// .init(__externalRCRefUnsafe:)` fatalErrors when the Kotlin-supplied
+/// pointer doesn't match any cached case ref. Switch on the name
+/// locally until the upstream bug is fixed.
 private func resolveConnectionStatus(
     endpoint: PulseBarEndpointDraft,
     sync: PulseBarEndpointSyncState?,

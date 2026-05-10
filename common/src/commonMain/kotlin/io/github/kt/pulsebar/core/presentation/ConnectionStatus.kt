@@ -38,12 +38,12 @@ fun resolveConnectionStatus(
 
 /**
  * Draft-based variant used by the Swift Settings UI, which edits drafts
- * rather than configs. Returns the enum's `name` string because Swift
- * Export's enum-return ref bridge crashes at runtime — see
- * `PulseBarShared.swift` generated init(__externalRCRefUnsafe:) where
- * the returned C ref doesn't match any cached case pointer and falls
- * into `default: fatalError()`. The class-property getter bridge has the
- * same bug. Returning a String dodges both paths entirely.
+ * rather than configs. Returns the enum's `name` string because of
+ * Swift Export's enum-return crash — see
+ * `docs/app/swift-export-enum-bug.md` (KT-83730). The generated Swift
+ * `ConnectionRuntimeStatus.init(__externalRCRefUnsafe:)` fatalErrors on
+ * the Kotlin-supplied pointer. Returning a String dodges the bridge
+ * entirely.
  */
 fun resolveDraftConnectionStatus(
     endpoint: PulseBarEndpointDraft,

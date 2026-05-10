@@ -451,3 +451,32 @@ Phase 3 会把 orchestration 从 Swift 拉到 Kotlin，必须同时定义生命�
 - **Swift for platform shell + platform adapters**
 
 重构顺序必须先清 legacy + 上日志底座，再迁 config，最后做 query/command 分离并收 presentation-core。每个 Phase 打 tag，便于回退。否则复杂度只会继续叠加，而不会真正下降。
+
+## 11. 附录：Swift Export 已知问题
+
+### Swift Export enum-return 崩溃 (KT-83730)
+
+Kotlin 函数 / 类属性向 Swift 返回 Kotlin 枚举时，Swift Export 生成的
+`init(__externalRCRefUnsafe:)` 会把 Kotlin 传入的 C ref 指针和一组缓存的
+per-case C helper 指针做 `switch` 匹配；当前工具链里这个匹配经常失败并
+fall through 到 `default: fatalError()`。
+
+详见 `docs/app/swift-export-enum-bug.md` 以及上游跟踪
+<https://youtrack.jetbrains.com/issue/KT-83730>。
+
+当前 workaround：需要让 Swift 拿到 Kotlin 枚举值时，Kotlin 侧返回
+`enumValue.name` 字符串，Swift 端 `switch` 解析。代码示例见
+`ConnectionStatus.kt` 的 `resolveDraftConnectionStatus` 和
+`NativeSettingsView.swift` 的 `resolveConnectionStatus`。
+
+影响的潜在热点（目前未触发但同一代码路径一旦走到就会崩）：
+
+- `PulseBarLiveListenStats.connectionState`
+- `PulseBarEndpointConfig.transport`
+- `PulseBarConfig.interactionExecutionMode` / `interactionPlaybackMode`
+
+Live Listen 面板若真的开始读 `stats.connectionState`，需要改读 bridge 已经
+导出的 `connectionStateName: String` 并本地解析。
+
+上游修复后回退 workaround 的检查流程：全量 clean rebuild 一次，跑
+`scripts/check-pulse.sh`，确认没有 `Fatal error` 后再去掉字符串绕路。
