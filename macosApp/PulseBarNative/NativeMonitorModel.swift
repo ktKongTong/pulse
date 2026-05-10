@@ -23,8 +23,8 @@ final class NativeMonitorModel: ObservableObject {
         pagePollingMillis: 2000,
         mediaPollingMillis: 500,
         allowWebInteractions: true,
-        interactionExecutionMode: .CONFIRM,
-        interactionPlaybackMode: .PLAY_NEXT
+        interactionExecutionModeName: "CONFIRM",
+        interactionPlaybackModeName: "PLAY_NEXT"
     )
     @Published var isPaused = false
     @Published var dashboardSelection: DashboardSection = .connection

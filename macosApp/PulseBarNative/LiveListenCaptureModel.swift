@@ -173,7 +173,7 @@ final class LiveListenCaptureModel: ObservableObject {
             appendLiveListenCaptureDebugLog("server requested capture stop")
             stopCapture()
         }
-        if isCapturing && snapshot.connectionState == .FAILED {
+        if isCapturing && snapshot.connectionStateParsed == .FAILED {
             appendLiveListenCaptureDebugLog("live listen failed during capture")
             stopCapture()
             statusText = "Live Listen connection failed"
@@ -552,7 +552,7 @@ final class LiveListenCaptureModel: ObservableObject {
         if endpoints.isEmpty {
             publisherStatusText = "Configure a Live Listen endpoint in Settings"
         } else {
-            let activeActive = publisherStats.connectionState == .CONNECTED ? 1 : 0
+            let activeActive = publisherStats.connectionStateParsed == .CONNECTED ? 1 : 0
             publisherStatusText = "Live Listen device sessions connected \(activeActive)/\(endpoints.count)"
         }
     }
@@ -569,7 +569,7 @@ final class LiveListenCaptureModel: ObservableObject {
 
     /// Builds the primitive input the Kotlin presentation helpers need.
     private func buildStatusInput() -> LiveListenStatusInput {
-        let activeConnected = publisherStats.connectionState == .CONNECTED && activeEndpointId != nil
+        let activeConnected = publisherStats.connectionStateParsed == .CONNECTED && activeEndpointId != nil
         return Self.makeStatusInput(
             stats: publisherStats,
             isCapturing: isCapturing,
@@ -590,7 +590,7 @@ final class LiveListenCaptureModel: ObservableObject {
         // Kotlin uses `0L` as the "no scheduled reconnect" sentinel.
         let nextReconnectMillis: Int64? = stats.nextReconnectAtMillis > 0 ? stats.nextReconnectAtMillis : nil
         return LiveListenStatusInput(
-            connectionState: stats.connectionState,
+            connectionStateName: stats.connectionStateName,
             isSending: stats.isSending,
             isCapturing: isCapturing,
             capturedFrames: capturedFrames,

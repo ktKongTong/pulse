@@ -850,6 +850,7 @@ private fun parseSessionParts(session: SessionState): SessionParts {
 private fun LiveListenStats.toExport(): PulseBarLiveListenStats =
     PulseBarLiveListenStats(
         connectionState = connectionState.toExport(),
+        connectionStateName = connectionState.name,
         webSocketUrl = webSocketUrl,
         lastConnectedAtMillis = lastConnectedAtMillis ?: 0L,
         lastDisconnectedAtMillis = lastDisconnectedAtMillis ?: 0L,

@@ -1,6 +1,5 @@
 package io.github.kt.pulsebar.core.presentation
 
-import io.github.kt.pulsebar.export.PulseBarLiveListenConnectionState
 import io.github.kt.pulsebar.export.PulseBarMedia
 
 /**
@@ -9,7 +8,7 @@ import io.github.kt.pulsebar.export.PulseBarMedia
  * helpers in this file are free of dependencies on macosMain code.
  */
 data class LiveListenStatusInput(
-    val connectionState: PulseBarLiveListenConnectionState,
+    val connectionStateName: String, // "IDLE" | "CONNECTING" | "CONNECTED" | "RECONNECTING" | "STOPPING" | "STOPPED" | "FAILED"
     val isSending: Boolean,
     val isCapturing: Boolean,
     val capturedFrames: Long,
@@ -21,14 +20,14 @@ data class LiveListenStatusInput(
 object LiveListenPresentation {
 
     /** Swift's `streamStatusText`. */
-    fun streamStatusText(sourceName: String, input: LiveListenStatusInput): String = when (input.connectionState) {
-        PulseBarLiveListenConnectionState.CONNECTING -> "Connecting Live Listen server…"
-        PulseBarLiveListenConnectionState.CONNECTED -> if (input.isSending) "Sending $sourceName audio…" else "Capturing $sourceName…"
-        PulseBarLiveListenConnectionState.RECONNECTING -> "Reconnecting Live Listen server…"
-        PulseBarLiveListenConnectionState.FAILED -> "Live Listen connection failed"
-        PulseBarLiveListenConnectionState.STOPPING -> "Stopping stream…"
-        PulseBarLiveListenConnectionState.STOPPED -> "Stream stopped"
-        PulseBarLiveListenConnectionState.IDLE -> "Preparing stream…"
+    fun streamStatusText(sourceName: String, input: LiveListenStatusInput): String = when (input.connectionStateName) {
+        "CONNECTING" -> "Connecting Live Listen server…"
+        "CONNECTED" -> if (input.isSending) "Sending $sourceName audio…" else "Capturing $sourceName…"
+        "RECONNECTING" -> "Reconnecting Live Listen server…"
+        "FAILED" -> "Live Listen connection failed"
+        "STOPPING" -> "Stopping stream…"
+        "STOPPED" -> "Stream stopped"
+        else -> "Preparing stream…"
     }
 
     /** Swift's `captureActivityText`. */
