@@ -179,6 +179,30 @@ final class NativeMonitorModel: ObservableObject {
             }
         }
 
+        func updateLiveListenMedia(
+            providerId: String?,
+            trackId: String?,
+            title: String?,
+            artist: String?,
+            album: String?,
+            artworkUrl: String?,
+            durationSeconds: Double,
+            isPlaying: Bool
+        ) {
+            queue.async {
+                self.bridge.updateLiveListenMedia(
+                    providerId: providerId,
+                    trackId: trackId,
+                    title: title,
+                    artist: artist,
+                    album: album,
+                    artworkUrl: artworkUrl,
+                    durationSeconds: durationSeconds,
+                    isPlaying: isPlaying
+                )
+            }
+        }
+
         func observeLiveListenStats(
             onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
             cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void

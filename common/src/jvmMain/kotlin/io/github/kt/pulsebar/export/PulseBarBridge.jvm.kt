@@ -154,6 +154,17 @@ actual class PulseBarBridge actual constructor() {
         captureRunning: Boolean,
     ) = Unit
 
+    actual fun updateLiveListenMedia(
+        providerId: String?,
+        trackId: String?,
+        title: String?,
+        artist: String?,
+        album: String?,
+        artworkUrl: String?,
+        durationSeconds: Double,
+        isPlaying: Boolean,
+    ) = Unit
+
     actual fun observeLiveListenStats(onUpdate: (PulseBarLiveListenStats) -> Unit): PulseBarCancellable =
         noopCancellable
 

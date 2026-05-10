@@ -66,6 +66,9 @@ internal class LiveListenStateMachine(
         /** User or native layer toggled media or permission state. */
         data class MediaStateChanged(val mediaState: LiveListenNativeMediaState) : Input
 
+        /** Track metadata changed (title/artist/album/...). Only emitted when connected. */
+        data class MediaMetadataChanged(val media: LiveListenMedia) : Input
+
         /** `stream.start` command from the room. */
         data class StartCommand(
             val commandId: String,
@@ -112,6 +115,7 @@ internal class LiveListenStateMachine(
         is Input.ConnectionEstablished -> onConnectionEstablished(input, nowIso)
         Input.ConnectionLost -> onConnectionLost()
         is Input.MediaStateChanged -> onMediaStateChanged(input, nowIso)
+        is Input.MediaMetadataChanged -> onMediaMetadataChanged(input, nowIso)
         is Input.StartCommand -> onStartCommand(input, nowIso)
         is Input.ResumeCommand -> onResumeCommand(input, nowIso)
         is Input.StopCommand -> onStopCommand(input, nowIso)
@@ -160,6 +164,19 @@ internal class LiveListenStateMachine(
                     deviceId = deviceId,
                     sentAt = nowIso,
                     mediaState = input.mediaState,
+                ),
+            ),
+        )
+    }
+
+    private fun onMediaMetadataChanged(input: Input.MediaMetadataChanged, nowIso: String): List<Output> {
+        if (_state.phase == Phase.Idle) return emptyList()
+        return listOf(
+            Output.SendFrame(
+                MediaUpdatedFrame(
+                    deviceId = deviceId,
+                    sentAt = nowIso,
+                    media = input.media,
                 ),
             ),
         )

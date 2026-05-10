@@ -71,6 +71,7 @@ internal class LiveListenClient(
     private var currentConfig: LiveListenConnectionConfig? = null
     private var currentDeviceId: String = "uninitialized"
     private var currentMediaState: LiveListenNativeMediaState = defaultMediaState()
+    private var currentMedia: LiveListenMedia? = null
     private var connectionJob: Job? = null
     private var reconnectAttempt = 0
     private var pcmBuffer = ByteArray(0)
@@ -153,6 +154,19 @@ internal class LiveListenClient(
         currentMediaState = next
         scope.launch {
             apply(stateMachine.handle(LiveListenStateMachine.Input.MediaStateChanged(next), nowIso()))
+        }
+    }
+
+    /**
+     * Owner-side media *metadata* change (title / artist / album / trackId / ...).
+     * Triggers a `media.updated` frame whenever connected. Callers may pass null
+     * when nothing is playing; we only transmit when we have something to say.
+     */
+    fun updateMedia(next: LiveListenMedia?) {
+        currentMedia = next
+        if (next == null) return
+        scope.launch {
+            apply(stateMachine.handle(LiveListenStateMachine.Input.MediaMetadataChanged(next), nowIso()))
         }
     }
 
@@ -245,6 +259,11 @@ internal class LiveListenClient(
 
         // Fire the state machine's ConnectionEstablished → emits device.hello
         apply(stateMachine.handle(LiveListenStateMachine.Input.ConnectionEstablished(currentMediaState), nowIso()))
+        // Replay the last known track metadata so the server doesn't lag behind
+        // after a reconnect / fresh connect.
+        currentMedia?.let {
+            apply(stateMachine.handle(LiveListenStateMachine.Input.MediaMetadataChanged(it), nowIso()))
+        }
 
         try {
             coroutineScopeLike(

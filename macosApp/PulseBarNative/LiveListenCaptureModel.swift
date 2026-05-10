@@ -20,6 +20,16 @@ protocol LiveListenBridge: AnyObject, Sendable {
     func stopLiveListen()
     func submitLiveListenPcmBase64(_ encoded: String)
     func updateLiveListenMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool)
+    func updateLiveListenMedia(
+        providerId: String?,
+        trackId: String?,
+        title: String?,
+        artist: String?,
+        album: String?,
+        artworkUrl: String?,
+        durationSeconds: Double,
+        isPlaying: Bool
+    )
     func observeLiveListenStats(
         onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
         cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
@@ -230,6 +240,31 @@ final class LiveListenCaptureModel: ObservableObject {
         }
 
         pushMediaStateToBridge()
+
+        // Forward track metadata so the server can show what's playing
+        if let media, media.isPlaying {
+            worker.updateLiveListenMedia(
+                providerId: media.providerId,
+                trackId: media.id,
+                title: media.title,
+                artist: media.artist,
+                album: media.album,
+                artworkUrl: media.artworkURL?.absoluteString,
+                durationSeconds: Double(media.durationSeconds ?? 0),
+                isPlaying: media.isPlaying
+            )
+        } else {
+            worker.updateLiveListenMedia(
+                providerId: nil,
+                trackId: nil,
+                title: nil,
+                artist: nil,
+                album: nil,
+                artworkUrl: nil,
+                durationSeconds: 0,
+                isPlaying: false
+            )
+        }
 
         if isCapturing && (mediaStreamPermission != .allow || media?.isPlaying != true) {
             let stopReason = mediaStreamPermission == .allow ? "no_playable_media" : "live_listen_disabled"

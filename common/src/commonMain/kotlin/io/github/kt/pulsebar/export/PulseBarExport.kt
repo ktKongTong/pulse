@@ -353,6 +353,23 @@ expect class PulseBarBridge() {
     )
 
     /**
+     * Forward the currently-playing track metadata to the server so it can
+     * drive the Live Listen UI (title, artist, album art...). Pass all-null
+     * to clear; pass an empty trackId when unknown. Safe to call whenever a
+     * new track starts — duplicate values are de-duped by the server.
+     */
+    fun updateLiveListenMedia(
+        providerId: String?,
+        trackId: String?,
+        title: String?,
+        artist: String?,
+        album: String?,
+        artworkUrl: String?,
+        durationSeconds: Double,
+        isPlaying: Boolean,
+    )
+
+    /**
      * Subscribe to Live Listen telemetry (connection state, queue depth,
      * bitrate, errors). Emits the current snapshot on subscribe and every
      * time something changes.

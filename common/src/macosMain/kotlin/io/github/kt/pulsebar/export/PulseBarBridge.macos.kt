@@ -8,6 +8,7 @@ import io.github.kt.pulsebar.core.config.toProto
 import io.github.kt.pulsebar.core.livelisten.LiveListenCaptureRuntime
 import io.github.kt.pulsebar.core.livelisten.LiveListenClient
 import io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig
+import io.github.kt.pulsebar.core.livelisten.LiveListenMedia
 import io.github.kt.pulsebar.core.livelisten.LiveListenMediaPermission
 import io.github.kt.pulsebar.core.livelisten.LiveListenNativeMediaState
 import io.github.kt.pulsebar.core.livelisten.LiveListenPlaybackWire
@@ -303,6 +304,37 @@ actual class PulseBarBridge actual constructor() {
                 else LiveListenPlaybackWire.PAUSED,
                 capture = if (captureRunning) LiveListenCaptureRuntime.CAPTURING
                 else LiveListenCaptureRuntime.NO_CAPTURE,
+            ),
+        )
+    }
+
+    actual fun updateLiveListenMedia(
+        providerId: String?,
+        trackId: String?,
+        title: String?,
+        artist: String?,
+        album: String?,
+        artworkUrl: String?,
+        durationSeconds: Double,
+        isPlaying: Boolean,
+    ) {
+        val hasAnyField = sequenceOf(providerId, trackId, title, artist, album, artworkUrl)
+            .any { !it.isNullOrBlank() } || durationSeconds > 0.0
+        if (!hasAnyField) {
+            liveListenClient.updateMedia(null)
+            return
+        }
+        liveListenClient.updateMedia(
+            LiveListenMedia(
+                providerId = providerId?.ifBlank { null },
+                trackId = trackId?.ifBlank { null },
+                title = title?.ifBlank { null },
+                artist = artist?.ifBlank { null },
+                album = album?.ifBlank { null },
+                artworkUrl = artworkUrl?.ifBlank { null },
+                durationSeconds = durationSeconds.takeIf { it > 0.0 },
+                playbackState = if (isPlaying) LiveListenPlaybackWire.PLAYING
+                else LiveListenPlaybackWire.PAUSED,
             ),
         )
     }
