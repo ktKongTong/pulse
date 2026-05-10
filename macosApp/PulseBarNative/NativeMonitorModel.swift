@@ -38,6 +38,42 @@ final class NativeMonitorModel: ObservableObject {
         self.liveListenCaptureModel = LiveListenCaptureModel(bridge: LiveListenBridgeAdapter(bridge: bridge))
     }
 
+    // MARK: - Nonisolated observer subscribers
+    //
+    // These are explicitly nonisolated so the closures they pass to Kotlin
+    // don't inherit @MainActor isolation. We then dispatch onto main inside
+    // the closure and invoke the caller's @MainActor handler there.
+
+    nonisolated private static func subscribeMenu(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarMenuState) -> Void) -> PulseBarCancellable {
+        bridge.observeMenuState { state in
+            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(state) } }
+        }
+    }
+
+    nonisolated private static func subscribeConfig(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarConfig) -> Void) -> PulseBarCancellable {
+        bridge.observeConfig { config in
+            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(config) } }
+        }
+    }
+
+    nonisolated private static func subscribeSync(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarSyncState) -> Void) -> PulseBarCancellable {
+        bridge.observeSyncState { state in
+            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(state) } }
+        }
+    }
+
+    nonisolated private static func subscribeInteraction(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarInteractionState) -> Void) -> PulseBarCancellable {
+        bridge.observeInteractionState { state in
+            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(state) } }
+        }
+    }
+
+    nonisolated private static func subscribeToday(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarTodayStats) -> Void) -> PulseBarCancellable {
+        bridge.observeTodayStats { stats in
+            DispatchQueue.main.async { MainActor.assumeIsolated { onMain(stats) } }
+        }
+    }
+
     /// Thin adapter that implements the Swift-side LiveListenBridge protocol
     /// by delegating directly to the shared PulseBarBridge instance. Kotlin
     /// is already thread-safe so no DispatchQueue needed.
@@ -125,21 +161,15 @@ final class NativeMonitorModel: ObservableObject {
         isPaused = false
         subscribed = true
 
-        cancellables.append(bridge.observeMenuState { [weak self] state in
-            Task { @MainActor in self?.applyMenuStateUpdate(state) }
-        })
-        cancellables.append(bridge.observeConfig { [weak self] config in
-            Task { @MainActor in self?.applyConfigUpdate(config) }
-        })
-        cancellables.append(bridge.observeSyncState { [weak self] state in
-            Task { @MainActor in self?.applySyncStateUpdate(state) }
-        })
-        cancellables.append(bridge.observeInteractionState { [weak self] state in
-            Task { @MainActor in self?.applyInteractionStateUpdate(state) }
-        })
-        cancellables.append(bridge.observeTodayStats { [weak self] stats in
-            Task { @MainActor in self?.applyTodayStatsUpdate(stats) }
-        })
+        // Kotlin delivers observer callbacks on Dispatchers.Default. Use the
+        // nonisolated subscribe helpers below so the closure captured by
+        // Kotlin isn't inherited-@MainActor (which would trip Swift 6 at
+        // runtime), then hop to @MainActor explicitly.
+        cancellables.append(Self.subscribeMenu(bridge: bridge, onMain: { [weak self] state in self?.applyMenuStateUpdate(state) }))
+        cancellables.append(Self.subscribeConfig(bridge: bridge, onMain: { [weak self] config in self?.applyConfigUpdate(config) }))
+        cancellables.append(Self.subscribeSync(bridge: bridge, onMain: { [weak self] state in self?.applySyncStateUpdate(state) }))
+        cancellables.append(Self.subscribeInteraction(bridge: bridge, onMain: { [weak self] state in self?.applyInteractionStateUpdate(state) }))
+        cancellables.append(Self.subscribeToday(bridge: bridge, onMain: { [weak self] stats in self?.applyTodayStatsUpdate(stats) }))
 
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }
