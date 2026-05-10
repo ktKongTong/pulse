@@ -513,20 +513,10 @@ actual class PulseBarBridge actual constructor() {
     }
 
     private fun resolvedApplicationName(bundleId: String, fallbackName: String?): String {
-        val bundleName = bundleId
-            .takeIf { it.isNotBlank() && it != "unknown" }
-            ?.let(NSBundle::bundleWithIdentifier)
-            ?.infoDictionary
-            ?.let { info ->
-                sequenceOf(
-                    info["CFBundleDisplayName"] as? String,
-                    info["CFBundleName"] as? String
-                ).firstOrNull { !it.isNullOrBlank() }
-            }
-        val candidate = bundleName
+        val resolved = io.github.kt.pulsebar.core.platform.resolveAppDisplayName(bundleId)
+        return resolved
             ?: fallbackName?.takeIf { it.isNotBlank() }
             ?: "Unknown App"
-        return candidate
     }
 
     private fun updateUsage(snapshot: PulseBarSnapshot) {

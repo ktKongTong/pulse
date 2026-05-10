@@ -2,7 +2,6 @@ import AppKit
 import Combine
 import Foundation
 @preconcurrency import PulseBarShared
-import SharedBridge_PulseBarShared
 
 @MainActor
 final class NativeMonitorModel: ObservableObject {
@@ -29,9 +28,6 @@ final class NativeMonitorModel: ObservableObject {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
-
-    @_silgen_name("Kotlin_native_internal_ref_disposeExternalRCRef")
-    nonisolated private static func disposeExternalRCRef(_ ref: UnsafeMutableRawPointer?)
 
     init() {
         self.liveListenCaptureModel = LiveListenCaptureModel(bridge: bridgeWorker)
@@ -629,19 +625,6 @@ final class NativeMonitorModel: ObservableObject {
         dayFormatter.string(from: Date())
     }
 
-    nonisolated private static func resolvedDisplayName(appName: String, bundleId: String) -> String {
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId),
-           let bundle = Bundle(url: url) {
-            let preferredName =
-                bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ??
-                bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
-            if let preferredName, !preferredName.isEmpty {
-                return preferredName
-            }
-        }
-        return appName
-    }
-
     nonisolated private static func mapSnapshotObject(_ snapshot: PulseBarSnapshot?) -> LiveSnapshot? {
         guard let snapshot else { return nil }
         let media = snapshot.media.map { media in
@@ -666,8 +649,11 @@ final class NativeMonitorModel: ObservableObject {
                 collectionLinkURL: media.collectionLinkUrl
             )
         }
+        // snapshot.appName already carries the resolved display name from
+        // the Kotlin side (see PulseBarBridge.resolvedApplicationName, which
+        // delegates to resolveAppDisplayName on macOS).
         return LiveSnapshot(
-            appName: resolvedDisplayName(appName: snapshot.appName, bundleId: snapshot.bundleId),
+            appName: snapshot.appName,
             bundleId: snapshot.bundleId,
             pageTitle: snapshot.pageTitle,
             observedAt: iso8601Formatter.date(from: snapshot.observedAtIso8601) ?? Date(),
@@ -755,277 +741,41 @@ final class NativeMonitorModel: ObservableObject {
     }
 
     private func applySnapshotIfNeeded(_ nextSnapshot: LiveSnapshot?) {
-        let currentSignature = Self.snapshotRenderSignature(snapshot)
-        let nextSignature = Self.snapshotRenderSignature(nextSnapshot)
-        if currentSignature != nextSignature {
+        // Kotlin's menu state flow is a StateFlow that already de-dupes on
+        // structural equality; the only remaining job here is to republish
+        // when the mapped LiveSnapshot differs from what SwiftUI already has.
+        if snapshot != nextSnapshot {
             snapshot = nextSnapshot
         }
     }
 
-    private static func snapshotRenderSignature(_ snapshot: LiveSnapshot?) -> SnapshotRenderSignature? {
-        guard let snapshot else { return nil }
-        return SnapshotRenderSignature(
-            appName: snapshot.appName,
-            bundleId: snapshot.bundleId,
-            pageTitle: snapshot.pageTitle,
-            media: snapshot.media.map { media in
-                MediaRenderSignature(
-                    id: media.id,
-                    providerId: media.providerId,
-                    source: media.source,
-                    itemType: media.itemType,
-                    title: media.title,
-                    artist: media.artist,
-                    album: media.album,
-                    albumArtist: media.albumArtist,
-                    artworkURL: media.artworkURL,
-                    progressBucket: Int(media.progressSeconds.rounded(.down)),
-                    durationSeconds: media.durationSeconds,
-                    link: media.link,
-                    isPlaying: media.isPlaying,
-                    trackNumber: media.trackNumber,
-                    discNumber: media.discNumber,
-                    collectionId: media.collectionId,
-                    collectionTitle: media.collectionTitle,
-                    collectionLink: media.collectionLink
-                )
-            }
-        )
-    }
-
-    private struct SnapshotRenderSignature: Equatable {
-        let appName: String
-        let bundleId: String
-        let pageTitle: String?
-        let media: MediaRenderSignature?
-    }
-
-    private struct MediaRenderSignature: Equatable {
-        let id: String
-        let providerId: String
-        let source: String
-        let itemType: String
-        let title: String
-        let artist: String
-        let album: String?
-        let albumArtist: String?
-        let artworkURL: URL?
-        let progressBucket: Int
-        let durationSeconds: Int?
-        let link: String?
-        let isPlaying: Bool
-        let trackNumber: Int?
-        let discNumber: Int?
-        let collectionId: String?
-        let collectionTitle: String?
-        let collectionLink: String?
-    }
-
-    nonisolated private static func externalRCRef(of object: AnyObject) -> UnsafeMutableRawPointer? {
-        let selector = NSSelectorFromString("externalRCRef")
-        typealias Function = @convention(c) (AnyObject, Selector) -> UnsafeMutableRawPointer?
-        let implementation = object.method(for: selector)
-        let function = unsafeBitCast(implementation, to: Function.self)
-        return function(object, selector)
-    }
-
-    nonisolated private static func withDisposedExternalRef<T>(
-        _ ref: UnsafeMutableRawPointer?,
-        _ body: (UnsafeMutableRawPointer) -> T
-    ) -> T? {
-        guard let ref else { return nil }
-        defer { disposeExternalRCRef(ref) }
-        return body(ref)
-    }
-
-    nonisolated private static func readSnapshot(bridgeRef: UnsafeMutableRawPointer?) -> LiveSnapshot? {
-        guard let bridgeRef else { return nil }
-        let menuStateRef = io_github_kt_pulsebar_export_PulseBarBridge_readMenuState(bridgeRef)
-        return withDisposedExternalRef(menuStateRef) { menuStateRef in
-            guard let snapshotRef = io_github_kt_pulsebar_export_PulseBarMenuState_snapshot_get(menuStateRef) else {
-                return nil
-            }
-            return withDisposedExternalRef(snapshotRef) { snapshotRef in
-                let appName = io_github_kt_pulsebar_export_PulseBarSnapshot_appName_get(snapshotRef)
-                let bundleId = io_github_kt_pulsebar_export_PulseBarSnapshot_bundleId_get(snapshotRef)
-                let pageTitle = io_github_kt_pulsebar_export_PulseBarSnapshot_pageTitle_get(snapshotRef)
-                let observedAt = io_github_kt_pulsebar_export_PulseBarSnapshot_observedAtIso8601_get(snapshotRef)
-                let media = withDisposedExternalRef(
-                    io_github_kt_pulsebar_export_PulseBarSnapshot_media_get(snapshotRef)
-                ) { mediaRef in
-                    mapMedia(
-                        providerId: io_github_kt_pulsebar_export_PulseBarMedia_providerId_get(mediaRef),
-                        source: io_github_kt_pulsebar_export_PulseBarMedia_source_get(mediaRef),
-                        itemType: io_github_kt_pulsebar_export_PulseBarMedia_itemType_get(mediaRef),
-                        title: io_github_kt_pulsebar_export_PulseBarMedia_title_get(mediaRef),
-                        artist: io_github_kt_pulsebar_export_PulseBarMedia_artist_get(mediaRef),
-                        album: io_github_kt_pulsebar_export_PulseBarMedia_album_get(mediaRef),
-                        albumArtist: io_github_kt_pulsebar_export_PulseBarMedia_albumArtist_get(mediaRef),
-                        artworkURL: io_github_kt_pulsebar_export_PulseBarMedia_artworkUrl_get(mediaRef),
-                        progressSeconds: io_github_kt_pulsebar_export_PulseBarMedia_progressSeconds_get(mediaRef),
-                        durationSeconds: Int(io_github_kt_pulsebar_export_PulseBarMedia_durationSeconds_get(mediaRef)),
-                        linkURL: io_github_kt_pulsebar_export_PulseBarMedia_linkUrl_get(mediaRef),
-                        trackId: io_github_kt_pulsebar_export_PulseBarMedia_trackId_get(mediaRef),
-                        isPlaying: io_github_kt_pulsebar_export_PulseBarMedia_isPlaying_get(mediaRef),
-                        trackNumber: io_github_kt_pulsebar_export_PulseBarMedia_trackNumber_get(mediaRef),
-                        discNumber: io_github_kt_pulsebar_export_PulseBarMedia_discNumber_get(mediaRef),
-                        collectionId: io_github_kt_pulsebar_export_PulseBarMedia_collectionId_get(mediaRef),
-                        collectionTitle: io_github_kt_pulsebar_export_PulseBarMedia_collectionTitle_get(mediaRef),
-                        collectionLinkURL: io_github_kt_pulsebar_export_PulseBarMedia_collectionLinkUrl_get(mediaRef)
-                    )
-                }
-                return LiveSnapshot(
-                    appName: resolvedDisplayName(appName: appName, bundleId: bundleId),
-                    bundleId: bundleId,
-                    pageTitle: pageTitle,
-                    observedAt: iso8601Formatter.date(from: observedAt) ?? Date(),
-                    media: media
-                )
-            }
-        } ?? nil
-    }
-
-    nonisolated private static func readStats(
-        bridgeRef: UnsafeMutableRawPointer?,
-        dayIso: String,
-        limit: Int32
-    ) -> (items: [UsageRow], totalSeconds: Int) {
-        guard let bridgeRef else { return ([], 0) }
-        let statsRef = io_github_kt_pulsebar_export_PulseBarBridge_readStats__TypesOfArguments__Swift_String_Swift_Int32__(
-            bridgeRef,
-            dayIso,
-            limit
-        )
-        return withDisposedExternalRef(statsRef) { statsRef in
-            let rawItems = io_github_kt_pulsebar_export_PulseBarStatsPage_items_get(statsRef) as [AnyObject]
-            let items: [UsageRow] = rawItems.compactMap { rawObject in
-                guard let rowRef = externalRCRef(of: rawObject) else { return nil }
-                return withDisposedExternalRef(rowRef) { rowRef in
-                    mapUsageRow(
-                        key: io_github_kt_pulsebar_export_PulseBarUsageRow_key_get(rowRef),
-                        label: io_github_kt_pulsebar_export_PulseBarUsageRow_label_get(rowRef),
-                        bundleId: io_github_kt_pulsebar_export_PulseBarUsageRow_bundleId_get(rowRef),
-                        totalSeconds: Int(io_github_kt_pulsebar_export_PulseBarUsageRow_totalSeconds_get(rowRef))
-                    )
-                }
-            }
-            return (
-                items,
-                Int(io_github_kt_pulsebar_export_PulseBarStatsPage_totalSeconds_get(statsRef))
-            )
-        } ?? ([], 0)
-    }
-
-    nonisolated private static func readInteractionState(
-        bridgeRef: UnsafeMutableRawPointer?
-    ) -> (items: [InteractionItem], pendingCount: Int, lastStatus: String?) {
-        guard let bridgeRef else { return ([], 0, nil) }
-        let interactionRef = io_github_kt_pulsebar_export_PulseBarBridge_readInteractionState(bridgeRef)
-        return withDisposedExternalRef(interactionRef) { interactionRef in
-            let rawItems = io_github_kt_pulsebar_export_PulseBarInteractionState_items_get(interactionRef) as [AnyObject]
-            let items: [InteractionItem] = rawItems.compactMap { rawObject in
-                guard let itemRef = externalRCRef(of: rawObject) else { return nil }
-                return withDisposedExternalRef(itemRef) { itemRef in
-                    mapInteractionItem(
-                        requestId: io_github_kt_pulsebar_export_PulseBarInteractionItem_requestId_get(itemRef),
-                        status: io_github_kt_pulsebar_export_PulseBarInteractionItem_status_get(itemRef),
-                        provider: io_github_kt_pulsebar_export_PulseBarInteractionItem_provider_get(itemRef),
-                        uri: io_github_kt_pulsebar_export_PulseBarInteractionItem_uri_get(itemRef),
-                        title: io_github_kt_pulsebar_export_PulseBarInteractionItem_title_get(itemRef),
-                        issuedAtIso8601: io_github_kt_pulsebar_export_PulseBarInteractionItem_issuedAtIso8601_get(itemRef),
-                        updatedAtIso8601: io_github_kt_pulsebar_export_PulseBarInteractionItem_updatedAtIso8601_get(itemRef),
-                        targetDeviceId: io_github_kt_pulsebar_export_PulseBarInteractionItem_targetDeviceId_get(itemRef),
-                        errorCode: io_github_kt_pulsebar_export_PulseBarInteractionItem_errorCode_get(itemRef),
-                        errorMessage: io_github_kt_pulsebar_export_PulseBarInteractionItem_errorMessage_get(itemRef)
-                    )
-                }
-            }
-            return (
-                items,
-                Int(io_github_kt_pulsebar_export_PulseBarInteractionState_pendingCount_get(interactionRef)),
-                io_github_kt_pulsebar_export_PulseBarInteractionState_lastStatus_get(interactionRef)
-            )
-        } ?? ([], 0, nil)
-    }
-
-    nonisolated private static func readSyncState(bridgeRef: UnsafeMutableRawPointer?) -> SyncStatusInfo? {
-        guard let bridgeRef else { return nil }
-        let syncRef = io_github_kt_pulsebar_export_PulseBarBridge_readSyncState(bridgeRef)
-        return withDisposedExternalRef(syncRef) { syncRef in
-            let rawEndpoints = io_github_kt_pulsebar_export_PulseBarSyncState_endpoints_get(syncRef) as [AnyObject]
-            let endpoints: [EndpointSyncStatusInfo] = rawEndpoints.compactMap { rawObject -> EndpointSyncStatusInfo? in
-                guard let endpointRef = externalRCRef(of: rawObject) else { return nil }
-                return withDisposedExternalRef(endpointRef) { endpointRef in
-                    mapEndpointSyncState(
-                        id: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_id_get(endpointRef),
-                        name: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_name_get(endpointRef),
-                        enabled: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_enabled_get(endpointRef),
-                        transportName: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_transportName_get(endpointRef),
-                        endpointURL: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_endpointUrl_get(endpointRef),
-                        status: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_status_get(endpointRef),
-                        lastStatus: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastStatus_get(endpointRef),
-                        pendingCount: Int(io_github_kt_pulsebar_export_PulseBarEndpointSyncState_pendingCount_get(endpointRef)),
-                        needsAttention: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_needsAttention_get(endpointRef),
-                        lastAttemptAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastAttemptAtIso8601_get(endpointRef),
-                        lastProbeAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastProbeAtIso8601_get(endpointRef),
-                        lastSuccessAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastSuccessAtIso8601_get(endpointRef),
-                        lastFailureAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastFailureAtIso8601_get(endpointRef),
-                        lastErrorMessage: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_lastErrorMessage_get(endpointRef),
-                        diagnosticMessage: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_diagnosticMessage_get(endpointRef),
-                        acknowledgedSeqMax: Int(io_github_kt_pulsebar_export_PulseBarEndpointSyncState_acknowledgedSeqMax_get(endpointRef)),
-                        acknowledgedAtIso8601: io_github_kt_pulsebar_export_PulseBarEndpointSyncState_acknowledgedAtIso8601_get(endpointRef)
-                    )
-                }
-            }
-            return mapSyncState(
-                enabled: io_github_kt_pulsebar_export_PulseBarSyncState_enabled_get(syncRef),
-                enabledEndpointCount: Int(io_github_kt_pulsebar_export_PulseBarSyncState_enabledEndpointCount_get(syncRef)),
-                totalEndpointCount: Int(io_github_kt_pulsebar_export_PulseBarSyncState_totalEndpointCount_get(syncRef)),
-                status: io_github_kt_pulsebar_export_PulseBarSyncState_status_get(syncRef),
-                lastStatus: io_github_kt_pulsebar_export_PulseBarSyncState_lastStatus_get(syncRef),
-                pendingCount: Int(io_github_kt_pulsebar_export_PulseBarSyncState_pendingCount_get(syncRef)),
-                needsAttention: io_github_kt_pulsebar_export_PulseBarSyncState_needsAttention_get(syncRef),
-                endpoints: endpoints
-            )
-        }
-    }
-
     nonisolated private static func mapConfig(_ config: PulseBarConfig) -> SettingsDraft {
-        guard let configRef = externalRCRef(of: config as AnyObject) else {
-            return SettingsDraft()
-        }
-        return withDisposedExternalRef(configRef) { configRef in
-            let rawEndpoints = io_github_kt_pulsebar_export_PulseBarConfig_endpoints_get(configRef) as [AnyObject]
-            let endpoints: [EndpointSettingsDraft] = rawEndpoints.compactMap { rawObject -> EndpointSettingsDraft? in
-                guard let endpointRef = externalRCRef(of: rawObject) else { return nil }
-                return withDisposedExternalRef(endpointRef) { endpointRef in
-                    mapEndpointDraft(
-                        id: io_github_kt_pulsebar_export_PulseBarEndpointConfig_id_get(endpointRef),
-                        name: io_github_kt_pulsebar_export_PulseBarEndpointConfig_name_get(endpointRef),
-                        enabled: io_github_kt_pulsebar_export_PulseBarEndpointConfig_enabled_get(endpointRef),
-                        disconnected: io_github_kt_pulsebar_export_PulseBarEndpointConfig_disconnected_get(endpointRef),
-                        transport: mapTransportName(io_github_kt_pulsebar_export_PulseBarEndpointConfig_transportName_get(endpointRef)),
-                        endpointURL: io_github_kt_pulsebar_export_PulseBarEndpointConfig_endpointUrl_get(endpointRef),
-                        workspaceId: io_github_kt_pulsebar_export_PulseBarEndpointConfig_workspaceId_get(endpointRef),
-                        siteId: io_github_kt_pulsebar_export_PulseBarEndpointConfig_siteId_get(endpointRef),
-                        apiKey: io_github_kt_pulsebar_export_PulseBarEndpointConfig_apiKey_get(endpointRef),
-                        batchWindowSeconds: Int(io_github_kt_pulsebar_export_PulseBarEndpointConfig_batchWindowSeconds_get(endpointRef))
-                    )
-                }
-            }
-            return SettingsDraft(
-                endpoints: endpoints,
-                idleThresholdSeconds: Int(io_github_kt_pulsebar_export_PulseBarConfig_idleThresholdSeconds_get(configRef)),
-                changeStabilityMillis: Int(io_github_kt_pulsebar_export_PulseBarConfig_changeStabilityMillis_get(configRef)),
-                heartbeatSeconds: Int(io_github_kt_pulsebar_export_PulseBarConfig_heartbeatSeconds_get(configRef)),
-                appPollingMillis: Int(io_github_kt_pulsebar_export_PulseBarConfig_appPollingMillis_get(configRef)),
-                pagePollingMillis: Int(io_github_kt_pulsebar_export_PulseBarConfig_pagePollingMillis_get(configRef)),
-                mediaPollingMillis: Int(io_github_kt_pulsebar_export_PulseBarConfig_mediaPollingMillis_get(configRef)),
-                allowWebInteractions: io_github_kt_pulsebar_export_PulseBarConfig_allowWebInteractions_get(configRef),
-                interactionExecutionMode: mapInteractionModeName(io_github_kt_pulsebar_export_PulseBarConfig_interactionExecutionModeName_get(configRef)),
-                interactionPlaybackMode: mapInteractionPlaybackModeName(io_github_kt_pulsebar_export_PulseBarConfig_interactionPlaybackModeName_get(configRef))
+        let endpoints: [EndpointSettingsDraft] = config.endpoints.map { endpoint in
+            mapEndpointDraft(
+                id: endpoint.id,
+                name: endpoint.name,
+                enabled: endpoint.enabled,
+                disconnected: endpoint.disconnected,
+                transport: mapTransportName(endpoint.transportName),
+                endpointURL: endpoint.endpointUrl,
+                workspaceId: endpoint.workspaceId,
+                siteId: endpoint.siteId,
+                apiKey: endpoint.apiKey,
+                batchWindowSeconds: Int(endpoint.batchWindowSeconds)
             )
-        } ?? SettingsDraft()
+        }
+        return SettingsDraft(
+            endpoints: endpoints,
+            idleThresholdSeconds: Int(config.idleThresholdSeconds),
+            changeStabilityMillis: Int(config.changeStabilityMillis),
+            heartbeatSeconds: Int(config.heartbeatSeconds),
+            appPollingMillis: Int(config.appPollingMillis),
+            pagePollingMillis: Int(config.pagePollingMillis),
+            mediaPollingMillis: Int(config.mediaPollingMillis),
+            allowWebInteractions: config.allowWebInteractions,
+            interactionExecutionMode: mapInteractionModeName(config.interactionExecutionModeName),
+            interactionPlaybackMode: mapInteractionPlaybackModeName(config.interactionPlaybackModeName)
+        )
     }
 
     nonisolated private static func makeConfig(from draft: SettingsDraft) -> PulseBarConfig {

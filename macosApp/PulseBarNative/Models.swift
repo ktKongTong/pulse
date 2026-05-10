@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import PulseBarShared
 
 struct MediaInfo: Equatable, Identifiable {
     let id: String
@@ -212,7 +213,12 @@ extension LiveListenEndpointConfig {
         let workspaceId = endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = endpoint.apiKey
         guard !workspaceId.isEmpty, !apiKey.isEmpty else { return nil }
-        guard let baseURL = normalizedLiveListenBaseURL(endpoint.endpointUrl) else { return nil }
+        // The Kotlin normalizer strips `/api/v2/presence/ingest`,
+        // `/api/v1/live-listen`, `/api/v1/meta`, query, fragment, trailing
+        // slash — shared with the Kotlin presence reporter so both sides
+        // agree on the same base URL.
+        guard let normalized = ExportedKotlinPackages.io.github.kt.pulsebar.core.platform.normalizePulseBaseUrl(raw: endpoint.endpointUrl),
+              let baseURL = URL(string: normalized) else { return nil }
         return LiveListenEndpointConfig(
             id: endpoint.id,
             name: endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -220,27 +226,5 @@ extension LiveListenEndpointConfig {
             workspaceId: workspaceId,
             apiKey: apiKey
         )
-    }
-
-    private static func normalizedLiveListenBaseURL(_ raw: String) -> URL? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, var components = URLComponents(string: trimmed) else { return nil }
-        let path = components.path
-        let suffixes = [
-            "/api/v2/presence/ingest",
-            "/v2/presence/ingest",
-            "/api/v1/meta",
-            "/v1/meta",
-            "/api/v1/live-listen",
-            "/v1/live-listen",
-        ]
-        for suffix in suffixes where path.hasSuffix(suffix) {
-            components.path = String(path.dropLast(suffix.count))
-            break
-        }
-        if components.path == "/" { components.path = "" }
-        components.query = nil
-        components.fragment = nil
-        return components.url
     }
 }
