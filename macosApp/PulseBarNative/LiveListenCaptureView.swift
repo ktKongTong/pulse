@@ -277,13 +277,14 @@ struct LiveListenCapturePane: View {
     }
 
     private func formatOptional(_ value: Double?) -> String {
-        guard let value else { return "-" }
-        return value.formatted(.number.precision(.fractionLength(1)))
+        Formatters.shared.formatOptionalDouble(value: value)
     }
 
     private func queueRange(_ stats: PulseBarLiveListenStats) -> String {
-        guard let first = stats.queuedFirstSequenceOrNil, let last = stats.queuedLastSequenceOrNil else { return "-" }
-        return first == last ? "#\(first)" : "#\(first)-#\(last)"
+        Formatters.shared.formatQueueRange(
+            firstSeq: stats.queuedFirstSequence,
+            lastSeq: stats.queuedLastSequence
+        )
     }
 
     private func formatAge(_ date: Date?) -> String {

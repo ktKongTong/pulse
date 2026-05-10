@@ -66,4 +66,29 @@ class PulseBarFormattersTest {
         // future timestamp should not explode
         assertEquals("now", PulseBarFormatters.formatAge(100, 50))
     }
+
+    @Test fun queueRange_sentinelsCollapseToDash() {
+        assertEquals("-", PulseBarFormatters.formatQueueRange(-1L, -1L))
+        assertEquals("-", PulseBarFormatters.formatQueueRange(-1L, 5L))
+        assertEquals("-", PulseBarFormatters.formatQueueRange(5L, -1L))
+    }
+
+    @Test fun queueRange_matchingFirstLastCollapses() {
+        assertEquals("#7", PulseBarFormatters.formatQueueRange(7L, 7L))
+    }
+
+    @Test fun queueRange_spanRendersBoth() {
+        assertEquals("#3-#9", PulseBarFormatters.formatQueueRange(3L, 9L))
+    }
+
+    @Test fun optionalDouble_null() {
+        assertEquals("-", PulseBarFormatters.formatOptionalDouble(null))
+    }
+
+    @Test fun optionalDouble_basic() {
+        assertEquals("1.5", PulseBarFormatters.formatOptionalDouble(1.5))
+        assertEquals("0.0", PulseBarFormatters.formatOptionalDouble(0.0))
+        assertEquals("12.3", PulseBarFormatters.formatOptionalDouble(12.34))
+        assertEquals("12.4", PulseBarFormatters.formatOptionalDouble(12.35))
+    }
 }

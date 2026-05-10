@@ -70,5 +70,29 @@ object PulseBarFormatters {
         return "${minutes}m ago"
     }
 
+    /**
+     * Human sequence-range label: `-`, `#123`, or `#100-#123`. Both
+     * sentinel inputs (`-1`) collapse to `-`; matching first/last collapse
+     * to `#<seq>`.
+     */
+    fun formatQueueRange(firstSeq: Long, lastSeq: Long): String {
+        if (firstSeq < 0L || lastSeq < 0L) return "-"
+        if (firstSeq == lastSeq) return "#$firstSeq"
+        return "#$firstSeq-#$lastSeq"
+    }
+
+    /**
+     * Optional double → string. Returns `"-"` when [value] is null,
+     * otherwise formats with one decimal place (e.g. kbps readouts).
+     */
+    fun formatOptionalDouble(value: Double?): String {
+        if (value == null) return "-"
+        // Manual formatting keeps us off platform-specific NumberFormatter.
+        val rounded = kotlin.math.round(value * 10.0) / 10.0
+        val whole = rounded.toLong()
+        val frac = kotlin.math.round(kotlin.math.abs(rounded - whole) * 10.0).toLong()
+        return "$whole.$frac"
+    }
+
     private fun pad2(v: Int): String = if (v < 10) "0$v" else v.toString()
 }
