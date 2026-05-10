@@ -3,6 +3,10 @@ import Foundation
 @preconcurrency import PulseBarShared
 import SwiftUI
 
+// Short aliases for presentation types living under the Kotlin package namespace.
+private typealias LiveListenStatusInput = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.LiveListenStatusInput
+private typealias LiveListenPresentation = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.LiveListenPresentation
+
 /// Abstracts over the Kotlin bridge calls used by LiveListenCaptureModel so
 /// the model doesn't spawn a second `PulseBarBridge` instance (which would
 /// race the primary one during DataStore bootstrap).
@@ -72,12 +76,9 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     var serverConnectionText: String {
-        let total = endpoints.count
-        guard total > 0 else { return "none" }
-        let connected = endpoints.count { endpoint in
-            activeEndpointId == endpoint.id && publisherStats.connectionState == .connected
-        }
-        return "\(connected)/\(total)"
+        LiveListenPresentation.shared.serverConnectionText(
+            input: buildStatusInput()
+        )
     }
 
     var serverEndpointText: String {
@@ -88,17 +89,14 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     var captureActivityText: String {
-        if !isCapturing { return "idle" }
-        if publisherStats.isSending { return "sending" }
-        if meter.capturedFrames > 0 { return "capturing" }
-        return "starting"
+        LiveListenPresentation.shared.captureActivityText(input: buildStatusInput())
     }
 
     var nextReconnectText: String {
-        guard let nextReconnectAt = publisherStats.nextReconnectAt else { return "-" }
-        let seconds = max(0, nextReconnectAt.timeIntervalSince(Date()))
-        if seconds < 1 { return "now" }
-        return String(format: "%.0fs", seconds)
+        LiveListenPresentation.shared.nextReconnectText(
+            input: buildStatusInput(),
+            nowMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
+        )
     }
 
     var canReconnectServer: Bool {
@@ -542,25 +540,42 @@ final class LiveListenCaptureModel: ObservableObject {
         sourceName: String,
         publisherStats: LiveListenPublisherStats
     ) -> String {
-        switch publisherStats.connectionState {
-        case .connecting:
-            return "Connecting Live Listen server…"
-        case .connected:
-            if publisherStats.isSending {
-                return "Sending \(sourceName) audio…"
-            }
-            return "Capturing \(sourceName)…"
-        case .reconnecting:
-            return "Reconnecting Live Listen server…"
-        case .failed:
-            return "Live Listen connection failed"
-        case .stopping:
-            return "Stopping stream…"
-        case .stopped:
-            return "Stream stopped"
-        case .idle:
-            return "Preparing stream…"
-        }
+        LiveListenPresentation.shared.streamStatusText(
+            sourceName: sourceName,
+            input: makeStatusInput(stats: publisherStats, isCapturing: false, capturedFrames: 0, endpointCount: 0, activeConnected: false)
+        )
+    }
+
+    /// Builds the primitive input the Kotlin presentation helpers need.
+    private func buildStatusInput() -> LiveListenStatusInput {
+        let activeConnected = publisherStats.connectionState == .connected && activeEndpointId != nil
+        return Self.makeStatusInput(
+            stats: publisherStats,
+            isCapturing: isCapturing,
+            capturedFrames: Int64(meter.capturedFrames),
+            endpointCount: Int32(endpoints.count),
+            activeConnected: activeConnected
+        )
+    }
+
+    private static func makeStatusInput(
+        stats: LiveListenPublisherStats,
+        isCapturing: Bool,
+        capturedFrames: Int64,
+        endpointCount: Int32,
+        activeConnected: Bool
+    ) -> LiveListenStatusInput {
+        let connectedAt = activeConnected ? Int32(1) : Int32(0)
+        let nextReconnectMillis: Int64? = stats.nextReconnectAt.map { Int64($0.timeIntervalSince1970 * 1000.0) }
+        return LiveListenStatusInput(
+            connectionStateName: stats.connectionState.rawValue.uppercased(),
+            isSending: stats.isSending,
+            isCapturing: isCapturing,
+            capturedFrames: capturedFrames,
+            nextReconnectAtMillis: nextReconnectMillis,
+            endpointCount: endpointCount,
+            connectedEndpointCount: connectedAt
+        )
     }
 
     private static func mediaSignature(_ media: MediaInfo?) -> String {

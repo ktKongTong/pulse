@@ -1,5 +1,9 @@
 import AppKit
+@preconcurrency import PulseBarShared
 import SwiftUI
+
+private typealias EndpointPresentation = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.EndpointPresentation
+private typealias EndpointRuntimeInput = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.EndpointRuntimeInput
 
 struct NativeSettingsView: View {
     @EnvironmentObject private var monitor: NativeMonitorModel
@@ -413,68 +417,15 @@ private struct ConnectionDetailPane: View {
     }
 
     private var disconnectedReason: String {
-        if isConnecting {
-            return "-"
-        }
-        if !endpoint.enabled {
-            return "Endpoint disabled"
-        }
-        if endpoint.disconnected {
-            return "Disconnected manually"
-        }
-        guard let sync else {
-            return endpoint.endpointUrl.isEmpty ? "Missing endpoint URL" : "-"
-        }
-        if isStaleInactiveSync(sync) {
-            return "-"
-        }
-        switch sync.status {
-        case "healthy", "probing", "checking_server", "idle":
-            return "-"
-        case "local_unavailable":
-            return "Local server unavailable"
-        case "server_unavailable":
-            return "Server unavailable"
-        case "misconfigured", "configuration_error":
-            return "Configuration needs attention"
-        default:
-            return connectionStatusDetail(sync.status, sync.lastErrorMessage)
-        }
+        EndpointPresentation.shared.disconnectedReason(input: buildRuntimeInput())
     }
 
     private var connectionActionTitle: String {
-        if isConnecting {
-            return "Connecting…"
-        }
-        switch status {
-        case .connected:
-            return "Disconnect"
-        case .reconnecting:
-            return "Reconnect"
-        case .disconnected:
-            return "Connect"
-        }
+        EndpointPresentation.shared.connectionActionTitle(input: buildRuntimeInput(), status: status.kotlinRuntime)
     }
 
     private var deliveryDetail: String {
-        if isConnecting {
-            return "Connecting"
-        }
-        if !endpoint.enabled {
-            return "Endpoint disabled"
-        }
-        if endpoint.disconnected {
-            return "Disconnected manually"
-        }
-        if let sync, isStaleInactiveSync(sync) {
-            return "Connecting"
-        }
-        return deliveryStatusDetail(
-            status: sync?.status,
-            lastStatus: sync?.lastStatus,
-            lastErrorMessage: sync?.lastErrorMessage,
-            pendingCount: sync?.pendingCount ?? 0
-        )
+        EndpointPresentation.shared.deliveryDetail(input: buildRuntimeInput())
     }
 
     private var liveListenStatusText: String {
@@ -498,11 +449,17 @@ private struct ConnectionDetailPane: View {
         return model.publisherStatusText
     }
 
-    private func isStaleInactiveSync(_ sync: EndpointSyncStatusInfo) -> Bool {
-        sync.status == "disabled" ||
-            sync.status == "disconnected" ||
-            sync.lastStatus == "skip:endpoint_disabled" ||
-            sync.lastStatus == "skip:endpoint_disconnected"
+    private func buildRuntimeInput() -> EndpointRuntimeInput {
+        EndpointRuntimeInput(
+            enabled: endpoint.enabled,
+            disconnected: endpoint.disconnected,
+            endpointUrl: endpoint.endpointUrl,
+            isConnecting: isConnecting,
+            status: sync?.status,
+            lastStatus: sync?.lastStatus,
+            lastErrorMessage: sync?.lastErrorMessage,
+            pendingCount: Int32(sync?.pendingCount ?? 0)
+        )
     }
 }
 
@@ -776,6 +733,15 @@ private enum ConnectionRuntimeStatus: Equatable {
         }
     }
 
+    /// Bridge to the Kotlin presentation-core enum of the same name.
+    var kotlinRuntime: ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.ConnectionRuntimeStatus {
+        switch self {
+        case .connected: return .Connected
+        case .disconnected: return .Disconnected
+        case .reconnecting: return .Reconnecting
+        }
+    }
+
     var color: Color {
         switch self {
         case .connected: return .green
@@ -957,87 +923,6 @@ private enum InstalledAppCatalog {
             .filter { !$0.isOther }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return [.other] + sorted
-    }
-}
-
-private func connectionStatusDetail(_ status: String?, _ lastErrorMessage: String?) -> String {
-    guard let status else { return "-" }
-    if let lastErrorMessage, !lastErrorMessage.isEmpty {
-        return lastErrorMessage
-    }
-    switch status {
-    case "local_unavailable":
-        return "Local server unavailable"
-    case "server_unavailable":
-        return "Server unavailable"
-    case "misconfigured", "configuration_error":
-        return "Configuration needs attention"
-    case "degraded":
-        return "Delivery degraded"
-    default:
-        return "-"
-    }
-}
-
-private func deliveryStatusDetail(
-    status: String?,
-    lastStatus: String?,
-    lastErrorMessage: String?,
-    pendingCount: Int
-) -> String {
-    guard let status else { return "-" }
-    if let lastStatus {
-        switch lastStatus {
-        case "skip:missing_workspace_site_or_api_key":
-            return "Missing Workspace ID, Site ID, or API Key"
-        case "skip:endpoint_disabled":
-            return "Endpoint disabled"
-        case "skip:no_change":
-            return pendingCount > 0 ? "Waiting to deliver queued events" : "No new events"
-        case "replay:unauthorized":
-            return "API Key is invalid"
-        case "replay:workspace_mismatch":
-            return "Workspace ID does not match the server"
-        case "replay:site_mismatch":
-            return "Site ID does not match the server"
-        case let value where value.hasPrefix("replay:ok:"):
-            return "Events delivered successfully"
-        case let value where value.hasPrefix("replay:http:"):
-            return lastErrorMessage ?? "Server rejected the ingest request"
-        case "replay:error":
-            return lastErrorMessage ?? "Temporary delivery error"
-        case "replay:local_unavailable":
-            return lastErrorMessage ?? "Local network unavailable"
-        case let value where value.hasPrefix("replay:attempt:"):
-            return "Sending queued events"
-        default:
-            break
-        }
-    }
-
-    if let lastErrorMessage, !lastErrorMessage.isEmpty {
-        return lastErrorMessage
-    }
-
-    switch status {
-    case "healthy":
-        return pendingCount > 0 ? "Delivering queued events" : "Ready"
-    case "probing", "checking_server":
-        return "Checking server"
-    case "idle":
-        return pendingCount > 0 ? "Waiting for server check" : "Ready"
-    case "misconfigured", "configuration_error":
-        return "Endpoint configuration needs attention"
-    case "server_unavailable":
-        return "Server unavailable; new events stay in SQLite"
-    case "local_unavailable":
-        return "Local network unavailable"
-    case "disabled":
-        return "Endpoint disabled"
-    case "degraded":
-        return "Delivery degraded"
-    default:
-        return status.replacingOccurrences(of: "_", with: " ").capitalized
     }
 }
 

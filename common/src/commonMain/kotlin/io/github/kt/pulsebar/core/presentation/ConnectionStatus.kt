@@ -12,10 +12,10 @@ import io.github.kt.pulsebar.export.PulseBarEndpointSyncState
  * is now shared so a future Windows shell or a unit test doesn't have to
  * reimplement it.
  */
-enum class ConnectionRuntimeStatus {
-    Connected,
-    Disconnected,
-    Reconnecting,
+enum class ConnectionRuntimeStatus(val title: String) {
+    Connected("connected"),
+    Disconnected("disconnected"),
+    Reconnecting("reconnecting"),
 }
 
 /**
