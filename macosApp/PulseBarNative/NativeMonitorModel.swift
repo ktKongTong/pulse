@@ -20,7 +20,7 @@ final class NativeMonitorModel: ObservableObject {
     @Published var dashboardSelection: DashboardSection = .connection
 
     private let bridgeWorker = NativeBridgeWorker()
-    let liveListenCaptureModel = LiveListenCaptureModel()
+    let liveListenCaptureModel: LiveListenCaptureModel
     private var subscribed = false
 
     nonisolated(unsafe) private static let iso8601Formatter = ISO8601DateFormatter()
@@ -33,9 +33,11 @@ final class NativeMonitorModel: ObservableObject {
     @_silgen_name("Kotlin_native_internal_ref_disposeExternalRCRef")
     nonisolated private static func disposeExternalRCRef(_ ref: UnsafeMutableRawPointer?)
 
-    init() {}
+    init() {
+        self.liveListenCaptureModel = LiveListenCaptureModel(bridge: bridgeWorker)
+    }
 
-    private final class NativeBridgeWorker: @unchecked Sendable {
+    final class NativeBridgeWorker: LiveListenBridge, @unchecked Sendable {
         private let queue = DispatchQueue(label: "io.github.kt.pulsebar.native.bridge", qos: .utility)
         private var bridge: PulseBarBridge!
         private var cancellables: [PulseBarCancellable] = []
@@ -130,6 +132,63 @@ final class NativeMonitorModel: ObservableObject {
                 DispatchQueue.main.async {
                     completion()
                 }
+            }
+        }
+
+        // MARK: LiveListenBridge
+
+        func startLiveListen(
+            roomId: String,
+            deviceId: String,
+            baseUrl: String,
+            workspaceId: String,
+            apiKey: String,
+            sampleRate: Int32,
+            channels: Int32,
+            chunkDurationMs: Int32
+        ) {
+            queue.async {
+                self.bridge.startLiveListen(
+                    roomId: roomId,
+                    deviceId: deviceId,
+                    baseUrl: baseUrl,
+                    workspaceId: workspaceId,
+                    apiKey: apiKey,
+                    sampleRate: sampleRate,
+                    channels: channels,
+                    chunkDurationMs: chunkDurationMs
+                )
+            }
+        }
+
+        func stopLiveListen() {
+            queue.async { self.bridge.stopLiveListen() }
+        }
+
+        func submitLiveListenPcmBase64(_ encoded: String) {
+            queue.async { self.bridge.submitLiveListenPcmBase64(chunkBase64: encoded) }
+        }
+
+        func updateLiveListenMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool) {
+            queue.async {
+                self.bridge.updateLiveListenMediaState(
+                    permissionAllow: permissionAllow,
+                    playbackPlaying: playbackPlaying,
+                    captureRunning: captureRunning
+                )
+            }
+        }
+
+        func observeLiveListenStats(
+            onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
+            cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
+        ) {
+            queue.async {
+                let cancellable = self.bridge.observeLiveListenStats { stats in
+                    let mapped = LiveListenPublisherStats(from: stats)
+                    DispatchQueue.main.async { onSnapshot(mapped) }
+                }
+                DispatchQueue.main.async { cancellableReceived(cancellable) }
             }
         }
     }

@@ -3,6 +3,29 @@ import Foundation
 @preconcurrency import PulseBarShared
 import SwiftUI
 
+/// Abstracts over the Kotlin bridge calls used by LiveListenCaptureModel so
+/// the model doesn't spawn a second `PulseBarBridge` instance (which would
+/// race the primary one during DataStore bootstrap).
+protocol LiveListenBridge: AnyObject, Sendable {
+    func startLiveListen(
+        roomId: String,
+        deviceId: String,
+        baseUrl: String,
+        workspaceId: String,
+        apiKey: String,
+        sampleRate: Int32,
+        channels: Int32,
+        chunkDurationMs: Int32
+    )
+    func stopLiveListen()
+    func submitLiveListenPcmBase64(_ encoded: String)
+    func updateLiveListenMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool)
+    func observeLiveListenStats(
+        onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
+        cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
+    )
+}
+
 /// UI-facing Live Listen coordinator. Owns the thin Swift `LiveListenCaptureService`
 /// for CoreAudio capture, observes telemetry from Kotlin's `LiveListenClient`
 /// via the `PulseBarBridge`, and exposes everything the debug pane needs
@@ -81,12 +104,13 @@ final class LiveListenCaptureModel: ObservableObject {
     private var startupPermissionTask: Task<Void, Never>?
     private var lastPublishedMediaSignature: String?
     private var currentMedia: MediaInfo?
-    private let worker = LiveListenBridgeWorker()
+    private let worker: LiveListenBridge
     private var statsCancellable: PulseBarCancellable?
 
     // MARK: - Lifecycle
 
-    init() {
+    init(bridge: LiveListenBridge) {
+        self.worker = bridge
         if UserDefaults.standard.object(forKey: Self.mediaStreamAllowedKey) == nil {
             UserDefaults.standard.set(true, forKey: Self.mediaStreamAllowedKey)
         }
@@ -102,7 +126,7 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     private func subscribeStats() {
-        worker.observeStats { [weak self] snapshot in
+        worker.observeLiveListenStats { [weak self] snapshot in
             guard let self else { return }
             applyStatsSnapshot(snapshot)
         } cancellableReceived: { [weak self] cancellable in
@@ -323,7 +347,8 @@ final class LiveListenCaptureModel: ObservableObject {
                 // the bridge is a non-blocking `trySend` into a buffered channel.
                 let worker = self.worker
                 let stream = try await service.capture(source: selectedSource) { data in
-                    worker.submitPcm(data: data)
+                    let encoded = data.base64EncodedString()
+                    worker.submitLiveListenPcmBase64(encoded)
                 }
                 statusText = "Waiting for \(selectedSource.name) audio…"
                 for try await update in stream {
@@ -376,13 +401,16 @@ final class LiveListenCaptureModel: ObservableObject {
             deviceId: deviceId,
             baseUrl: endpoint.baseURL.absoluteString,
             workspaceId: endpoint.workspaceId,
-            apiKey: endpoint.apiKey
+            apiKey: endpoint.apiKey,
+            sampleRate: 48_000,
+            channels: 2,
+            chunkDurationMs: 500
         )
     }
 
     private func pushMediaStateToBridge(captureRunning: Bool? = nil) {
         let running = captureRunning ?? isCapturing
-        worker.updateMediaState(
+        worker.updateLiveListenMediaState(
             permissionAllow: mediaStreamPermission == .allow,
             playbackPlaying: mediaPlaybackStatus == .playing,
             captureRunning: running
@@ -454,80 +482,6 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 }
 
-// MARK: - Bridge worker (all Kotlin calls off the main actor)
-
-private final class LiveListenBridgeWorker: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "io.github.kt.pulsebar.live-listen.bridge", qos: .utility)
-    private var bridge: PulseBarBridge!
-
-    init() {
-        queue.sync {
-            bridge = PulseBarBridge()
-        }
-    }
-
-    func startLiveListen(
-        roomId: String,
-        deviceId: String,
-        baseUrl: String,
-        workspaceId: String,
-        apiKey: String,
-        sampleRate: Int32 = 48_000,
-        channels: Int32 = 2,
-        chunkDurationMs: Int32 = 500
-    ) {
-        queue.async {
-            self.bridge.startLiveListen(
-                roomId: roomId,
-                deviceId: deviceId,
-                baseUrl: baseUrl,
-                workspaceId: workspaceId,
-                apiKey: apiKey,
-                sampleRate: sampleRate,
-                channels: channels,
-                chunkDurationMs: chunkDurationMs
-            )
-        }
-    }
-
-    func stopLiveListen() {
-        queue.async { self.bridge.stopLiveListen() }
-    }
-
-    /// Called from the real-time CoreAudio render thread. We hop to a
-    /// utility queue immediately; [PulseBarBridge.submitLiveListenPcmBase64]
-    /// is a non-blocking channel `trySend` on the Kotlin side.
-    func submitPcm(data: Data) {
-        let encoded = data.base64EncodedString()
-        queue.async {
-            self.bridge.submitLiveListenPcmBase64(chunkBase64: encoded)
-        }
-    }
-
-    func updateMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool) {
-        queue.async {
-            self.bridge.updateLiveListenMediaState(
-                permissionAllow: permissionAllow,
-                playbackPlaying: playbackPlaying,
-                captureRunning: captureRunning
-            )
-        }
-    }
-
-    func observeStats(
-        onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
-        cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
-    ) {
-        queue.async {
-            let cancellable = self.bridge.observeLiveListenStats { stats in
-                let mapped = LiveListenPublisherStats(from: stats)
-                DispatchQueue.main.async { onSnapshot(mapped) }
-            }
-            DispatchQueue.main.async { cancellableReceived(cancellable) }
-        }
-    }
-}
-
 // MARK: - SwiftUI-facing stat types
 
 /// Mirror of the Kotlin `PulseBarLiveListenStats` class adapted for Swift
@@ -576,7 +530,7 @@ enum LiveListenPublisherConnectionState: String, Sendable, Equatable {
 
 extension LiveListenPublisherStats {
     init(from stats: PulseBarLiveListenStats) {
-        self.connectionState = LiveListenPublisherConnectionState(kotlin: stats.connectionState)
+        self.connectionState = LiveListenPublisherConnectionState(kotlinName: stats.connectionStateName)
         self.webSocketURL = stats.webSocketUrl
         self.lastConnectedAt = LiveListenPublisherStats.dateOrNil(millis: stats.lastConnectedAtMillis)
         self.lastDisconnectedAt = LiveListenPublisherStats.dateOrNil(millis: stats.lastDisconnectedAtMillis)
@@ -612,15 +566,20 @@ extension LiveListenPublisherStats {
 }
 
 extension LiveListenPublisherConnectionState {
-    init(kotlin: PulseBarLiveListenConnectionState) {
-        switch kotlin {
-        case .IDLE: self = .idle
-        case .CONNECTING: self = .connecting
-        case .CONNECTED: self = .connected
-        case .RECONNECTING: self = .reconnecting
-        case .STOPPING: self = .stopping
-        case .STOPPED: self = .stopped
-        case .FAILED: self = .failed
+    /// Parses the raw Kotlin enum name exported via `connectionStateName`.
+    /// Going through the String name avoids Swift Export's enum bridge,
+    /// whose initializer asserts when the Kotlin singleton externalRCRef
+    /// doesn't match any of the cached case pointers (which happens when
+    /// the enum is read via a getter rather than a literal).
+    init(kotlinName: String) {
+        switch kotlinName {
+        case "IDLE": self = .idle
+        case "CONNECTING": self = .connecting
+        case "CONNECTED": self = .connected
+        case "RECONNECTING": self = .reconnecting
+        case "STOPPING": self = .stopping
+        case "STOPPED": self = .stopped
+        case "FAILED": self = .failed
         default: self = .idle
         }
     }
