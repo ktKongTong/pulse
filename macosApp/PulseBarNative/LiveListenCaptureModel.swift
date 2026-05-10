@@ -166,17 +166,22 @@ final class LiveListenCaptureModel: ObservableObject {
             return
         }
 
+        // Open (or re-open) the device-session WebSocket to the first endpoint as
+        // soon as we know about it. The server decides when to issue `stream.start`
+        // / `stream.stop` — Swift only opens the socket and forwards PCM once
+        // capture kicks in. LiveListenClient.start() is idempotent for identical
+        // configs, so this is safe to call every time updateEndpoints() fires.
+        let primary = endpoints.first
+        if let primary, activeEndpointId != primary.id {
+            activeEndpointId = primary.id
+        } else if activeEndpointId == nil {
+            activeEndpointId = primary?.id
+        }
+        connectToActiveEndpoint(roomId: "live-listen:owner", deviceId: "owner")
+        pushMediaStateToBridge()
         updateAggregatePublisherState()
         if !isCapturing {
             publisherStatusText = "Publisher idle"
-        }
-
-        // Ensure the Kotlin client tracks the active endpoint (currently the first).
-        if let primary = endpoints.first, activeEndpointId != primary.id {
-            activeEndpointId = primary.id
-            if isCapturing {
-                connectToActiveEndpoint(roomId: "live-listen:owner", deviceId: "owner")
-            }
         }
     }
 
