@@ -35,7 +35,7 @@ final class NativeMonitorModel: ObservableObject {
 
     init() {
         self.bridge = PulseBarBridge()
-        self.liveListenCaptureModel = LiveListenCaptureModel(bridge: LiveListenBridgeAdapter(bridge: bridge))
+        self.liveListenCaptureModel = LiveListenCaptureModel(bridge: bridge)
     }
 
     // MARK: - Nonisolated observer subscribers
@@ -71,83 +71,6 @@ final class NativeMonitorModel: ObservableObject {
     nonisolated private static func subscribeToday(bridge: PulseBarBridge, onMain: @escaping @MainActor (PulseBarTodayStats) -> Void) -> PulseBarCancellable {
         bridge.observeTodayStats { stats in
             DispatchQueue.main.async { MainActor.assumeIsolated { onMain(stats) } }
-        }
-    }
-
-    /// Thin adapter that implements the Swift-side LiveListenBridge protocol
-    /// by delegating directly to the shared PulseBarBridge instance. Kotlin
-    /// is already thread-safe so no DispatchQueue needed.
-    private final class LiveListenBridgeAdapter: LiveListenBridge, @unchecked Sendable {
-        private let bridge: PulseBarBridge
-        init(bridge: PulseBarBridge) { self.bridge = bridge }
-
-        func startLiveListen(
-            roomId: String,
-            deviceId: String,
-            baseUrl: String,
-            workspaceId: String,
-            apiKey: String,
-            sampleRate: Int32,
-            channels: Int32,
-            chunkDurationMs: Int32
-        ) {
-            bridge.startLiveListen(
-                roomId: roomId,
-                deviceId: deviceId,
-                baseUrl: baseUrl,
-                workspaceId: workspaceId,
-                apiKey: apiKey,
-                sampleRate: sampleRate,
-                channels: channels,
-                chunkDurationMs: chunkDurationMs
-            )
-        }
-
-        func stopLiveListen() { bridge.stopLiveListen() }
-
-        func submitLiveListenPcmBase64(_ encoded: String) {
-            bridge.submitLiveListenPcmBase64(chunkBase64: encoded)
-        }
-
-        func updateLiveListenMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool) {
-            bridge.updateLiveListenMediaState(
-                permissionAllow: permissionAllow,
-                playbackPlaying: playbackPlaying,
-                captureRunning: captureRunning
-            )
-        }
-
-        func updateLiveListenMedia(
-            providerId: String?,
-            trackId: String?,
-            title: String?,
-            artist: String?,
-            album: String?,
-            artworkUrl: String?,
-            durationSeconds: Double,
-            isPlaying: Bool
-        ) {
-            bridge.updateLiveListenMedia(
-                providerId: providerId,
-                trackId: trackId,
-                title: title,
-                artist: artist,
-                album: album,
-                artworkUrl: artworkUrl,
-                durationSeconds: durationSeconds,
-                isPlaying: isPlaying
-            )
-        }
-
-        func observeLiveListenStats(
-            onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
-            cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
-        ) {
-            let cancellable = bridge.observeLiveListenStats { stats in
-                let mapped = LiveListenPublisherStats(from: stats)
-                DispatchQueue.main.async { onSnapshot(mapped) }
-            }
-            DispatchQueue.main.async { cancellableReceived(cancellable) }
         }
     }
 

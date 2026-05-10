@@ -7,9 +7,10 @@ import SwiftUI
 private typealias LiveListenStatusInput = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.LiveListenStatusInput
 private typealias LiveListenPresentation = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.LiveListenPresentation
 
-/// Abstracts over the Kotlin bridge calls used by LiveListenCaptureModel so
-/// the model doesn't spawn a second `PulseBarBridge` instance (which would
-/// race the primary one during DataStore bootstrap).
+/// Abstracts over the Kotlin bridge so LiveListenCaptureModel can be unit
+/// tested with a fake and so Swift doesn't spawn a second `PulseBarBridge`
+/// instance. The shapes match Kotlin's method signatures exactly so
+/// `PulseBarBridge` can conform directly (see extension below).
 protocol LiveListenBridge: AnyObject, Sendable {
     func startLiveListen(
         roomId: String,
@@ -22,7 +23,7 @@ protocol LiveListenBridge: AnyObject, Sendable {
         chunkDurationMs: Int32
     )
     func stopLiveListen()
-    func submitLiveListenPcmBase64(_ encoded: String)
+    func submitLiveListenPcmBase64(chunkBase64: String)
     func updateLiveListenMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool)
     func updateLiveListenMedia(
         providerId: String?,
@@ -34,10 +35,29 @@ protocol LiveListenBridge: AnyObject, Sendable {
         durationSeconds: Double,
         isPlaying: Bool
     )
+    /// Observer plumbing needs a bit more ceremony because Kotlin delivers
+    /// values on Dispatchers.Default. Implementations must hop onto main.
     func observeLiveListenStats(
         onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
         cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
     )
+}
+
+/// Make the Kotlin bridge a LiveListenBridge directly. Most methods are
+/// pass-through; only observeLiveListenStats needs a trampoline because the
+/// Kotlin callback is unlabeled + arrives off the main thread.
+extension PulseBarBridge: @retroactive @unchecked Sendable {}
+extension PulseBarBridge: LiveListenBridge {
+    func observeLiveListenStats(
+        onSnapshot: @escaping @MainActor (LiveListenPublisherStats) -> Void,
+        cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
+    ) {
+        let cancellable = observeLiveListenStats { stats in
+            let mapped = LiveListenPublisherStats(from: stats)
+            DispatchQueue.main.async { MainActor.assumeIsolated { onSnapshot(mapped) } }
+        }
+        DispatchQueue.main.async { MainActor.assumeIsolated { cancellableReceived(cancellable) } }
+    }
 }
 
 /// UI-facing Live Listen coordinator. Owns the thin Swift `LiveListenCaptureService`
@@ -198,7 +218,7 @@ final class LiveListenCaptureModel: ObservableObject {
                 let worker = self.worker
                 let stream = try await service.capture(source: selectedSource) { data in
                     let encoded = data.base64EncodedString()
-                    worker.submitLiveListenPcmBase64(encoded)
+                    worker.submitLiveListenPcmBase64(chunkBase64: encoded)
                 }
                 for try await update in stream {
                     meter = update.meter
@@ -447,7 +467,7 @@ final class LiveListenCaptureModel: ObservableObject {
                 let worker = self.worker
                 let stream = try await service.capture(source: selectedSource) { data in
                     let encoded = data.base64EncodedString()
-                    worker.submitLiveListenPcmBase64(encoded)
+                    worker.submitLiveListenPcmBase64(chunkBase64: encoded)
                 }
                 statusText = "Waiting for \(selectedSource.name) audio…"
                 for try await update in stream {
@@ -647,7 +667,20 @@ enum LiveListenPublisherConnectionState: String, Sendable, Equatable {
 
 extension LiveListenPublisherStats {
     init(from stats: PulseBarLiveListenStats) {
-        self.connectionState = LiveListenPublisherConnectionState(kotlinName: stats.connectionStateName)
+        // Parse the enum via `connectionStateName` — the Kotlin enum
+        // exported through Swift Export's __externalRCRefUnsafe path
+        // asserts at runtime when read via a class getter (the ref
+        // doesn't match any cached case pointer). String lookup dodges
+        // that issue entirely.
+        self.connectionState = switch stats.connectionStateName {
+            case "CONNECTING": .connecting
+            case "CONNECTED": .connected
+            case "RECONNECTING": .reconnecting
+            case "STOPPING": .stopping
+            case "STOPPED": .stopped
+            case "FAILED": .failed
+            default: .idle
+        }
         self.webSocketURL = stats.webSocketUrl
         self.lastConnectedAt = LiveListenPublisherStats.dateOrNil(millis: stats.lastConnectedAtMillis)
         self.lastDisconnectedAt = LiveListenPublisherStats.dateOrNil(millis: stats.lastDisconnectedAtMillis)
@@ -680,26 +713,6 @@ extension LiveListenPublisherStats {
 
     private static func dateOrNil(millis: Int64) -> Date? {
         millis > 0 ? Date(timeIntervalSince1970: TimeInterval(millis) / 1000.0) : nil
-    }
-}
-
-extension LiveListenPublisherConnectionState {
-    /// Parses the raw Kotlin enum name exported via `connectionStateName`.
-    /// Going through the String name avoids Swift Export's enum bridge,
-    /// whose initializer asserts when the Kotlin singleton externalRCRef
-    /// doesn't match any of the cached case pointers (which happens when
-    /// the enum is read via a getter rather than a literal).
-    init(kotlinName: String) {
-        switch kotlinName {
-        case "IDLE": self = .idle
-        case "CONNECTING": self = .connecting
-        case "CONNECTED": self = .connected
-        case "RECONNECTING": self = .reconnecting
-        case "STOPPING": self = .stopping
-        case "STOPPED": self = .stopped
-        case "FAILED": self = .failed
-        default: self = .idle
-        }
     }
 }
 
