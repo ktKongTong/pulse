@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.core.presentation
 
+import io.github.kt.pulsebar.export.PulseBarMedia
+
 /**
  * Primitive view of the Live Listen publisher stats. Mirrors the subset
  * of `LiveListenStats` the presentation layer actually needs, so the
@@ -49,5 +51,27 @@ object LiveListenPresentation {
     fun serverConnectionText(input: LiveListenStatusInput): String {
         if (input.endpointCount == 0) return "none"
         return "${input.connectedEndpointCount}/${input.endpointCount}"
+    }
+
+    /**
+     * Compact string fingerprint for a [PulseBarMedia] — used by the
+     * Swift shell to de-dupe "did the playing track change" events before
+     * pushing to the server. Lives here so any future shell gets the
+     * same definition of "same media" for free.
+     */
+    fun mediaSignature(media: PulseBarMedia?): String {
+        if (media == null) return "none"
+        val trackId = media.trackId ?: "${media.providerId}|${media.title}|${media.artist}"
+        return listOf(
+            trackId,
+            media.providerId,
+            media.source,
+            media.title,
+            media.artist,
+            media.album ?: "",
+            media.linkUrl ?: "",
+            media.durationSeconds.toString(),
+            if (media.isPlaying) "playing" else "paused",
+        ).joinToString("|")
     }
 }

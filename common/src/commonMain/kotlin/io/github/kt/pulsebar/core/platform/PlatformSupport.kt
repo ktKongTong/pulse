@@ -17,6 +17,17 @@ package io.github.kt.pulsebar.core.platform
 internal expect fun resolveAppDisplayName(bundleId: String): String?
 
 /**
+ * Format a millisecond timestamp as a locale-aware wall-clock (time-only)
+ * string for the dashboard's "last probe / last success / last failure"
+ * rows. Returns `"-"` for null or zero millis (the "never happened"
+ * sentinel used elsewhere).
+ *
+ * macOS uses `NSDateFormatter.localizedStringFromDate` with the user's
+ * current locale. JVM returns an ISO-like `HH:mm:ss` so tests are stable.
+ */
+expect fun formatWallClockTime(epochMillis: Long?): String
+
+/**
  * Normalize a user-entered endpoint base URL so downstream consumers have
  * a clean host (no trailing path like `/api/v2/presence/ingest` or
  * `/api/v1/live-listen`). Returns null when the URL can't be parsed or

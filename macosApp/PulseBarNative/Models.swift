@@ -149,13 +149,6 @@ extension PulseBarMedia {
     var discNumberOrNil: Int? {
         discNumber.flatMap { $0 > 0 ? Int($0) : nil }
     }
-
-    /// Stable identifier for SwiftUI animation / de-dup keys. Falls back to
-    /// a composite when the Kotlin `trackId` is nil (e.g. iTunes-style
-    /// providers without a persistent id).
-    var stableIdentifier: String {
-        trackId ?? "\(providerId)|\(title)|\(artist)"
-    }
 }
 
 // MARK: - Kotlin interaction / sync lifts

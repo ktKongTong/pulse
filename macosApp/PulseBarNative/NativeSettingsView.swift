@@ -303,9 +303,9 @@ private struct ConnectionDetailPane: View {
                             ("Status", status.title),
                             ("Enabled", endpoint.enabled ? "Enabled" : "Disabled"),
                             ("Reason", disconnectedReason),
-                            ("Last probe", formatSyncDate(sync?.lastProbeAt)),
-                            ("Last success", formatSyncDate(sync?.lastSuccessAt)),
-                            ("Last failure", formatSyncDate(sync?.lastFailureAt)),
+                            ("Last probe", formatWallClock(sync?.lastProbeAt)),
+                            ("Last success", formatWallClock(sync?.lastSuccessAt)),
+                            ("Last failure", formatWallClock(sync?.lastFailureAt)),
                         ])
                     }
 
@@ -917,7 +917,9 @@ private enum InstalledAppCatalog {
     }
 }
 
-private func formatSyncDate(_ date: Date?) -> String {
-    guard let date else { return "-" }
-    return date.formatted(date: .omitted, time: .standard)
+private func formatWallClock(_ date: Date?) -> String {
+    let millis: Int64? = date.map { Int64($0.timeIntervalSince1970 * 1000.0) }
+    return ExportedKotlinPackages.io.github.kt.pulsebar.core.platform.formatWallClockTime(
+        epochMillis: millis
+    )
 }

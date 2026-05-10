@@ -306,7 +306,7 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     func updateCurrentMedia(_ media: PulseBarMedia?) {
-        let signature = Self.mediaSignature(media)
+        let signature = LiveListenPresentation.shared.mediaSignature(media: media)
         guard signature != lastPublishedMediaSignature else { return }
         lastPublishedMediaSignature = signature
         currentMedia = media
@@ -598,21 +598,6 @@ final class LiveListenCaptureModel: ObservableObject {
             endpointCount: endpointCount,
             connectedEndpointCount: connectedAt
         )
-    }
-
-    private static func mediaSignature(_ media: PulseBarMedia?) -> String {
-        guard let media else { return "none" }
-        return [
-            media.stableIdentifier,
-            media.providerId,
-            media.source,
-            media.title,
-            media.artist,
-            media.album ?? "",
-            media.linkUrl ?? "",
-            String(media.durationSeconds),
-            media.isPlaying ? "playing" : "paused",
-        ].joined(separator: "|")
     }
 
     private func appendLiveListenCaptureDebugLog(_ message: String) {
