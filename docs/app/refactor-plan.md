@@ -481,85 +481,50 @@ Live Listen 面板若真的开始读 `stats.connectionState`，需要改读 brid
 上游修复后回退 workaround 的检查流程：全量 clean rebuild 一次，跑
 `scripts/check-pulse.sh`，确认没有 `Fatal error` 后再去掉字符串绕路。
 
-### Flow / suspend 支持（Kotlin 2.4 起）
+### Flow / suspend 支持（Kotlin 2.4）— 已完成
 
-当前我们 bridge 上所有 observer 都是回调式的：
+**Status**: ✅ DONE — Kotlin 2.4.0-Beta2, commit TBD.
 
-```kotlin
-fun observeMenuState(onUpdate: (PulseBarMenuState) -> Unit): PulseBarCancellable
-```
+Kotlin 2.4.0-Beta2 的 Swift Export [ships Flow → AsyncSequence interop by default](https://kotlinlang.org/docs/whatsnew-eap.html#swift-export-support-for-exporting-coroutine-flows)（KT-64572）。迁移之前使用的 callback 形状（`observe*(onUpdate:) -> PulseBarCancellable`）全部改成 `val xxx: Flow<T>` 属性，Swift 侧用 `for try await ... asAsyncSequence()` 在 `@MainActor` `Task` 里消费。
 
-Swift 端 `State/MonitorBridgeSubscriptions.swift` 再包一层
-`DispatchQueue.main.async { MainActor.assumeIsolated { ... } }` 做 main
-actor hop。这种形状是因为 Kotlin 2.3.x 的 Swift Export 还**不能**把
-`Flow<T>` 或 `suspend fun` 直接导出成 Swift 能消费的东西。
+**实际做了的事**：
 
-Kotlin 2.4 开始 Swift Export 原生支持 Flow / suspend（KT-64572 + 相关子
-票），参考实现 <https://github.com/GuilhE/SwiftExport-Playground>：
+1. `gradle/libs.versions.toml`: `kotlin = "2.3.20"` → `"2.4.0-Beta2"`, `ksp = "2.3.6"` → `"2.3.7"`（KSP2 从 2.3.0 起和 Kotlin 版本解耦）。无需加 dev repo，2.4.0-Beta2 已经进 mavenCentral。
+2. `common/src/commonMain/.../export/PulseBarExport.kt`:
+   - 删除 `interface PulseBarCancellable`。
+   - `expect class PulseBarBridge` 把六个 `observe*(...): PulseBarCancellable` 换成 `val menuState: Flow<...>` / `val config` / `val syncState` / `val interactionState` / `val todayStats` / `val liveListenStats`。
+3. `common/src/macosMain/.../export/PulseBarBridge.macos.kt`:
+   - `actual val menuState = menuStateFlow.asStateFlow()`
+   - `actual val syncState = syncStateFlow.asStateFlow().filterNotNull()` 等。
+   - 删掉内部 `collect(flow, onUpdate)` 辅助。
+4. `common/src/jvmMain/.../export/PulseBarBridge.jvm.kt`：noop stubs 改成 `emptyFlow()`。
+5. Swift 侧：
+   - 删除 `macosApp/PulseBarNative/State/MonitorBridgeSubscriptions.swift`（同时从 `project.pbxproj` 删四处引用）。
+   - `MonitorStore.start()` 每条订阅改为：
+     ```swift
+     let menuTask: Task<Void, Never> = Task { @MainActor [weak self] in
+         do {
+             for try await state in bridge.menuState.asAsyncSequence() {
+                 self?.applyMenuStateUpdate(state)
+             }
+         } catch {}
+     }
+     observerTasks.append(menuTask)
+     ```
+   - `deinit` 用 `for t in observerTasks { t.cancel() }` 替代 `PulseBarCancellable.cancel()`。
+   - `LiveListenBridge.observeLiveListenStats(onSnapshot:, cancellableReceived:)` → `liveListenStatsStream() -> AsyncStream<PulseBarLiveListenStats>`，`PulseBarBridge` extension 里用 `AsyncStream { continuation in ... Task { for try await ... asAsyncSequence() ... }.onTermination = cancel }` 桥接。
+   - `LiveListenCaptureModel.subscribeStats` 从回调 + `statsCancellable: PulseBarCancellable?` 改为 `statsTask: Task<Void, Never>?` + `for await`。
 
-```kotlin
-// Kotlin 2.4
-fun observeStateFlow(): Flow<Data> = _stateFlow.asStateFlow()
-suspend fun suspendFunction(): DataClass { ... }
-```
+**踩到的坑**：
 
-```swift
-// Swift
-for try await value in observeStateFlow().asAsyncSequence() { ... }
-let res = try await suspendFunction()
-```
+- `Task { @MainActor in for try await ... }` 的 closure inference 对 `Failure == Never` vs `any Error` 判错。
+  修法：显式标 `let t: Task<Void, Never> = Task { @MainActor in do { for try await ... } catch {} }`，`try` 的异常由 `catch {}` 吞掉（cooperative cancel 不经 throw 路径）。
+- KotlinTypeAdapters.swift 一个 pre-existing `default will never be executed` 警告，与本次无关，不处理。
+- 第一次 Gradle Kotlin Native distribution 下载 ~200MB，完整 `xcodebuild` 首次大约 21 min；之后 incremental 5s。
 
-迁移前置条件（一次性）：
+**没动的**：
 
-1. 在 `gradle/libs.versions.toml` 把 `kotlin` bump 到 `2.4.0-RC-185` 或更晚
-   的稳定版。
-2. 在 `settings.gradle.kts` 的 `pluginManagement` 和
-   `dependencyResolutionManagement` 都加
-   `maven("https://redirector.kotlinlang.org/maven/dev")`（2.4 正式版出之前
-   只在 dev repo）。
-3. 确认 KSP / Compose / Room / Datastore 能配合这个 Kotlin。当前 KSP 是
-   `2.3.6`，需要找 `2.4.0-*` 对应版本；否则先单独 verify 子模块再回到 native
-   app。
+- `@preconcurrency import PulseBarShared` 还留着。Beta2 Sendable 推断还没完全可靠，留 `@preconcurrency` 是安全侧。等 2.4 GA 再一起清。
+- `extension PulseBarBridge: @retroactive @unchecked Sendable {}` 还留着，同理。
 
-Kotlin 侧要改的位置（位于 `common/src/macosMain/.../export/PulseBarBridge.macos.kt`）：
-
-- 删除 `PulseBarCancellable` interface（`common/src/commonMain/.../export/PulseBarExport.kt`）。
-- `observeMenuState` / `observeConfig` / `observeSyncState`
-  / `observeInteractionState` / `observeTodayStats` /
-  `observeLiveListenStats` 从 callback 签名换成 `val menuStateFlow: Flow<PulseBarMenuState>` 形式（直接把现有的 `menuStateFlow.asStateFlow()` 暴露出来）。
-- 删除内部 `collect(flow, onUpdate)` 辅助。
-
-Swift 侧改动：
-
-- 删除 `macosApp/PulseBarNative/State/MonitorBridgeSubscriptions.swift` 整个
-  文件。
-- `MonitorStore.start()` 把每条订阅改成：
-
-  ```swift
-  menuStateTask = Task { [weak self] in
-      for try await state in bridge.menuStateFlow.asAsyncSequence() {
-          self?.applyMenuStateUpdate(state)
-      }
-  }
-  ```
-
-  `Task` 从 `@MainActor` 上下文继承隔离，body 自动跑在 main，无需 `DispatchQueue.main.async` +
-  `MainActor.assumeIsolated` 的组合拳。
-
-- `deinit` 用 `menuStateTask?.cancel()` 等替换原先 `PulseBarCancellable.cancel()`。
-- 大概率可以去掉 `extension PulseBarBridge: @retroactive @unchecked Sendable {}` 与
-  `extension PulseBarLiveListenStats / PulseBarMedia / PulseBarSnapshot: @retroactive @unchecked Sendable {}`——2.4 应该会把它们标成合规 Sendable；实际迁移时跑一遍
-  `xcodebuild` 看 diagnostic 即可确认。
-
-**验证顺序**：
-
-1. 先只 bump Kotlin + 加 dev repo，跑 `./gradlew :common:jvmTest` 和
-   `xcodebuild ... build`，确认现有 callback 形状仍然编译。
-2. 改一条链（建议先 `menuStateFlow`）为 Flow 形状 + Swift `for try await`，
-   `scripts/check-pulse.sh` 验活。
-3. 其他 observer 依次迁移，每条单独 commit。
-4. 全部迁完再删 `MonitorBridgeSubscriptions.swift` 和
-   `PulseBarCancellable`。
-
-KT-83730 与 Flow 支持是两条独立的线。Flow 支持落地后仍然需要单独验证枚举
-return 崩溃是否修复（在 2.4-RC build 里跑一次 `check-pulse.sh`）。
+KT-83730（enum return 崩溃）是独立的线，本次迁移期间没再验证，仍保留 String-name workaround。

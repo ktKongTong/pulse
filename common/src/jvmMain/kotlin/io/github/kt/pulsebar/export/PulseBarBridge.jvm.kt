@@ -1,5 +1,8 @@
 package io.github.kt.pulsebar.export
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+
 actual class PulseBarBridge actual constructor() {
     actual fun readMenuState(): PulseBarMenuState =
         PulseBarMenuState(
@@ -118,20 +121,11 @@ actual class PulseBarBridge actual constructor() {
 
     actual fun forceTick() = Unit
 
-    actual fun observeMenuState(onUpdate: (PulseBarMenuState) -> Unit): PulseBarCancellable =
-        noopCancellable
-
-    actual fun observeConfig(onUpdate: (PulseBarConfig) -> Unit): PulseBarCancellable =
-        noopCancellable
-
-    actual fun observeSyncState(onUpdate: (PulseBarSyncState) -> Unit): PulseBarCancellable =
-        noopCancellable
-
-    actual fun observeInteractionState(onUpdate: (PulseBarInteractionState) -> Unit): PulseBarCancellable =
-        noopCancellable
-
-    actual fun observeTodayStats(onUpdate: (PulseBarTodayStats) -> Unit): PulseBarCancellable =
-        noopCancellable
+    actual val menuState: Flow<PulseBarMenuState> = emptyFlow()
+    actual val config: Flow<PulseBarConfig> = emptyFlow()
+    actual val syncState: Flow<PulseBarSyncState> = emptyFlow()
+    actual val interactionState: Flow<PulseBarInteractionState> = emptyFlow()
+    actual val todayStats: Flow<PulseBarTodayStats> = emptyFlow()
 
     actual fun startLiveListen(
         roomId: String,
@@ -165,12 +159,5 @@ actual class PulseBarBridge actual constructor() {
         isPlaying: Boolean,
     ) = Unit
 
-    actual fun observeLiveListenStats(onUpdate: (PulseBarLiveListenStats) -> Unit): PulseBarCancellable =
-        noopCancellable
-
-    private companion object {
-        val noopCancellable: PulseBarCancellable = object : PulseBarCancellable {
-            override fun cancel() = Unit
-        }
-    }
+    actual val liveListenStats: Flow<PulseBarLiveListenStats> = emptyFlow()
 }

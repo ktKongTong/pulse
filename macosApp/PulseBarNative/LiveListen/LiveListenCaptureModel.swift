@@ -75,7 +75,7 @@ final class LiveListenCaptureModel: ObservableObject {
     private var lastPublishedMediaSignature: String?
     private var currentMedia: PulseBarMedia?
     private let worker: LiveListenBridge
-    private var statsCancellable: PulseBarCancellable?
+    private var statsTask: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
@@ -90,16 +90,17 @@ final class LiveListenCaptureModel: ObservableObject {
     }
 
     deinit {
-        statsCancellable?.cancel()
+        statsTask?.cancel()
         startupPermissionTask?.cancel()
     }
 
     private func subscribeStats() {
-        worker.observeLiveListenStats { [weak self] snapshot in
-            guard let self else { return }
-            applyStatsSnapshot(snapshot)
-        } cancellableReceived: { [weak self] cancellable in
-            self?.statsCancellable = cancellable
+        let stream = worker.liveListenStatsStream()
+        statsTask = Task { @MainActor [weak self] in
+            for await snapshot in stream {
+                guard let self else { return }
+                applyStatsSnapshot(snapshot)
+            }
         }
     }
 

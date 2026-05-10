@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.export
 
+import kotlinx.coroutines.flow.Flow
+
 class PulseBarUsageRow(
     val key: String,
     val label: String,
@@ -220,15 +222,6 @@ class PulseBarSyncState(
     val endpoints: List<PulseBarEndpointSyncState>
 )
 
-/**
- * Handle returned by every `observe*` method on [PulseBarBridge]. Swift
- * callers invoke [cancel] from their Combine teardown / view lifecycle to
- * release the underlying coroutine collector.
- */
-interface PulseBarCancellable {
-    fun cancel()
-}
-
 enum class PulseBarLiveListenConnectionState {
     IDLE,
     CONNECTING,
@@ -384,38 +377,35 @@ expect class PulseBarBridge() {
     fun forceTick()
 
     /**
-     * Subscribe to menu-state updates. The callback is invoked immediately
-     * with the current cached value and then every time the bridge's tick
-     * loop publishes a new one. Returns a [PulseBarCancellable] the caller
-     * must invoke on teardown.
+     * Menu-state stream. Consumed from Swift via `asAsyncSequence()` — the
+     * underlying Kotlin coroutine is cancelled automatically when the
+     * enclosing Swift `Task` is cancelled.
+     *
+     * Emits the current cached value on subscribe and every time the
+     * bridge's tick loop publishes a new one.
      */
-    fun observeMenuState(onUpdate: (PulseBarMenuState) -> Unit): PulseBarCancellable
+    val menuState: Flow<PulseBarMenuState>
 
     /**
-     * Subscribe to config updates. Emits the current persisted value on
-     * subscribe and again after every write. Used by the Swift adapter to
-     * drive the Settings UI without polling.
+     * Config stream. Emits the current persisted value on subscribe and
+     * again after every write.
      */
-    fun observeConfig(onUpdate: (PulseBarConfig) -> Unit): PulseBarCancellable
+    val config: Flow<PulseBarConfig>
 
     /**
-     * Subscribe to sync-state updates. Emits every time an endpoint probe /
-     * drain / ack changes the sync aggregate.
+     * Sync-state stream. Emits every time an endpoint probe / drain / ack
+     * changes the sync aggregate.
      */
-    fun observeSyncState(onUpdate: (PulseBarSyncState) -> Unit): PulseBarCancellable
+    val syncState: Flow<PulseBarSyncState>
+
+    /** Interaction-state stream. */
+    val interactionState: Flow<PulseBarInteractionState>
 
     /**
-     * Subscribe to interaction-state updates.
+     * Today's usage stats stream. Emits on startup, when Room's usage
+     * tables are updated by a tick, and when the day rolls over.
      */
-    fun observeInteractionState(onUpdate: (PulseBarInteractionState) -> Unit): PulseBarCancellable
-
-    /**
-     * Subscribe to today's usage stats. Emits on startup, when Room's usage
-     * tables are updated by a tick, and when the day rolls over. The value
-     * includes today's total seconds plus the top three app rows for menubar
-     * rendering.
-     */
-    fun observeTodayStats(onUpdate: (PulseBarTodayStats) -> Unit): PulseBarCancellable
+    val todayStats: Flow<PulseBarTodayStats>
 
     /**
      * Start (or restart) the Live Listen device session against the given
@@ -485,9 +475,9 @@ expect class PulseBarBridge() {
     )
 
     /**
-     * Subscribe to Live Listen telemetry (connection state, queue depth,
+     * Live Listen telemetry stream (connection state, queue depth,
      * bitrate, errors). Emits the current snapshot on subscribe and every
      * time something changes.
      */
-    fun observeLiveListenStats(onUpdate: (PulseBarLiveListenStats) -> Unit): PulseBarCancellable
+    val liveListenStats: Flow<PulseBarLiveListenStats>
 }

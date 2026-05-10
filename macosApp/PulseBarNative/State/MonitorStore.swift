@@ -4,7 +4,7 @@ import Foundation
 @preconcurrency import PulseBarShared
 
 /// Root `ObservableObject` for the SwiftUI tree. Fans out Kotlin bridge
-/// observer callbacks onto `@Published` properties grouped by feature.
+/// observer streams onto `@Published` properties grouped by feature.
 ///
 /// Views inject this object via `.environmentObject(...)` from
 /// `PulseBarNativeApp` / `StatusItemController`.
@@ -12,6 +12,11 @@ import Foundation
 /// Threading: Kotlin owns all side effects (the Kotlin bridge uses its
 /// own `CoroutineScope(SupervisorJob() + Dispatchers.Default)` + internal
 /// `Mutex`). Swift is a pure consumer + command issuer.
+///
+/// Kotlin 2.4's Swift Export exposes `Flow<T>` properties as
+/// `AsyncSequence<T, Error>` (KT-64572). We consume them directly via
+/// `for await` loops inside `@MainActor` `Task`s — no dispatch hop, no
+/// `MainActor.assumeIsolated`, no `PulseBarCancellable` wrapper.
 @MainActor
 final class MonitorStore: ObservableObject {
 
@@ -44,7 +49,7 @@ final class MonitorStore: ObservableObject {
     // MARK: - Dependencies
 
     private let bridge: PulseBarBridge
-    private var cancellables: [PulseBarCancellable] = []
+    private var observerTasks: [Task<Void, Never>] = []
     let liveListenCaptureModel: LiveListenCaptureModel
     private var subscribed = false
 
@@ -54,7 +59,7 @@ final class MonitorStore: ObservableObject {
     }
 
     deinit {
-        for c in cancellables { c.cancel() }
+        for t in observerTasks { t.cancel() }
     }
 
     // MARK: - Lifecycle
@@ -69,11 +74,51 @@ final class MonitorStore: ObservableObject {
         isPaused = false
         subscribed = true
 
-        cancellables.append(MonitorBridgeSubscriptions.menuState(bridge: bridge) { [weak self] s in self?.applyMenuStateUpdate(s) })
-        cancellables.append(MonitorBridgeSubscriptions.config(bridge: bridge) { [weak self] c in self?.applyConfigUpdate(c) })
-        cancellables.append(MonitorBridgeSubscriptions.syncState(bridge: bridge) { [weak self] s in self?.applySyncStateUpdate(s) })
-        cancellables.append(MonitorBridgeSubscriptions.interactionState(bridge: bridge) { [weak self] s in self?.applyInteractionStateUpdate(s) })
-        cancellables.append(MonitorBridgeSubscriptions.todayStats(bridge: bridge) { [weak self] s in self?.applyTodayStatsUpdate(s) })
+        let bridge = self.bridge
+        let menuTask: Task<Void, Never> = Task { @MainActor [weak self] in
+            do {
+                for try await state in bridge.menuState.asAsyncSequence() {
+                    self?.applyMenuStateUpdate(state)
+                }
+            } catch {}
+        }
+        observerTasks.append(menuTask)
+
+        let configTask: Task<Void, Never> = Task { @MainActor [weak self] in
+            do {
+                for try await config in bridge.config.asAsyncSequence() {
+                    self?.applyConfigUpdate(config)
+                }
+            } catch {}
+        }
+        observerTasks.append(configTask)
+
+        let syncTask: Task<Void, Never> = Task { @MainActor [weak self] in
+            do {
+                for try await state in bridge.syncState.asAsyncSequence() {
+                    self?.applySyncStateUpdate(state)
+                }
+            } catch {}
+        }
+        observerTasks.append(syncTask)
+
+        let interactionTask: Task<Void, Never> = Task { @MainActor [weak self] in
+            do {
+                for try await state in bridge.interactionState.asAsyncSequence() {
+                    self?.applyInteractionStateUpdate(state)
+                }
+            } catch {}
+        }
+        observerTasks.append(interactionTask)
+
+        let todayTask: Task<Void, Never> = Task { @MainActor [weak self] in
+            do {
+                for try await stats in bridge.todayStats.asAsyncSequence() {
+                    self?.applyTodayStatsUpdate(stats)
+                }
+            } catch {}
+        }
+        observerTasks.append(todayTask)
 
         liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
     }

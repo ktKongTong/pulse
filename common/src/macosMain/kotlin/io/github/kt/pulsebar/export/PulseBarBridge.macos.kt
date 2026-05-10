@@ -34,11 +34,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -226,36 +229,33 @@ actual class PulseBarBridge actual constructor() {
         interactionStateFlow.value = interactionClient.readState()
     }
 
-    actual fun observeMenuState(onUpdate: (PulseBarMenuState) -> Unit): PulseBarCancellable =
-        collect(menuStateFlow.asStateFlow(), onUpdate)
+    actual val menuState: Flow<PulseBarMenuState> = menuStateFlow.asStateFlow()
 
-    actual fun observeConfig(onUpdate: (PulseBarConfig) -> Unit): PulseBarCancellable =
-        collect(configStore.configs.distinctUntilChanged()) { onUpdate(it.toExport()) }
+    actual val config: Flow<PulseBarConfig> =
+        configStore.configs.distinctUntilChanged().map { it.toExport() }
 
-    actual fun observeSyncState(onUpdate: (PulseBarSyncState) -> Unit): PulseBarCancellable =
-        collect(syncStateFlow.asStateFlow()) { if (it != null) onUpdate(it) }
+    actual val syncState: Flow<PulseBarSyncState> =
+        syncStateFlow.asStateFlow().filterNotNull()
 
-    actual fun observeInteractionState(onUpdate: (PulseBarInteractionState) -> Unit): PulseBarCancellable =
-        collect(interactionStateFlow.asStateFlow()) { if (it != null) onUpdate(it) }
+    actual val interactionState: Flow<PulseBarInteractionState> =
+        interactionStateFlow.asStateFlow().filterNotNull()
 
-    actual fun observeTodayStats(onUpdate: (PulseBarTodayStats) -> Unit): PulseBarCancellable {
+    actual val todayStats: Flow<PulseBarTodayStats> = flow {
         val todayIso = todayKey()
-        return collect(
-            store.rowsForDayFlow(todayIso, UsageSlice.APP, limit = 100)
-                .distinctUntilChanged(),
-        ) { rows ->
-            val total = rows.sumOf { it.totalSeconds }
-            onUpdate(
-                PulseBarTodayStats(
-                    dayIso = todayIso,
-                    totalSeconds = total,
-                    firstUsage = rows.getOrNull(0),
-                    secondUsage = rows.getOrNull(1),
-                    thirdUsage = rows.getOrNull(2),
-                    topRows = rows,
-                ),
-            )
-        }
+        store.rowsForDayFlow(todayIso, UsageSlice.APP, limit = 100)
+            .distinctUntilChanged()
+            .collect { rows ->
+                emit(
+                    PulseBarTodayStats(
+                        dayIso = todayIso,
+                        totalSeconds = rows.sumOf { it.totalSeconds },
+                        firstUsage = rows.getOrNull(0),
+                        secondUsage = rows.getOrNull(1),
+                        thirdUsage = rows.getOrNull(2),
+                        topRows = rows,
+                    ),
+                )
+            }
     }
 
     actual fun startLiveListen(
@@ -339,24 +339,8 @@ actual class PulseBarBridge actual constructor() {
         )
     }
 
-    actual fun observeLiveListenStats(onUpdate: (PulseBarLiveListenStats) -> Unit): PulseBarCancellable =
-        collect(liveListenClient.stats) { stats ->
-            onUpdate(stats.toExport())
-        }
-
-    private fun <T> collect(
-        source: kotlinx.coroutines.flow.Flow<T>,
-        onUpdate: (T) -> Unit,
-    ): PulseBarCancellable {
-        val job = scope.launch {
-            source.collect(onUpdate)
-        }
-        return object : PulseBarCancellable {
-            override fun cancel() {
-                job.cancel()
-            }
-        }
-    }
+    actual val liveListenStats: Flow<PulseBarLiveListenStats> =
+        liveListenClient.stats.map { it.toExport() }
 
     actual fun readStats(dayIso: String, limit: Int): PulseBarStatsPage {
         val rows = store.topRowsForDay(dayIso, limit)

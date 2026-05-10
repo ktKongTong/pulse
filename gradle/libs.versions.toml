@@ -1,6 +1,9 @@
 [versions]
-kotlin = "2.3.20"
-ksp = "2.3.6"
+# Kotlin 2.4.0-Beta2 ships Swift Export Flow→AsyncSequence interop (KT-64572).
+# https://kotlinlang.org/docs/whatsnew-eap.html#swift-export-support-for-exporting-coroutine-flows
+kotlin = "2.4.0-Beta2"
+# KSP2 is decoupled from Kotlin version since 2.3.0, so 2.3.7 works with 2.4.x.
+ksp = "2.3.7"
 compose = "1.10.3"
 coroutines = "1.10.2"
 serialization = "1.10.0"

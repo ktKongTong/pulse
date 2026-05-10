@@ -5,6 +5,10 @@ import Foundation
 /// tested with a fake and so Swift doesn't spawn a second `PulseBarBridge`
 /// instance. The shapes match Kotlin's method signatures exactly so
 /// `PulseBarBridge` can conform directly.
+///
+/// Kotlin 2.4's Swift Export exposes `Flow<T>` properties as
+/// `AsyncSequence<T, Error>`. We wrap that behind an `AsyncStream` so the
+/// protocol stays test-friendly and doesn't leak Kotlin-specific types.
 protocol LiveListenBridge: AnyObject, Sendable {
     func startLiveListen(
         roomId: String,
@@ -29,26 +33,29 @@ protocol LiveListenBridge: AnyObject, Sendable {
         durationSeconds: Double,
         isPlaying: Bool
     )
-    /// Observer plumbing needs a bit more ceremony because Kotlin delivers
-    /// values on `Dispatchers.Default`. Implementations must hop onto main.
-    func observeLiveListenStats(
-        onSnapshot: @escaping @MainActor (PulseBarLiveListenStats) -> Void,
-        cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
-    )
+    /// Returns an `AsyncStream` of Live Listen telemetry snapshots. Consumers
+    /// should drive it from a `Task { @MainActor in for await ... }` loop and
+    /// cancel the task on teardown to stop the underlying Kotlin coroutine.
+    func liveListenStatsStream() -> AsyncStream<PulseBarLiveListenStats>
 }
 
-/// Make the Kotlin bridge a `LiveListenBridge` directly. Most methods are
-/// pass-through; only `observeLiveListenStats` needs a trampoline because
-/// the Kotlin callback is unlabeled + arrives off the main thread.
+/// `PulseBarBridge` conforms directly. The stream is built from the
+/// `liveListenStats` Kotlin `Flow` via Swift Export's `asAsyncSequence()`.
 extension PulseBarBridge: @retroactive @unchecked Sendable {}
 extension PulseBarBridge: LiveListenBridge {
-    func observeLiveListenStats(
-        onSnapshot: @escaping @MainActor (PulseBarLiveListenStats) -> Void,
-        cancellableReceived: @escaping @MainActor (PulseBarCancellable) -> Void
-    ) {
-        let cancellable = observeLiveListenStats { stats in
-            DispatchQueue.main.async { MainActor.assumeIsolated { onSnapshot(stats) } }
+    func liveListenStatsStream() -> AsyncStream<PulseBarLiveListenStats> {
+        AsyncStream { continuation in
+            let task = Task {
+                do {
+                    for try await stats in liveListenStats.asAsyncSequence() {
+                        continuation.yield(stats)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish()
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
-        DispatchQueue.main.async { MainActor.assumeIsolated { cancellableReceived(cancellable) } }
     }
 }

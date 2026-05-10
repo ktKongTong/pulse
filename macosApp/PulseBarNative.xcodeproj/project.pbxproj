@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		006BE74C5B23A4B7D3EB49DC /* MonitorBridgeSubscriptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FA7436A8FE96BB6535BC04C /* MonitorBridgeSubscriptions.swift */; };
 		0EBC85E3C0BA813F320CC1F5 /* MonitorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */; };
 		15F8B557C1727BDD742301A1 /* MediaSeekBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F75950E5E4D0C31C6A780789 /* MediaSeekBar.swift */; };
 		18BD636018A69E96857298E9 /* DetailSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 492BCA634CBE24363C0A940D /* DetailSection.swift */; };
@@ -51,7 +50,6 @@
 		45525A603937CBDDBF7614F5 /* LiveListenBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenBridge.swift; sourceTree = "<group>"; };
 		48CA333A2011BA8268CB2126 /* WindowHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowHelpers.swift; sourceTree = "<group>"; };
 		492BCA634CBE24363C0A940D /* DetailSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailSection.swift; sourceTree = "<group>"; };
-		4FA7436A8FE96BB6535BC04C /* MonitorBridgeSubscriptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorBridgeSubscriptions.swift; sourceTree = "<group>"; };
 		647FDA0C5690CFD4C45F3C1A /* ReportingPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportingPane.swift; sourceTree = "<group>"; };
 		64C8E44E60C1A00F76B711D1 /* GlobalSettingsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalSettingsPane.swift; sourceTree = "<group>"; };
 		654DF7A0E79FC5CDBC2DDBD6 /* Buttons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Buttons.swift; sourceTree = "<group>"; };
@@ -83,7 +81,6 @@
 			isa = PBXGroup;
 			children = (
 				0A994D6B696DC5F351481476 /* DashboardSection.swift */,
-				4FA7436A8FE96BB6535BC04C /* MonitorBridgeSubscriptions.swift */,
 				FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */,
 			);
 			path = State;
@@ -321,7 +318,6 @@
 				EB24302A7F24164A90987D91 /* MediaGlassBackground.swift in Sources */,
 				15F8B557C1727BDD742301A1 /* MediaSeekBar.swift in Sources */,
 				F44545886531CD03E5D80990 /* MenuBarContentView.swift in Sources */,
-				006BE74C5B23A4B7D3EB49DC /* MonitorBridgeSubscriptions.swift in Sources */,
 				0EBC85E3C0BA813F320CC1F5 /* MonitorStore.swift in Sources */,
 				D405762B9A292BAE32CC2CE6 /* PulseBarNativeApp.swift in Sources */,
 				8CBD735AD287840AD7EC5DB7 /* PulseNativeLog.swift in Sources */,
