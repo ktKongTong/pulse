@@ -361,7 +361,7 @@ private struct EndpointPublisherMeterRow: View {
                 Text(endpoint.name)
                     .font(.caption.weight(.semibold))
                 Spacer()
-                Text(endpoint.stats.connectionStateName)
+                Text(endpoint.stats.connectionState.description)
                     .font(.caption.monospaced())
                     .foregroundStyle(connectionColor)
             }
@@ -398,7 +398,7 @@ private struct EndpointPublisherMeterRow: View {
     }
 
     private var connectionColor: Color {
-        switch endpoint.stats.connectionStateParsed {
+        switch endpoint.stats.connectionState {
         case .CONNECTED:
             return .green
         case .CONNECTING, .RECONNECTING:

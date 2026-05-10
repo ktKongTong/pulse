@@ -16,7 +16,7 @@ class PulseBarEndpointDraft(
     var name: String,
     var enabled: Boolean,
     var disconnected: Boolean,
-    var transportName: String,
+    var transport: PulseBarTransport,
     var endpointUrl: String,
     var workspaceId: String,
     var siteId: String,
@@ -33,8 +33,8 @@ class PulseBarConfigDraft(
     var pagePollingMillis: Int,
     var mediaPollingMillis: Int,
     var allowWebInteractions: Boolean,
-    var interactionExecutionModeName: String,
-    var interactionPlaybackModeName: String,
+    var interactionExecutionMode: PulseBarInteractionExecutionMode,
+    var interactionPlaybackMode: PulseBarInteractionPlaybackMode,
 )
 
 /**
@@ -66,7 +66,7 @@ object PulseBarConfigFactory {
                 name = endpoint.name,
                 enabled = endpoint.enabled,
                 disconnected = endpoint.disconnected,
-                transportName = endpoint.transportName,
+                transport = endpoint.transport,
                 endpointUrl = endpoint.endpointUrl,
                 workspaceId = endpoint.workspaceId,
                 siteId = endpoint.siteId,
@@ -81,8 +81,8 @@ object PulseBarConfigFactory {
         pagePollingMillis = config.pagePollingMillis,
         mediaPollingMillis = config.mediaPollingMillis,
         allowWebInteractions = config.allowWebInteractions,
-        interactionExecutionModeName = config.interactionExecutionModeName,
-        interactionPlaybackModeName = config.interactionPlaybackModeName,
+        interactionExecutionMode = config.interactionExecutionMode,
+        interactionPlaybackMode = config.interactionPlaybackMode,
     )
 
     fun fromDraft(draft: PulseBarConfigDraft): PulseBarConfig = PulseBarConfig(
@@ -92,8 +92,8 @@ object PulseBarConfigFactory {
                 name = endpoint.name,
                 enabled = endpoint.enabled,
                 disconnected = endpoint.disconnected,
-                transport = transportByName(endpoint.transportName),
-                transportName = endpoint.transportName,
+                transport = endpoint.transport,
+                transportName = endpoint.transport.name,
                 endpointUrl = endpoint.endpointUrl,
                 workspaceId = endpoint.workspaceId,
                 siteId = endpoint.siteId,
@@ -108,10 +108,10 @@ object PulseBarConfigFactory {
         pagePollingMillis = draft.pagePollingMillis,
         mediaPollingMillis = draft.mediaPollingMillis,
         allowWebInteractions = draft.allowWebInteractions,
-        interactionExecutionMode = interactionExecutionModeByName(draft.interactionExecutionModeName),
-        interactionExecutionModeName = draft.interactionExecutionModeName,
-        interactionPlaybackMode = interactionPlaybackModeByName(draft.interactionPlaybackModeName),
-        interactionPlaybackModeName = draft.interactionPlaybackModeName,
+        interactionExecutionMode = draft.interactionExecutionMode,
+        interactionExecutionModeName = draft.interactionExecutionMode.name,
+        interactionPlaybackMode = draft.interactionPlaybackMode,
+        interactionPlaybackModeName = draft.interactionPlaybackMode.name,
     )
 
     /** Used by the Live Listen presentation code — "connectable" endpoints are those that have creds + URL. */
@@ -163,29 +163,13 @@ object PulseBarConfigFactory {
     private fun hasLiveListenCredentials(endpoint: PulseBarEndpointDraft): Boolean =
         endpoint.workspaceId.trim().isNotEmpty() && endpoint.apiKey.isNotEmpty() && endpoint.endpointUrl.trim().isNotEmpty()
 
-    fun transportByName(raw: String): PulseBarTransport = when (raw) {
-        "WEBHOOK" -> PulseBarTransport.WEBHOOK
-        "HTTP_BATCH" -> PulseBarTransport.HTTP_BATCH
-        else -> PulseBarTransport.WEBSOCKET
-    }
-
-    fun interactionExecutionModeByName(raw: String): PulseBarInteractionExecutionMode = when (raw) {
-        "AUTO_ENQUEUE" -> PulseBarInteractionExecutionMode.AUTO_ENQUEUE
-        else -> PulseBarInteractionExecutionMode.CONFIRM
-    }
-
-    fun interactionPlaybackModeByName(raw: String): PulseBarInteractionPlaybackMode = when (raw) {
-        "PLAY_NOW" -> PulseBarInteractionPlaybackMode.PLAY_NOW
-        else -> PulseBarInteractionPlaybackMode.PLAY_NEXT
-    }
-
     /** Shared defaults for a fresh endpoint row. */
     fun defaultEndpoint(index: Int): PulseBarEndpointDraft = PulseBarEndpointDraft(
         id = io.github.kt.pulsebar.core.platform.newPulseUuid(),
         name = "Endpoint ${index + 1}",
         enabled = false,
         disconnected = false,
-        transportName = PulseBarTransport.WEBSOCKET.name,
+        transport = PulseBarTransport.WEBSOCKET,
         endpointUrl = "",
         workspaceId = "",
         siteId = "",
@@ -200,7 +184,7 @@ object PulseBarConfigFactory {
                 name = "Primary endpoint",
                 enabled = it.enabled,
                 disconnected = it.disconnected,
-                transportName = it.transportName,
+                transport = it.transport,
                 endpointUrl = it.endpointUrl,
                 workspaceId = it.workspaceId,
                 siteId = it.siteId,

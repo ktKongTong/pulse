@@ -32,8 +32,7 @@ enum DashboardSection: String, CaseIterable, Identifiable {
 // The only Swift-side additions to the Kotlin export types are:
 //  - `Identifiable` conformances so SwiftUI `ForEach` + `.tag(_:)` work
 //  - `@unchecked Sendable` markings for the cross-actor observer hop
-//  - `artworkURL` / `connectionStateParsed` — both wrap Swift-Export quirks
-//    (optional-String-to-URL and the enum-getter crash respectively).
+//  - `artworkURL` — wraps the Kotlin `String?` URL in a Foundation `URL`.
 //
 // Everything else (ISO8601 parsing, UUID generation, time formatting,
 // sentinel-to-optional lifts, endpoint normalization) is owned by Kotlin.
@@ -57,22 +56,4 @@ extension PulseBarSnapshot: @retroactive @unchecked Sendable {}
 extension PulseBarMedia {
     /// Wrap the Kotlin `String?` URL in a Foundation `URL` for `AsyncImage`.
     var artworkURL: URL? { artworkUrl.flatMap(URL.init(string:)) }
-}
-
-extension PulseBarLiveListenStats {
-    /// Parse the Kotlin enum from its string name. Going through
-    /// `connectionStateName` avoids Swift Export's `__externalRCRefUnsafe`
-    /// enum-getter path, which asserts at runtime when the enum is read
-    /// via a class getter.
-    var connectionStateParsed: PulseBarLiveListenConnectionState {
-        switch connectionStateName {
-        case "CONNECTING": return .CONNECTING
-        case "CONNECTED": return .CONNECTED
-        case "RECONNECTING": return .RECONNECTING
-        case "STOPPING": return .STOPPING
-        case "STOPPED": return .STOPPED
-        case "FAILED": return .FAILED
-        default: return .IDLE
-        }
-    }
 }

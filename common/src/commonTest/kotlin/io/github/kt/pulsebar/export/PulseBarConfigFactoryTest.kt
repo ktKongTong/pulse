@@ -52,10 +52,10 @@ class PulseBarConfigFactoryTest {
         val draft = PulseBarConfigFactory.toDraft(sampleConfig())
         assertEquals(2, draft.endpoints.size)
         assertEquals("e-1", draft.endpoints[0].id)
-        assertEquals("WEBSOCKET", draft.endpoints[0].transportName)
+        assertEquals(PulseBarTransport.WEBSOCKET, draft.endpoints[0].transport)
         assertEquals("ws", draft.endpoints[0].workspaceId)
         assertEquals(300, draft.idleThresholdSeconds)
-        assertEquals("CONFIRM", draft.interactionExecutionModeName)
+        assertEquals(PulseBarInteractionExecutionMode.CONFIRM, draft.interactionExecutionMode)
     }
 
     @Test fun fromDraftRoundTrips() {
@@ -65,13 +65,7 @@ class PulseBarConfigFactoryTest {
         assertEquals(original.endpoints[0].id, rebuilt.endpoints[0].id)
         assertEquals(original.endpoints[0].transport, rebuilt.endpoints[0].transport)
         assertEquals(original.interactionExecutionMode, rebuilt.interactionExecutionMode)
-        assertEquals(original.interactionPlaybackModeName, rebuilt.interactionPlaybackModeName)
-    }
-
-    @Test fun transportByName_default() {
-        assertEquals(PulseBarTransport.WEBSOCKET, PulseBarConfigFactory.transportByName("anything"))
-        assertEquals(PulseBarTransport.WEBHOOK, PulseBarConfigFactory.transportByName("WEBHOOK"))
-        assertEquals(PulseBarTransport.HTTP_BATCH, PulseBarConfigFactory.transportByName("HTTP_BATCH"))
+        assertEquals(original.interactionPlaybackMode, rebuilt.interactionPlaybackMode)
     }
 
     @Test fun liveListenCandidates_prefersEnabledAndCredentialed() {
@@ -92,8 +86,8 @@ class PulseBarConfigFactoryTest {
                 pagePollingMillis = it.pagePollingMillis,
                 mediaPollingMillis = it.mediaPollingMillis,
                 allowWebInteractions = it.allowWebInteractions,
-                interactionExecutionModeName = it.interactionExecutionModeName,
-                interactionPlaybackModeName = it.interactionPlaybackModeName,
+                interactionExecutionMode = it.interactionExecutionMode,
+                interactionPlaybackMode = it.interactionPlaybackMode,
             )
         }
         val candidates = PulseBarConfigFactory.liveListenCandidateEndpoints(draft)
@@ -105,7 +99,7 @@ class PulseBarConfigFactoryTest {
         val d = PulseBarConfigFactory.defaultEndpoint(2)
         assertEquals("Endpoint 3", d.name)
         assertEquals(false, d.enabled)
-        assertEquals("WEBSOCKET", d.transportName)
+        assertEquals(PulseBarTransport.WEBSOCKET, d.transport)
         assertEquals(15, d.batchWindowSeconds)
         // id is a platform-generated UUID — just check it's non-empty.
         assertTrue(d.id.isNotEmpty())
@@ -118,10 +112,10 @@ private fun PulseBarEndpointDraft.copy(
     name: String = this.name,
     enabled: Boolean = this.enabled,
     disconnected: Boolean = this.disconnected,
-    transportName: String = this.transportName,
+    transport: PulseBarTransport = this.transport,
     endpointUrl: String = this.endpointUrl,
     workspaceId: String = this.workspaceId,
     siteId: String = this.siteId,
     apiKey: String = this.apiKey,
     batchWindowSeconds: Int = this.batchWindowSeconds,
-) = PulseBarEndpointDraft(id, name, enabled, disconnected, transportName, endpointUrl, workspaceId, siteId, apiKey, batchWindowSeconds)
+) = PulseBarEndpointDraft(id, name, enabled, disconnected, transport, endpointUrl, workspaceId, siteId, apiKey, batchWindowSeconds)

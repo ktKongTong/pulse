@@ -246,7 +246,6 @@ enum class PulseBarLiveListenConnectionState {
  */
 class PulseBarLiveListenStats(
     val connectionState: PulseBarLiveListenConnectionState,
-    val connectionStateName: String,
     val webSocketUrl: String?,
     val lastConnectedAtMillis: Long,        // 0 == never
     val lastDisconnectedAtMillis: Long,     // 0 == never
@@ -319,7 +318,6 @@ fun liveListenSendBitrateDisplay(stats: PulseBarLiveListenStats): String =
 object PulseBarLiveListenStatsFactory {
     fun idle(): PulseBarLiveListenStats = PulseBarLiveListenStats(
         connectionState = PulseBarLiveListenConnectionState.IDLE,
-        connectionStateName = PulseBarLiveListenConnectionState.IDLE.name,
         webSocketUrl = null,
         lastConnectedAtMillis = 0L,
         lastDisconnectedAtMillis = 0L,

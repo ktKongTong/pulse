@@ -434,7 +434,7 @@ private struct ConnectionDetailPane: View {
 
         let model = monitor.liveListenCaptureModel
         if let liveListenEndpoint {
-            if liveListenEndpoint.stats.connectionStateParsed == .CONNECTED, model.isCapturing {
+            if liveListenEndpoint.stats.connectionState == .CONNECTED, model.isCapturing {
                 return liveListenEndpoint.stats.isSending ? "Sending audio packets" : model.statusText
             }
             return liveListenEndpoint.statusText
