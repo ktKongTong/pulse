@@ -12,6 +12,7 @@ import io.ktor.http.URLBuilder
 import io.ktor.http.Url
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
+import io.ktor.websocket.readReason
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -244,6 +245,7 @@ internal class LiveListenClient(
                 header("Authorization", "Bearer ${config.apiKey}")
             }
         }
+        log.i { "session.connected url=$url" }
 
         _stats.update {
             it.copy(
@@ -284,20 +286,30 @@ internal class LiveListenClient(
     }
 
     private suspend fun runInboundLoop(session: ClientWebSocketSession) {
-        for (frame in session.incoming) {
-            when (frame) {
-                is Frame.Text -> {
-                    val text = frame.readText()
-                    log.i { "ws.recv.text len=${text.length} payload=${text.take(500)}" }
-                    handleInboundText(text)
+        log.i { "inbound.loop.start" }
+        try {
+            for (frame in session.incoming) {
+                when (frame) {
+                    is Frame.Text -> {
+                        val text = frame.readText()
+                        log.i { "ws.recv.text len=${text.length} payload=${text.take(500)}" }
+                        handleInboundText(text)
+                    }
+                    is Frame.Binary -> log.i { "ws.recv.binary bytes=${frame.readBytes().size}" }
+                    is Frame.Close -> {
+                        val reason = frame.readReason()
+                        log.w { "ws.recv.close code=${reason?.code} message=${reason?.message}" }
+                        return
+                    }
+                    is Frame.Ping -> log.d { "ws.recv.ping" }
+                    is Frame.Pong -> log.d { "ws.recv.pong" }
+                    else -> log.d { "ws.recv.other frameType=${frame::class.simpleName}" }
                 }
-                is Frame.Binary -> log.i { "ws.recv.binary bytes=${frame.readBytes().size}" }
-                is Frame.Close -> {
-                    log.i { "ws.recv.close" }
-                    return
-                }
-                else -> log.d { "ws.recv.other frameType=${frame::class.simpleName}" }
             }
+            log.w { "inbound.loop.end reason=incoming_channel_closed" }
+        } catch (t: Throwable) {
+            log.w(t) { "inbound.loop.failed" }
+            throw t
         }
     }
 
