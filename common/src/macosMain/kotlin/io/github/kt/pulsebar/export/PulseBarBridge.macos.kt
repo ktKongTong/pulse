@@ -802,8 +802,9 @@ actual class PulseBarBridge actual constructor() {
     private fun runAppleScript(script: String): String? {
         val appleScript = NSAppleScript(source = script)
         val result = appleScript.executeAndReturnError(null)
-        // Empty results are expected (app not running, no media playing).
-        // Not worth logging — they drown the log file.
+        if (result.stringValue == null) {
+            logger(PulseLogCategory.PlatformAdapter).d { "applescript.empty_result" }
+        }
         return result.stringValue?.trim()
     }
 

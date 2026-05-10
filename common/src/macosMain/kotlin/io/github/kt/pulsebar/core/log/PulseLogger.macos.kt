@@ -6,6 +6,7 @@ import platform.Foundation.NSDateFormatter
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSHomeDirectory
 import platform.Foundation.NSLog
+import platform.Foundation.NSProcessInfo
 import platform.Foundation.NSString
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.create
@@ -23,6 +24,19 @@ private val dateFormatter: NSDateFormatter by lazy {
     NSDateFormatter().apply { dateFormat = "HH:mm:ss.SSS" }
 }
 
+private var configInitialized = false
+
+private fun ensureConfig() {
+    if (configInitialized) return
+    val env = NSProcessInfo.processInfo.environment
+    val global = PulseLogConfig.parseLevel(env["PULSE_LOG_LEVEL"] as? String)
+    val stderr = PulseLogConfig.parseLevel(env["PULSE_LOG_STDERR_LEVEL"] as? String) ?: global
+    val file = PulseLogConfig.parseLevel(env["PULSE_LOG_FILE_LEVEL"] as? String) ?: global
+    if (stderr != null) PulseLogConfig.stderrLevel = stderr
+    if (file != null) PulseLogConfig.fileLevel = file
+    configInitialized = true
+}
+
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun platformLog(
     level: PulseLogLevel,
@@ -30,6 +44,7 @@ internal actual fun platformLog(
     message: String,
     error: Throwable?,
 ) {
+    ensureConfig()
     val prefix = when (level) {
         PulseLogLevel.Debug -> "D"
         PulseLogLevel.Info -> "I"
@@ -41,15 +56,14 @@ internal actual fun platformLog(
     } else {
         "[$prefix][${category.tag}] $message -- ${error::class.simpleName}: ${error.message ?: ""}"
     }
-    NSLog("%s", line)
 
-    // File log stays at Info+ to keep the file readable. Debug-level
-    // entries are still emitted to NSLog (stderr) when launched from a
-    // terminal, so raising the file threshold doesn't hide anything.
-    if (level != PulseLogLevel.Debug) {
+    if (PulseLogConfig.shouldEmit(PulseLogConfig.stderrLevel, level)) {
+        NSLog("%s", line)
+    }
+
+    if (PulseLogConfig.shouldEmit(PulseLogConfig.fileLevel, level)) {
         val ts = dateFormatter.stringFromDate(NSDate())
-        val fileLine = "$ts $line\n"
-        appendToLogFile(fileLine)
+        appendToLogFile("$ts $line\n")
     }
 }
 
@@ -59,8 +73,6 @@ private fun appendToLogFile(line: String) {
     if (!fileManager.fileExistsAtPath(logFilePath)) {
         fileManager.createFileAtPath(logFilePath, contents = null, attributes = null)
     }
-    // Read existing content, append, write back. Not efficient but simple and
-    // only used for debug logging.
     val existing = NSString.create(contentsOfFile = logFilePath, encoding = NSUTF8StringEncoding, error = null) ?: ""
     val updated = "$existing$line"
     @Suppress("CAST_NEVER_SUCCEEDS")

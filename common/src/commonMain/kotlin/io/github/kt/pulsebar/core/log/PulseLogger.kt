@@ -16,16 +16,32 @@ enum class PulseLogCategory(val tag: String) {
 enum class PulseLogLevel { Debug, Info, Warn, Error }
 
 /**
- * Thin KMP logger built on `expect fun platformLog` so the Swift Export
- * pipeline doesn't have to traverse third-party library symbols. macOS routes
- * to `os_log`, JVM routes to stdout.
+ * Mutable log configuration. Both sinks (NSLog/stderr and the file under
+ * ~/Library/Logs/PulseBarNative/pulse.log on macOS, stdout on JVM) filter
+ * independently so you can keep the file at `Info` while watching `Debug`
+ * live from a terminal, or crank everything to `Debug` when diagnosing a
+ * specific issue.
  *
- * History: Phase 1 adopted co.touchlab.kermit, which works at runtime but
- * blocks Swift Export (kermit's `Logger.Companion.setLogWriters` has two
- * overloads that Swift can't disambiguate). Since the bridge now exports
- * `PulseBarBridge.observe*` closures, we had to replace kermit with this
- * small facade.
+ * Defaults can be overridden via environment variables read at process
+ * start: `PULSE_LOG_LEVEL` (applies to both sinks), `PULSE_LOG_STDERR_LEVEL`,
+ * `PULSE_LOG_FILE_LEVEL`. Values: `debug`, `info`, `warn`, `error`, `off`.
  */
+object PulseLogConfig {
+    var stderrLevel: PulseLogLevel = PulseLogLevel.Debug
+    var fileLevel: PulseLogLevel = PulseLogLevel.Info
+
+    fun parseLevel(raw: String?): PulseLogLevel? = when (raw?.lowercase()?.trim()) {
+        "debug", "d" -> PulseLogLevel.Debug
+        "info", "i" -> PulseLogLevel.Info
+        "warn", "w", "warning" -> PulseLogLevel.Warn
+        "error", "e", "err" -> PulseLogLevel.Error
+        else -> null
+    }
+
+    fun shouldEmit(sinkLevel: PulseLogLevel, level: PulseLogLevel): Boolean =
+        level.ordinal >= sinkLevel.ordinal
+}
+
 class PulseBarLog(val category: PulseLogCategory) {
     fun d(message: () -> String) = platformLog(PulseLogLevel.Debug, category, message(), null)
     fun i(message: () -> String) = platformLog(PulseLogLevel.Info, category, message(), null)
