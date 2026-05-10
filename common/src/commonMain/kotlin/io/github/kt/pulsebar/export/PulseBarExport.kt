@@ -87,6 +87,11 @@ class PulseBarSnapshot(
     val media: PulseBarMedia?
 )
 
+/** Kotlin-side epoch-millis projection of the ISO8601 field, so Swift
+ *  (and any future shell) doesn't need its own parser. */
+fun snapshotObservedAtEpochMillis(snapshot: PulseBarSnapshot): Long? =
+    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(snapshot.observedAtIso8601)
+
 class PulseBarMenuState(
     val snapshot: PulseBarSnapshot?,
     val firstUsage: PulseBarUsageRow?,
@@ -143,6 +148,12 @@ class PulseBarInteractionItem(
     val errorMessage: String?
 )
 
+fun interactionIssuedAtEpochMillis(item: PulseBarInteractionItem): Long? =
+    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(item.issuedAtIso8601)
+
+fun interactionUpdatedAtEpochMillis(item: PulseBarInteractionItem): Long? =
+    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(item.updatedAtIso8601)
+
 class PulseBarInteractionState(
     val pendingCount: Int,
     val items: List<PulseBarInteractionItem>,
@@ -168,6 +179,21 @@ class PulseBarEndpointSyncState(
     val acknowledgedSeqMax: Long,
     val acknowledgedAtIso8601: String?
 )
+
+fun endpointLastAttemptAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
+    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.lastAttemptAtIso8601)
+
+fun endpointLastProbeAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
+    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.lastProbeAtIso8601)
+
+fun endpointLastSuccessAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
+    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.lastSuccessAtIso8601)
+
+fun endpointLastFailureAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
+    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.lastFailureAtIso8601)
+
+fun endpointAcknowledgedAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
+    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.acknowledgedAtIso8601)
 
 class PulseBarSyncState(
     val enabled: Boolean,

@@ -7,8 +7,12 @@ import platform.Foundation.NSDate
 import platform.Foundation.NSDateFormatter
 import platform.Foundation.NSDateFormatterMediumStyle
 import platform.Foundation.NSDateFormatterNoStyle
+import platform.Foundation.NSISO8601DateFormatWithFractionalSeconds
+import platform.Foundation.NSISO8601DateFormatWithInternetDateTime
+import platform.Foundation.NSISO8601DateFormatter
 import platform.Foundation.NSString
 import platform.Foundation.dateWithTimeIntervalSince1970
+import platform.Foundation.timeIntervalSince1970
 
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun resolveAppDisplayName(bundleId: String): String? {
@@ -38,4 +42,27 @@ actual fun formatWallClockTime(epochMillis: Long?): String {
     val seconds = epochMillis.toDouble() / 1000.0
     val date = NSDate.dateWithTimeIntervalSince1970(seconds)
     return wallClockTimeFormatter.stringFromDate(date)
+}
+
+/** Matches `2026-05-10T12:34:56.789Z` / `+08:00` / etc. */
+private val iso8601FractionalFormatter: NSISO8601DateFormatter by lazy {
+    NSISO8601DateFormatter().apply {
+        formatOptions = NSISO8601DateFormatWithInternetDateTime or
+            NSISO8601DateFormatWithFractionalSeconds
+    }
+}
+
+/** Fallback when the wire doesn't carry fractional seconds. */
+private val iso8601PlainFormatter: NSISO8601DateFormatter by lazy {
+    NSISO8601DateFormatter().apply {
+        formatOptions = NSISO8601DateFormatWithInternetDateTime
+    }
+}
+
+actual fun parseIso8601ToMillis(value: String?): Long? {
+    if (value.isNullOrBlank()) return null
+    val parsed = iso8601FractionalFormatter.dateFromString(value)
+        ?: iso8601PlainFormatter.dateFromString(value)
+        ?: return null
+    return (parsed.timeIntervalSince1970 * 1000.0).toLong()
 }

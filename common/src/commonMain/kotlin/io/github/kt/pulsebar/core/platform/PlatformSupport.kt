@@ -28,6 +28,17 @@ internal expect fun resolveAppDisplayName(bundleId: String): String?
 expect fun formatWallClockTime(epochMillis: Long?): String
 
 /**
+ * Parse an ISO8601 timestamp string (with or without fractional seconds)
+ * into an epoch millisecond count. Returns null for null/empty/unparseable
+ * input. Centralised so Swift (and any future shell) doesn't need to keep
+ * a cached `ISO8601DateFormatter` around.
+ *
+ * macOS uses `NSISO8601DateFormatter` with a fractional-seconds fallback.
+ * JVM uses `java.time.Instant.parse` followed by the same fallback.
+ */
+expect fun parseIso8601ToMillis(value: String?): Long?
+
+/**
  * Normalize a user-entered endpoint base URL so downstream consumers have
  * a clean host (no trailing path like `/api/v2/presence/ingest` or
  * `/api/v1/live-listen`). Returns null when the URL can't be parsed or

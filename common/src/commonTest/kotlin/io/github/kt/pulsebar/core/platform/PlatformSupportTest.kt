@@ -58,3 +58,45 @@ class PlatformSupportTest {
         )
     }
 }
+
+class Iso8601ParserTest {
+
+    @Test fun fractionalSecondsZulu() {
+        assertEquals(1778416496789L, parseIso8601ToMillis("2026-05-10T12:34:56.789Z"))
+    }
+
+    @Test fun withoutFractionalSeconds() {
+        assertEquals(1778416496000L, parseIso8601ToMillis("2026-05-10T12:34:56Z"))
+    }
+
+    @Test fun offsetTimezone() {
+        assertEquals(1778416496000L, parseIso8601ToMillis("2026-05-10T20:34:56+08:00"))
+    }
+
+    @Test fun nullOrBlankReturnsNull() {
+        assertNull(parseIso8601ToMillis(null))
+        assertNull(parseIso8601ToMillis(""))
+        assertNull(parseIso8601ToMillis("   "))
+    }
+
+    @Test fun malformedReturnsNull() {
+        assertNull(parseIso8601ToMillis("not a date"))
+        assertNull(parseIso8601ToMillis("2026-05"))
+    }
+}
+
+class WallClockFormatTest {
+
+    @Test fun nullOrZeroRendersDash() {
+        assertEquals("-", formatWallClockTime(null))
+        assertEquals("-", formatWallClockTime(0))
+    }
+
+    @Test fun nonZeroHasHHMMSSShape() {
+        // JVM stub returns "HH:mm:ss" so we can assert the shape directly.
+        val result = formatWallClockTime(1778416496000L)
+        assertEquals(8, result.length)
+        assertEquals(':', result[2])
+        assertEquals(':', result[5])
+    }
+}
