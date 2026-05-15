@@ -7,80 +7,105 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		01370FC59B5EAEED88E7E72E /* LiveListenBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4757939FDCA2A934715BECB4 /* LiveListenBridge.swift */; };
+		04368F90613FA8CAB22EC1BB /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0FCA5EC26D615E311CD3F5 /* DashboardView.swift */; };
+		0CF277EDCE17E7774D0FDA60 /* DashboardSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A884FB70CD387DF81602234D /* DashboardSection.swift */; };
 		0EBC85E3C0BA813F320CC1F5 /* MonitorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */; };
-		15F8B557C1727BDD742301A1 /* MediaSeekBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F75950E5E4D0C31C6A780789 /* MediaSeekBar.swift */; };
-		18BD636018A69E96857298E9 /* DetailSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 492BCA634CBE24363C0A940D /* DetailSection.swift */; };
-		23EA69C7266DF75A2A82293B /* LiveListenCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68FF669DC3070BFE1725079E /* LiveListenCaptureService.swift */; };
-		42E0873362C9B264287CE6C6 /* MediaCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9034CDA4791DFF41DEAA854 /* MediaCards.swift */; };
-		4F989C77B9CCB411E3614C84 /* LiveListenCaptureSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33A833557116271584C40681 /* LiveListenCaptureSession.swift */; };
-		5399100A329AE0FAA46DD64E /* ConnectionListItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 836215994767D2B2E54BBB36 /* ConnectionListItem.swift */; };
-		5BF3F571AA08C20407CABA5C /* GlobalSettingsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64C8E44E60C1A00F76B711D1 /* GlobalSettingsPane.swift */; };
-		5EF61771089185FEA491A156 /* DashboardSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A994D6B696DC5F351481476 /* DashboardSection.swift */; };
-		62DBD6134C2ECCBFAF52B100 /* InstalledAppCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4D05CE309A88397135005C8 /* InstalledAppCatalog.swift */; };
-		70A584D7C1788266D634F8E1 /* ReportingPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 647FDA0C5690CFD4C45F3C1A /* ReportingPane.swift */; };
-		71CE6B80CF4532FF20D06374 /* LiveListenBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45525A603937CBDDBF7614F5 /* LiveListenBridge.swift */; };
+		11048B44CEEB43E8D0F02A52 /* DetailSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A0822D1D7AF106B2D8DB46 /* DetailSection.swift */; };
+		192FEA1E542D96A43ADF805B /* LiveListenCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD5B67AB4B7DFF2E9E810599 /* LiveListenCaptureView.swift */; };
+		2067C4881AB5A0C82A91D825 /* LiveListenTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C591CC43DA0BCBFEA24C4DF /* LiveListenTypes.swift */; };
+		25416E4D68A7CF58F64F004F /* EndpointEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 756BABB2D8242410711EC698 /* EndpointEditorSheet.swift */; };
+		258746F6820E49F13BC373E2 /* Buttons.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA76178436F5D6D5686B5A92 /* Buttons.swift */; };
+		29F14E2EE2128FCB95E9CCD0 /* PulseBarShared+ConnectionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59A9286630929C63277C45B8 /* PulseBarShared+ConnectionStatus.swift */; };
+		36670F66E61AD804AC0B9BE6 /* AppIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04E0F792AF2CED97CB0D709 /* AppIconView.swift */; };
+		41DEB95F159C6B8418C7DAA7 /* MediaCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFA4AAAC50CF63CAA0BD47 /* MediaCards.swift */; };
+		543ADD9DFBD72D9B70361F54 /* LiveListenWavWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F8E57C5FA16D729C15F15BC /* LiveListenWavWriter.swift */; };
+		56DF889FB57F833883E11B29 /* GlobalSettingsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8460513E65799C9C37FECA6 /* GlobalSettingsPane.swift */; };
+		5AEF5BBD3BB6E20190977543 /* ConnectionPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8859DF7FA9C555008E05A2C3 /* ConnectionPane.swift */; };
+		5D1B897A858FE22BCB2E5AC7 /* PulseBarShared+Identifiable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E9B44F61A00E4C201FB209 /* PulseBarShared+Identifiable.swift */; };
+		5DC94A1A9C8ABEA761AE074B /* LiveListenPermission.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC04CA1E6AC5F911D7AC8297 /* LiveListenPermission.swift */; };
+		683B1B0D47AD8DCA2B040E90 /* LiveListenCaptureSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 513D625D91B09AEC63021694 /* LiveListenCaptureSession.swift */; };
+		71781F95CDD3248BB06BB67B /* InstalledAppCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ECAB8819B655CCC3ACEC0E1 /* InstalledAppCatalog.swift */; };
+		7508FF88D49765EFEF5C8FD1 /* MediaGlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4B1513A5FFA66200BE050C9 /* MediaGlassBackground.swift */; };
+		7E6A7AC1EFF5B71AF6F424D8 /* ConnectionDetailPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9FB82F1B9FF8F5760212444 /* ConnectionDetailPane.swift */; };
 		8CBD735AD287840AD7EC5DB7 /* PulseNativeLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AA1983D33325C1C35CAAA63 /* PulseNativeLog.swift */; };
-		96F66FC9F8C4A6CCA55CB0E4 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83C2F8A1DD58C188B109F2C5 /* DashboardView.swift */; };
-		9C6FFBBB1196FE295045B072 /* KotlinTypeAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 679DE5773B082F744F2182CA /* KotlinTypeAdapters.swift */; };
-		9E0D6DDF057E57B9D9F8F902 /* AppIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 733C607CEE7873251150380B /* AppIconView.swift */; };
-		A2DCE874E47FD0B7A9A881A5 /* EndpointEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DC284FE8E8FCC94CE166EDE /* EndpointEditorSheet.swift */; };
-		A6F8679441B58E0199B95581 /* ConnectionPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 114F90BCFB8C35968C8DA77C /* ConnectionPane.swift */; };
-		A94AF7C96AE4F5ED47B767BD /* LiveListenTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89B5ECFDACA208A548B1018C /* LiveListenTypes.swift */; };
-		C4401DA77D7341601A5A0C57 /* Buttons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 654DF7A0E79FC5CDBC2DDBD6 /* Buttons.swift */; };
-		C770448B79E1240AD8C298B1 /* LiveListenCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E6B1F96C05806BD1A9CB06 /* LiveListenCaptureView.swift */; };
-		CEEC14AC9E3939873E3F1894 /* MarqueeText.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF4588C68C6396436A955009 /* MarqueeText.swift */; };
-		D06D20552D5C3CCF892FB89C /* ConnectionDetailPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B98DE9051F30F65D2DAE62 /* ConnectionDetailPane.swift */; };
+		9CAD732601DA6F108E4B84BB /* ReportingPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5852332BC4D89E634BFEA93F /* ReportingPane.swift */; };
+		A890C7C481AA7AA1CAC3DD9F /* ConnectionListItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6783918039419B97A8B16A /* ConnectionListItem.swift */; };
+		AB81036BAA13E726041A0503 /* MarqueeText.swift in Sources */ = {isa = PBXBuildFile; fileRef = DED5B1A3040DC72E1B9DDBCF /* MarqueeText.swift */; };
+		B4E546B397EFDB2BFAD320A8 /* MenuBarContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7396F0A64AF4F513ABE5862 /* MenuBarContentView.swift */; };
+		B67D32D81A0ECC2F31D79967 /* LiveListenCaptureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 523C3F4CCF10585F30F9AD9D /* LiveListenCaptureStore.swift */; };
+		BFF0F53C2B990A54C83ACA38 /* Forms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7631EFBAA6D0FD3B0698E5CD /* Forms.swift */; };
+		C01BCCD06941E996E157DFA0 /* LiveListenCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F58C80225868027B0DA7013 /* LiveListenCaptureService.swift */; };
+		D2F95141D1AE7FC5225D8E08 /* PulseBarShared+Media.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D81BAFA6F1CE20A92DE9D4 /* PulseBarShared+Media.swift */; };
 		D405762B9A292BAE32CC2CE6 /* PulseBarNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4171DEE7172AEDFB90C48624 /* PulseBarNativeApp.swift */; };
-		DC72D4B2976D64E3DAA55613 /* Forms.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD9D683F0EEC71E6F80A30D /* Forms.swift */; };
-		E217258217FCDA4C48FE7CCC /* LiveListenCaptureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08354280BFA3B9A513A10871 /* LiveListenCaptureModel.swift */; };
-		E2D71E9081058293A709047C /* InstalledReportingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7408030DC6DE794ABE05AAE /* InstalledReportingApp.swift */; };
+		E0C30918ED12E502A247F438 /* MediaSeekBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1D03DF85E491216051EE41 /* MediaSeekBar.swift */; };
 		E56A9276D03C051F021494F2 /* WindowHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CA333A2011BA8268CB2126 /* WindowHelpers.swift */; };
-		EB24302A7F24164A90987D91 /* MediaGlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECC23D8354C68D1B43061F0B /* MediaGlassBackground.swift */; };
 		EB317BE953C9773EE9EA23DF /* StatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCAB5196BF7067C53F0CD93E /* StatusItemController.swift */; };
-		F44545886531CD03E5D80990 /* MenuBarContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38DC0986A162F2F91429BBC2 /* MenuBarContentView.swift */; };
+		F46E529B1F0F516DA4355752 /* InstalledReportingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C6D4AF4F941200092C2AB7F /* InstalledReportingApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		08354280BFA3B9A513A10871 /* LiveListenCaptureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureModel.swift; sourceTree = "<group>"; };
-		0A994D6B696DC5F351481476 /* DashboardSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardSection.swift; sourceTree = "<group>"; };
-		114F90BCFB8C35968C8DA77C /* ConnectionPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionPane.swift; sourceTree = "<group>"; };
-		33A833557116271584C40681 /* LiveListenCaptureSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureSession.swift; sourceTree = "<group>"; };
-		38DC0986A162F2F91429BBC2 /* MenuBarContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContentView.swift; sourceTree = "<group>"; };
+		01A0822D1D7AF106B2D8DB46 /* DetailSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailSection.swift; sourceTree = "<group>"; };
+		07D81BAFA6F1CE20A92DE9D4 /* PulseBarShared+Media.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PulseBarShared+Media.swift"; sourceTree = "<group>"; };
+		0B6783918039419B97A8B16A /* ConnectionListItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionListItem.swift; sourceTree = "<group>"; };
+		0C6D4AF4F941200092C2AB7F /* InstalledReportingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstalledReportingApp.swift; sourceTree = "<group>"; };
+		1C591CC43DA0BCBFEA24C4DF /* LiveListenTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenTypes.swift; sourceTree = "<group>"; };
+		2ECAB8819B655CCC3ACEC0E1 /* InstalledAppCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstalledAppCatalog.swift; sourceTree = "<group>"; };
+		2F58C80225868027B0DA7013 /* LiveListenCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureService.swift; sourceTree = "<group>"; };
 		4171DEE7172AEDFB90C48624 /* PulseBarNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseBarNativeApp.swift; sourceTree = "<group>"; };
-		45525A603937CBDDBF7614F5 /* LiveListenBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenBridge.swift; sourceTree = "<group>"; };
+		4757939FDCA2A934715BECB4 /* LiveListenBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenBridge.swift; sourceTree = "<group>"; };
 		48CA333A2011BA8268CB2126 /* WindowHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowHelpers.swift; sourceTree = "<group>"; };
-		492BCA634CBE24363C0A940D /* DetailSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailSection.swift; sourceTree = "<group>"; };
-		647FDA0C5690CFD4C45F3C1A /* ReportingPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportingPane.swift; sourceTree = "<group>"; };
-		64C8E44E60C1A00F76B711D1 /* GlobalSettingsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalSettingsPane.swift; sourceTree = "<group>"; };
-		654DF7A0E79FC5CDBC2DDBD6 /* Buttons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Buttons.swift; sourceTree = "<group>"; };
-		679DE5773B082F744F2182CA /* KotlinTypeAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KotlinTypeAdapters.swift; sourceTree = "<group>"; };
-		68FF669DC3070BFE1725079E /* LiveListenCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureService.swift; sourceTree = "<group>"; };
-		6DC284FE8E8FCC94CE166EDE /* EndpointEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointEditorSheet.swift; sourceTree = "<group>"; };
-		733C607CEE7873251150380B /* AppIconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconView.swift; sourceTree = "<group>"; };
-		77E6B1F96C05806BD1A9CB06 /* LiveListenCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureView.swift; sourceTree = "<group>"; };
-		836215994767D2B2E54BBB36 /* ConnectionListItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionListItem.swift; sourceTree = "<group>"; };
-		83C2F8A1DD58C188B109F2C5 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
-		89B5ECFDACA208A548B1018C /* LiveListenTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenTypes.swift; sourceTree = "<group>"; };
+		513D625D91B09AEC63021694 /* LiveListenCaptureSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureSession.swift; sourceTree = "<group>"; };
+		523C3F4CCF10585F30F9AD9D /* LiveListenCaptureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureStore.swift; sourceTree = "<group>"; };
+		5852332BC4D89E634BFEA93F /* ReportingPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportingPane.swift; sourceTree = "<group>"; };
+		59A9286630929C63277C45B8 /* PulseBarShared+ConnectionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PulseBarShared+ConnectionStatus.swift"; sourceTree = "<group>"; };
+		6D0FCA5EC26D615E311CD3F5 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		756BABB2D8242410711EC698 /* EndpointEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointEditorSheet.swift; sourceTree = "<group>"; };
+		7631EFBAA6D0FD3B0698E5CD /* Forms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Forms.swift; sourceTree = "<group>"; };
+		8859DF7FA9C555008E05A2C3 /* ConnectionPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionPane.swift; sourceTree = "<group>"; };
 		8AA1983D33325C1C35CAAA63 /* PulseNativeLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseNativeLog.swift; sourceTree = "<group>"; };
 		902FE641F33901EE027B942D /* PulseBarNative.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PulseBarNative.entitlements; sourceTree = "<group>"; };
-		A4D05CE309A88397135005C8 /* InstalledAppCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstalledAppCatalog.swift; sourceTree = "<group>"; };
-		B2B98DE9051F30F65D2DAE62 /* ConnectionDetailPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionDetailPane.swift; sourceTree = "<group>"; };
+		99E9B44F61A00E4C201FB209 /* PulseBarShared+Identifiable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PulseBarShared+Identifiable.swift"; sourceTree = "<group>"; };
+		9F8E57C5FA16D729C15F15BC /* LiveListenWavWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenWavWriter.swift; sourceTree = "<group>"; };
+		A884FB70CD387DF81602234D /* DashboardSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardSection.swift; sourceTree = "<group>"; };
+		AA1D03DF85E491216051EE41 /* MediaSeekBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSeekBar.swift; sourceTree = "<group>"; };
+		B7396F0A64AF4F513ABE5862 /* MenuBarContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContentView.swift; sourceTree = "<group>"; };
+		B8460513E65799C9C37FECA6 /* GlobalSettingsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalSettingsPane.swift; sourceTree = "<group>"; };
 		BCAB5196BF7067C53F0CD93E /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
-		BF4588C68C6396436A955009 /* MarqueeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarqueeText.swift; sourceTree = "<group>"; };
-		C7408030DC6DE794ABE05AAE /* InstalledReportingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstalledReportingApp.swift; sourceTree = "<group>"; };
-		C9034CDA4791DFF41DEAA854 /* MediaCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaCards.swift; sourceTree = "<group>"; };
-		ECC23D8354C68D1B43061F0B /* MediaGlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGlassBackground.swift; sourceTree = "<group>"; };
+		C0FFA4AAAC50CF63CAA0BD47 /* MediaCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaCards.swift; sourceTree = "<group>"; };
+		D4B1513A5FFA66200BE050C9 /* MediaGlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGlassBackground.swift; sourceTree = "<group>"; };
+		DD5B67AB4B7DFF2E9E810599 /* LiveListenCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenCaptureView.swift; sourceTree = "<group>"; };
+		DED5B1A3040DC72E1B9DDBCF /* MarqueeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarqueeText.swift; sourceTree = "<group>"; };
+		E04E0F792AF2CED97CB0D709 /* AppIconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconView.swift; sourceTree = "<group>"; };
 		F0D77DB5CC212B4742562DA9 /* PulseBarNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseBarNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		F75950E5E4D0C31C6A780789 /* MediaSeekBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSeekBar.swift; sourceTree = "<group>"; };
-		FAD9D683F0EEC71E6F80A30D /* Forms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Forms.swift; sourceTree = "<group>"; };
+		F9FB82F1B9FF8F5760212444 /* ConnectionDetailPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionDetailPane.swift; sourceTree = "<group>"; };
+		FA76178436F5D6D5686B5A92 /* Buttons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Buttons.swift; sourceTree = "<group>"; };
 		FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorStore.swift; sourceTree = "<group>"; };
+		FC04CA1E6AC5F911D7AC8297 /* LiveListenPermission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveListenPermission.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		0F1AD2D3CC0FB37DD365A1E3 /* Menubar */ = {
+			isa = PBXGroup;
+			children = (
+				B7396F0A64AF4F513ABE5862 /* MenuBarContentView.swift */,
+			);
+			path = Menubar;
+			sourceTree = "<group>";
+		};
+		2C18E911EDDF572F9C76993E /* InstalledApps */ = {
+			isa = PBXGroup;
+			children = (
+				2ECAB8819B655CCC3ACEC0E1 /* InstalledAppCatalog.swift */,
+			);
+			path = InstalledApps;
+			sourceTree = "<group>";
+		};
 		2CAF432908C9668046B57118 /* State */ = {
 			isa = PBXGroup;
 			children = (
-				0A994D6B696DC5F351481476 /* DashboardSection.swift */,
+				523C3F4CCF10585F30F9AD9D /* LiveListenCaptureStore.swift */,
+				1C591CC43DA0BCBFEA24C4DF /* LiveListenTypes.swift */,
 				FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */,
 			);
 			path = State;
@@ -94,6 +119,17 @@
 			);
 			sourceTree = "<group>";
 		};
+		30B6871C77E6ABDE7F666D03 /* Connection */ = {
+			isa = PBXGroup;
+			children = (
+				F9FB82F1B9FF8F5760212444 /* ConnectionDetailPane.swift */,
+				0B6783918039419B97A8B16A /* ConnectionListItem.swift */,
+				8859DF7FA9C555008E05A2C3 /* ConnectionPane.swift */,
+				756BABB2D8242410711EC698 /* EndpointEditorSheet.swift */,
+			);
+			path = Connection;
+			sourceTree = "<group>";
+		};
 		3C871AF7C2066AA40EA06964 /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -104,17 +140,37 @@
 			path = App;
 			sourceTree = "<group>";
 		};
-		7230E60CB51D9729B7FE1137 /* LiveListen */ = {
+		5539F8817E0228B320BDD887 /* Design */ = {
 			isa = PBXGroup;
 			children = (
-				45525A603937CBDDBF7614F5 /* LiveListenBridge.swift */,
-				08354280BFA3B9A513A10871 /* LiveListenCaptureModel.swift */,
-				68FF669DC3070BFE1725079E /* LiveListenCaptureService.swift */,
-				33A833557116271584C40681 /* LiveListenCaptureSession.swift */,
-				77E6B1F96C05806BD1A9CB06 /* LiveListenCaptureView.swift */,
-				89B5ECFDACA208A548B1018C /* LiveListenTypes.swift */,
+				E04E0F792AF2CED97CB0D709 /* AppIconView.swift */,
+				FA76178436F5D6D5686B5A92 /* Buttons.swift */,
+				01A0822D1D7AF106B2D8DB46 /* DetailSection.swift */,
+				7631EFBAA6D0FD3B0698E5CD /* Forms.swift */,
+				DED5B1A3040DC72E1B9DDBCF /* MarqueeText.swift */,
+				C0FFA4AAAC50CF63CAA0BD47 /* MediaCards.swift */,
+				D4B1513A5FFA66200BE050C9 /* MediaGlassBackground.swift */,
+				AA1D03DF85E491216051EE41 /* MediaSeekBar.swift */,
 			);
-			path = LiveListen;
+			path = Design;
+			sourceTree = "<group>";
+		};
+		5E1240A21801D7935D51EC27 /* Screens */ = {
+			isa = PBXGroup;
+			children = (
+				D83A821EDE382DC2DC43E441 /* Dashboard */,
+				0F1AD2D3CC0FB37DD365A1E3 /* Menubar */,
+			);
+			path = Screens;
+			sourceTree = "<group>";
+		};
+		60646A9965CAD345C5A9A58D /* Reporting */ = {
+			isa = PBXGroup;
+			children = (
+				0C6D4AF4F941200092C2AB7F /* InstalledReportingApp.swift */,
+				5852332BC4D89E634BFEA93F /* ReportingPane.swift */,
+			);
+			path = Reporting;
 			sourceTree = "<group>";
 		};
 		727DCB65FF97C7E1AD3CEA3C /* PulseBarNative */ = {
@@ -123,39 +179,20 @@
 				902FE641F33901EE027B942D /* PulseBarNative.entitlements */,
 				3C871AF7C2066AA40EA06964 /* App */,
 				9F1C4FF4B2780356307D8181 /* Bridge */,
-				7619B9703B1BEE76CF86C222 /* Dashboard */,
-				7230E60CB51D9729B7FE1137 /* LiveListen */,
-				F5177D7EEE760995048A2E4E /* Menubar */,
+				5539F8817E0228B320BDD887 /* Design */,
+				5E1240A21801D7935D51EC27 /* Screens */,
+				B09A96BDCA4BCC0D75C8EA49 /* Services */,
 				2CAF432908C9668046B57118 /* State */,
-				85140D76E7FF868DF924177A /* UI */,
 			);
 			path = PulseBarNative;
 			sourceTree = "<group>";
 		};
-		7619B9703B1BEE76CF86C222 /* Dashboard */ = {
+		8ABB8A4649AEAE459F83AAD1 /* LiveListen */ = {
 			isa = PBXGroup;
 			children = (
-				83C2F8A1DD58C188B109F2C5 /* DashboardView.swift */,
-				D8D2254631A41A74BA88F560 /* Connection */,
-				B15EFA98CE22DD4E6B45FCE1 /* Reporting */,
-				FC4851098B1C48D8E86F8160 /* Settings */,
+				DD5B67AB4B7DFF2E9E810599 /* LiveListenCaptureView.swift */,
 			);
-			path = Dashboard;
-			sourceTree = "<group>";
-		};
-		85140D76E7FF868DF924177A /* UI */ = {
-			isa = PBXGroup;
-			children = (
-				733C607CEE7873251150380B /* AppIconView.swift */,
-				654DF7A0E79FC5CDBC2DDBD6 /* Buttons.swift */,
-				492BCA634CBE24363C0A940D /* DetailSection.swift */,
-				FAD9D683F0EEC71E6F80A30D /* Forms.swift */,
-				BF4588C68C6396436A955009 /* MarqueeText.swift */,
-				C9034CDA4791DFF41DEAA854 /* MediaCards.swift */,
-				ECC23D8354C68D1B43061F0B /* MediaGlassBackground.swift */,
-				F75950E5E4D0C31C6A780789 /* MediaSeekBar.swift */,
-			);
-			path = UI;
+			path = LiveListen;
 			sourceTree = "<group>";
 		};
 		9C2F5A22498D4676AC13B8CC /* Products */ = {
@@ -169,45 +206,52 @@
 		9F1C4FF4B2780356307D8181 /* Bridge */ = {
 			isa = PBXGroup;
 			children = (
-				679DE5773B082F744F2182CA /* KotlinTypeAdapters.swift */,
+				59A9286630929C63277C45B8 /* PulseBarShared+ConnectionStatus.swift */,
+				99E9B44F61A00E4C201FB209 /* PulseBarShared+Identifiable.swift */,
+				07D81BAFA6F1CE20A92DE9D4 /* PulseBarShared+Media.swift */,
 				8AA1983D33325C1C35CAAA63 /* PulseNativeLog.swift */,
 			);
 			path = Bridge;
 			sourceTree = "<group>";
 		};
-		B15EFA98CE22DD4E6B45FCE1 /* Reporting */ = {
+		B09A96BDCA4BCC0D75C8EA49 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				A4D05CE309A88397135005C8 /* InstalledAppCatalog.swift */,
-				C7408030DC6DE794ABE05AAE /* InstalledReportingApp.swift */,
-				647FDA0C5690CFD4C45F3C1A /* ReportingPane.swift */,
+				2C18E911EDDF572F9C76993E /* InstalledApps */,
+				E04743A5A5FF9C2FE050514A /* LiveListen */,
 			);
-			path = Reporting;
+			path = Services;
 			sourceTree = "<group>";
 		};
-		D8D2254631A41A74BA88F560 /* Connection */ = {
+		D83A821EDE382DC2DC43E441 /* Dashboard */ = {
 			isa = PBXGroup;
 			children = (
-				B2B98DE9051F30F65D2DAE62 /* ConnectionDetailPane.swift */,
-				836215994767D2B2E54BBB36 /* ConnectionListItem.swift */,
-				114F90BCFB8C35968C8DA77C /* ConnectionPane.swift */,
-				6DC284FE8E8FCC94CE166EDE /* EndpointEditorSheet.swift */,
+				A884FB70CD387DF81602234D /* DashboardSection.swift */,
+				6D0FCA5EC26D615E311CD3F5 /* DashboardView.swift */,
+				30B6871C77E6ABDE7F666D03 /* Connection */,
+				8ABB8A4649AEAE459F83AAD1 /* LiveListen */,
+				60646A9965CAD345C5A9A58D /* Reporting */,
+				F925CEB9C02CF4ACDE14B07C /* Settings */,
 			);
-			path = Connection;
+			path = Dashboard;
 			sourceTree = "<group>";
 		};
-		F5177D7EEE760995048A2E4E /* Menubar */ = {
+		E04743A5A5FF9C2FE050514A /* LiveListen */ = {
 			isa = PBXGroup;
 			children = (
-				38DC0986A162F2F91429BBC2 /* MenuBarContentView.swift */,
+				4757939FDCA2A934715BECB4 /* LiveListenBridge.swift */,
+				2F58C80225868027B0DA7013 /* LiveListenCaptureService.swift */,
+				513D625D91B09AEC63021694 /* LiveListenCaptureSession.swift */,
+				FC04CA1E6AC5F911D7AC8297 /* LiveListenPermission.swift */,
+				9F8E57C5FA16D729C15F15BC /* LiveListenWavWriter.swift */,
 			);
-			path = Menubar;
+			path = LiveListen;
 			sourceTree = "<group>";
 		};
-		FC4851098B1C48D8E86F8160 /* Settings */ = {
+		F925CEB9C02CF4ACDE14B07C /* Settings */ = {
 			isa = PBXGroup;
 			children = (
-				64C8E44E60C1A00F76B711D1 /* GlobalSettingsPane.swift */,
+				B8460513E65799C9C37FECA6 /* GlobalSettingsPane.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -293,35 +337,39 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				9E0D6DDF057E57B9D9F8F902 /* AppIconView.swift in Sources */,
-				C4401DA77D7341601A5A0C57 /* Buttons.swift in Sources */,
-				D06D20552D5C3CCF892FB89C /* ConnectionDetailPane.swift in Sources */,
-				5399100A329AE0FAA46DD64E /* ConnectionListItem.swift in Sources */,
-				A6F8679441B58E0199B95581 /* ConnectionPane.swift in Sources */,
-				5EF61771089185FEA491A156 /* DashboardSection.swift in Sources */,
-				96F66FC9F8C4A6CCA55CB0E4 /* DashboardView.swift in Sources */,
-				18BD636018A69E96857298E9 /* DetailSection.swift in Sources */,
-				A2DCE874E47FD0B7A9A881A5 /* EndpointEditorSheet.swift in Sources */,
-				DC72D4B2976D64E3DAA55613 /* Forms.swift in Sources */,
-				5BF3F571AA08C20407CABA5C /* GlobalSettingsPane.swift in Sources */,
-				62DBD6134C2ECCBFAF52B100 /* InstalledAppCatalog.swift in Sources */,
-				E2D71E9081058293A709047C /* InstalledReportingApp.swift in Sources */,
-				9C6FFBBB1196FE295045B072 /* KotlinTypeAdapters.swift in Sources */,
-				71CE6B80CF4532FF20D06374 /* LiveListenBridge.swift in Sources */,
-				E217258217FCDA4C48FE7CCC /* LiveListenCaptureModel.swift in Sources */,
-				23EA69C7266DF75A2A82293B /* LiveListenCaptureService.swift in Sources */,
-				4F989C77B9CCB411E3614C84 /* LiveListenCaptureSession.swift in Sources */,
-				C770448B79E1240AD8C298B1 /* LiveListenCaptureView.swift in Sources */,
-				A94AF7C96AE4F5ED47B767BD /* LiveListenTypes.swift in Sources */,
-				CEEC14AC9E3939873E3F1894 /* MarqueeText.swift in Sources */,
-				42E0873362C9B264287CE6C6 /* MediaCards.swift in Sources */,
-				EB24302A7F24164A90987D91 /* MediaGlassBackground.swift in Sources */,
-				15F8B557C1727BDD742301A1 /* MediaSeekBar.swift in Sources */,
-				F44545886531CD03E5D80990 /* MenuBarContentView.swift in Sources */,
+				36670F66E61AD804AC0B9BE6 /* AppIconView.swift in Sources */,
+				258746F6820E49F13BC373E2 /* Buttons.swift in Sources */,
+				7E6A7AC1EFF5B71AF6F424D8 /* ConnectionDetailPane.swift in Sources */,
+				A890C7C481AA7AA1CAC3DD9F /* ConnectionListItem.swift in Sources */,
+				5AEF5BBD3BB6E20190977543 /* ConnectionPane.swift in Sources */,
+				0CF277EDCE17E7774D0FDA60 /* DashboardSection.swift in Sources */,
+				04368F90613FA8CAB22EC1BB /* DashboardView.swift in Sources */,
+				11048B44CEEB43E8D0F02A52 /* DetailSection.swift in Sources */,
+				25416E4D68A7CF58F64F004F /* EndpointEditorSheet.swift in Sources */,
+				BFF0F53C2B990A54C83ACA38 /* Forms.swift in Sources */,
+				56DF889FB57F833883E11B29 /* GlobalSettingsPane.swift in Sources */,
+				71781F95CDD3248BB06BB67B /* InstalledAppCatalog.swift in Sources */,
+				F46E529B1F0F516DA4355752 /* InstalledReportingApp.swift in Sources */,
+				01370FC59B5EAEED88E7E72E /* LiveListenBridge.swift in Sources */,
+				C01BCCD06941E996E157DFA0 /* LiveListenCaptureService.swift in Sources */,
+				683B1B0D47AD8DCA2B040E90 /* LiveListenCaptureSession.swift in Sources */,
+				B67D32D81A0ECC2F31D79967 /* LiveListenCaptureStore.swift in Sources */,
+				192FEA1E542D96A43ADF805B /* LiveListenCaptureView.swift in Sources */,
+				5DC94A1A9C8ABEA761AE074B /* LiveListenPermission.swift in Sources */,
+				2067C4881AB5A0C82A91D825 /* LiveListenTypes.swift in Sources */,
+				543ADD9DFBD72D9B70361F54 /* LiveListenWavWriter.swift in Sources */,
+				AB81036BAA13E726041A0503 /* MarqueeText.swift in Sources */,
+				41DEB95F159C6B8418C7DAA7 /* MediaCards.swift in Sources */,
+				7508FF88D49765EFEF5C8FD1 /* MediaGlassBackground.swift in Sources */,
+				E0C30918ED12E502A247F438 /* MediaSeekBar.swift in Sources */,
+				B4E546B397EFDB2BFAD320A8 /* MenuBarContentView.swift in Sources */,
 				0EBC85E3C0BA813F320CC1F5 /* MonitorStore.swift in Sources */,
 				D405762B9A292BAE32CC2CE6 /* PulseBarNativeApp.swift in Sources */,
+				29F14E2EE2128FCB95E9CCD0 /* PulseBarShared+ConnectionStatus.swift in Sources */,
+				5D1B897A858FE22BCB2E5AC7 /* PulseBarShared+Identifiable.swift in Sources */,
+				D2F95141D1AE7FC5225D8E08 /* PulseBarShared+Media.swift in Sources */,
 				8CBD735AD287840AD7EC5DB7 /* PulseNativeLog.swift in Sources */,
-				70A584D7C1788266D634F8E1 /* ReportingPane.swift in Sources */,
+				9CAD732601DA6F108E4B84BB /* ReportingPane.swift in Sources */,
 				EB317BE953C9773EE9EA23DF /* StatusItemController.swift in Sources */,
 				E56A9276D03C051F021494F2 /* WindowHelpers.swift in Sources */,
 			);

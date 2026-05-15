@@ -40,7 +40,7 @@ fun resolveConnectionStatus(
  * Draft-based variant used by the Swift Settings UI, which edits drafts
  * rather than configs. Returns the enum's `name` string because of
  * Swift Export's enum-return crash — see
- * `docs/app/swift-export-enum-bug.md` (KT-83730). The generated Swift
+ * `docs/desktop-app/specs/swift-export-enum-bug.md` (KT-83730). The generated Swift
  * `ConnectionRuntimeStatus.init(__externalRCRefUnsafe:)` fatalErrors on
  * the Kotlin-supplied pointer. Returning a String dodges the bridge
  * entirely.

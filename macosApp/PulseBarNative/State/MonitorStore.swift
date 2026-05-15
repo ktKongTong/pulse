@@ -50,12 +50,12 @@ final class MonitorStore: ObservableObject {
 
     private let bridge: PulseBarBridge
     private var observerTasks: [Task<Void, Never>] = []
-    let liveListenCaptureModel: LiveListenCaptureModel
+    let liveListenStore: LiveListenCaptureStore
     private var subscribed = false
 
     init() {
         self.bridge = PulseBarBridge()
-        self.liveListenCaptureModel = LiveListenCaptureModel(bridge: bridge)
+        self.liveListenStore = LiveListenCaptureStore(bridge: bridge)
     }
 
     deinit {
@@ -120,7 +120,7 @@ final class MonitorStore: ObservableObject {
         }
         observerTasks.append(todayTask)
 
-        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
+        liveListenStore.updateEndpoints(liveListenEndpoints)
     }
 
     func stop() {
@@ -149,28 +149,28 @@ final class MonitorStore: ObservableObject {
     // MARK: - Live Listen convenience
 
     func prepareLiveListenCapturePane() {
-        liveListenCaptureModel.refreshSources()
-        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
+        liveListenStore.refreshSources()
+        liveListenStore.updateEndpoints(liveListenEndpoints)
     }
 
     func requestLiveListenAudioCapturePermissionAtStartup() {
-        liveListenCaptureModel.requestAudioCapturePermissionAtStartup()
+        liveListenStore.requestAudioCapturePermissionAtStartup()
     }
 
     func startDebugNativeLiveListenStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
-        liveListenCaptureModel.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
+        liveListenStore.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
         let endpoints = liveListenEndpoints
         let endpointList = endpoints.map { $0.baseUrl }.joined(separator: ",")
-        let source = liveListenCaptureModel.selectedSource?.name ?? "nil"
+        let source = liveListenStore.selectedSource?.name ?? "nil"
         PulseNativeLog.info(.liveListenSession, "debug.stream.start endpoints=\(endpointList) source=\(source)")
-        liveListenCaptureModel.updateEndpoints(endpoints)
+        liveListenStore.updateEndpoints(endpoints)
         dashboardSelection = .connection
-        liveListenCaptureModel.startNativeStream()
+        liveListenStore.startNativeStream()
     }
 
     func stopDebugNativeLiveListenStream() {
         PulseNativeLog.info(.liveListenSession, "debug.stream.stop")
-        liveListenCaptureModel.stopCapture()
+        liveListenStore.stopCapture()
     }
 
     var liveListenEndpoints: [LiveListenEndpointResolved] {
@@ -182,7 +182,7 @@ final class MonitorStore: ObservableObject {
     func saveConfig() {
         bridge.updateConfig(config: PulseBarConfigFactory.shared.fromDraft(draft: settingsDraft))
         bridge.forceTick()
-        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
+        liveListenStore.updateEndpoints(liveListenEndpoints)
     }
 
     func addEndpoint() {
@@ -255,7 +255,7 @@ final class MonitorStore: ObservableObject {
 
     private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
         snapshot = state.snapshot
-        liveListenCaptureModel.updateCurrentMedia(state.snapshot?.media)
+        liveListenStore.updateCurrentMedia(state.snapshot?.media)
     }
 
     private func applyTodayStatsUpdate(_ stats: PulseBarTodayStats) {
@@ -265,7 +265,7 @@ final class MonitorStore: ObservableObject {
 
     private func applyConfigUpdate(_ config: PulseBarConfig) {
         settingsDraft = PulseBarConfigFactory.shared.toDraft(config: config)
-        liveListenCaptureModel.updateEndpoints(liveListenEndpoints)
+        liveListenStore.updateEndpoints(liveListenEndpoints)
     }
 
     private func applySyncStateUpdate(_ state: PulseBarSyncState) {

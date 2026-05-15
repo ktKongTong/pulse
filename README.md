@@ -26,19 +26,19 @@
 
 ## Presence/V2 协议
 
-当前默认对接的是跨平台 `presence.v2`：
+当前默认对接的是跨平台 `presence.v2`。
 
-- 设备上报：`POST /v2/presence/ingest`
-- 历史归档：`POST /v2/history/ingest`
+- 设备上报：`POST /api/v2/presence/ingest`
+- 历史归档：`POST /api/v2/history/ingest`
 - 服务端查询/下发：
-  - `GET /v1/meta`
-  - `GET /v1/realtime/ws?workspaceId=...&roomId=...`
-  - `GET /v1/site/history`
-  - `GET /v1/site/lifetime`
-  - `GET /v1/content/history`
-  - `GET /v1/content/lifetime`
-  - `GET /v1/owner/history`
-  - `GET /v1/owner/lifetime`
+  - `GET /api/v1/meta`
+  - `GET /api/v1/realtime/ws?workspaceId=...&roomId=...`
+  - `GET /api/v1/site/history`
+  - `GET /api/v1/site/lifetime`
+  - `GET /api/v1/content/history`
+  - `GET /api/v1/content/lifetime`
+  - `GET /api/v1/owner/history`
+  - `GET /api/v1/owner/lifetime`
 
 设备到服务端采用 append-only HTTP ingest，使用 `deviceId + seq + eventId` 做幂等。
 
@@ -118,16 +118,18 @@ xcodebuild -project macosApp/PulseBarNative.xcodeproj \
 
 ## 文档
 
-- [Realtime Current State](/Users/kt/Documents/Playground/pulse/docs/realtime-current-state.md)
-  - 当前代码对齐的协议、路由、DO 状态模型和具体状态流转
-- [Realtime Protocols](/Users/kt/Documents/Playground/pulse/docs/realtime-protocols.md)
-  - 详细描述 `presence.v2`、`web.v1`、房间聚合以及各端内部模型变换
-- [Protocol Evolution](/Users/kt/Documents/Playground/pulse/docs/protocol-evolution.md)
-  - 单独描述 SDK / wire protocol / canonical model 的演进策略与兼容矩阵
-- [Module Boundaries](/Users/kt/Documents/Playground/pulse/docs/module-boundaries.md)
-  - 明确 `worker / protocol / realtime-react / native` 的职责边界和依赖方向
-- [Realtime React API](/Users/kt/Documents/Playground/pulse/docs/realtime-react-api.md)
-  - 整理 `@pulse/realtime-react` 当前暴露的 hooks、client API、facade 形状和推荐用例
+- [文档入口](./docs/index.md)
+  - Pulse 文档入口，按 owner 拆分为 worker、desktop app、protocol 和全局 harness。
+- [Pulse Worker](./docs/pulse-worker/index.md)
+  - `apps/realtime-worker` 的架构、文件组织、runtime、verification 和 specs。
+- [Desktop App 文档](./docs/desktop-app/index.md)
+  - `common` 与 `macosApp` 的 KMP/native 架构、设计、计划和验证方式。
+- [Protocol](./docs/protocol/index.md)
+  - 通信协议、消息模型、endpoint contract、Live Listen 协议和兼容策略。
+- [全局规范](./docs/specs/index.md)
+  - 跨域 specs，例如 module boundaries 与 `@pulse/realtime-react` public API。
+- [Harness](./docs/harness/index.md)
+  - agent 工作流、文档结构、诊断和验证门槛。
 
 ## Realtime Workspace
 
@@ -159,19 +161,19 @@ pnpm --filter @pulse/realtime-worker dev
 
 ## Realtime Routes
 
-Worker 当前暴露：
+Worker-hosted public routes 当前暴露：
 
-- `POST /v2/presence/ingest`
-- `POST /v2/history/ingest`
-- `POST /v1/web/ingest`
-- `GET /v1/meta`
-- `GET /v1/realtime/ws?workspaceId=...&roomId=...`
-- `GET /v1/site/history`
-- `GET /v1/site/lifetime`
-- `GET /v1/content/history`
-- `GET /v1/content/lifetime`
-- `GET /v1/owner/history`
-- `GET /v1/owner/lifetime`
+- `POST /api/v2/presence/ingest`
+- `POST /api/v2/history/ingest`
+- `POST /api/v1/web/ingest`
+- `GET /api/v1/meta`
+- `GET /api/v1/realtime/ws?workspaceId=...&roomId=...`
+- `GET /api/v1/site/history`
+- `GET /api/v1/site/lifetime`
+- `GET /api/v1/content/history`
+- `GET /api/v1/content/lifetime`
+- `GET /api/v1/owner/history`
+- `GET /api/v1/owner/lifetime`
 
 Durable Object 房间：
 
