@@ -153,7 +153,7 @@ live_listen_disabled 来自 owner/device policy，不来自 playback。
 device_offline 来自 nativeLink disconnected，不来自 playback 或 permission。
 ```
 
-Server 只在 `media-session` WS 收到 `listen.request` 后尝试 accept listener。`admission.state !== open` 时必须返回 `session.rejected`，保持 WS 继续观测，且不能改变 stream demand，也不能给 Native 发 `stream.start`。
+Server 只在 `media-session` WS 收到 `listen.request` 后尝试 accept listener。`admission.state !== open` 时必须返回 `session.rejected`，保持 WS 继续观测，且不能改变 stream demand，也不能给 Native 发 `stream.requested`。
 
 ## 4. StreamDemand
 
@@ -184,7 +184,7 @@ Stream demand 不由 Native 决定。Native media playing 也不能自动产生 
 当 `streamDemand = wanted` 且 `admission = open`：
 
 ```text
-Server 可以给 Native 发 stream.start 或 stream.resume。
+Server 可以给 Native 发 stream.requested 或 stream.resume。
 ```
 
 当 `streamDemand = not-wanted`：
@@ -246,7 +246,7 @@ admission = open
 activeCount += 1
 streamDemand = wanted
 audioFlow = starting
-send stream.start/resume to Native
+send stream.requested/resume to Native
 ```
 
 原因：
@@ -304,7 +304,7 @@ unavailable(policy/permission reason) -> admission = blocked(reason)
 如果 `streamDemand = wanted` 且 `admission = open`：
 
 ```text
-send stream.start/resume
+send stream.requested/resume
 audioFlow = starting
 ```
 
@@ -537,8 +537,8 @@ device_offline means nativeLink disconnected/error, not playback paused
 Native WS disconnect changes NativeLink only
 listener WS close changes ListenerPresence only
 audioFlow never uses native-reconnecting/recovering/reconnecting as a value
-server never sends stream.start when admission=blocked
-server never sends stream.start when streamDemand=not-wanted
+server never sends stream.requested when admission=blocked
+server never sends stream.requested when streamDemand=not-wanted
 ```
 
 违反这些不变量都属于协议 bug。

@@ -7,6 +7,8 @@
 
 以及它们如何在服务端 Durable Object 中被归一化为统一的房间快照模型。
 
+Device 与 server 的下一阶段目标是从 `HTTP ingest + command WebSocket` 切换到双 WebSocket；目标协议见 [Device WebSocket 协议草案](./device-ws/index.md)。本文剩余部分仍描述当前协议背景。
+
 文中不会重复列出所有字段定义源码，而是重点说明：
 
 - 每一端本地状态从哪里来

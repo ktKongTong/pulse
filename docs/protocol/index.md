@@ -7,11 +7,12 @@
 ## 阅读顺序
 
 1. [当前架构](./architecture.md)
-2. [文件组织规范](./specs/file-organization.md)
-3. [消息模型规范](./specs/message-model.md)
-4. [Endpoint Contract](./specs/endpoint-contracts.md)
-5. [兼容策略](./specs/compatibility.md)
-6. [验证门槛](./specs/verification.md)
+2. [Device WebSocket 协议草案](./design/device-ws/index.md)
+3. [文件组织规范](./specs/file-organization.md)
+4. [消息模型规范](./specs/message-model.md)
+5. [Endpoint Contract](./specs/endpoint-contracts.md)
+6. [兼容策略](./specs/compatibility.md)
+7. [验证门槛](./specs/verification.md)
 
 ## 子目录
 
