@@ -9,7 +9,8 @@
 
 相关文档：
 
-- [Realtime 协议设计](../design/realtime-protocols.md)
+- [Client WebSocket 协议设计](../design/client-ws/index.md)
+- [Device WebSocket 协议设计](../design/device-ws/index.md)
 
 ## 1. Three version layers
 

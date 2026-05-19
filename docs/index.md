@@ -29,9 +29,9 @@ Pulse 文档按“归属 owner”组织。每个实现域根目录只保留入�
 - [Realtime React 当前 API](./reference/realtime-react/current-api.md)
 - [Realtime React 目标 API](./design/realtime-react/target-api.md)
 - [Realtime Worker 当前状态](./pulse-worker/reference/realtime-current-state.md)
-- [Realtime 协议设计](./protocol/design/realtime-protocols.md)
+- [Device 侧状态机设计](./protocol/design/device.state.md)
 - [Device WebSocket 协议草案](./protocol/design/device-ws/index.md)
-- [Live Listen MVP 设计](./protocol/design/live-listen/mvp.md)
+- [Client WebSocket 协议设计](./protocol/design/client-ws/index.md)
 - [协议兼容策略](./protocol/specs/compatibility.md)
 - [macOS App 重构 PRD](./desktop-app/design/mac-app-rebuild-prd.md)
 

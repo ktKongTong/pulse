@@ -5,7 +5,7 @@
 阅读顺序建议：
 
 1. 看这份文档，先建立“当前到底跑起来的是什么”
-2. 再看 [Realtime 协议设计](../../protocol/design/realtime-protocols.md) 理解字段背景
+2. 再看 [Client WebSocket 协议设计](../../protocol/design/client-ws/index.md) 和 [Device WebSocket 协议草案](../../protocol/design/device-ws/index.md) 理解目标协议
 3. 再看 [Protocol Compatibility](../../protocol/specs/compatibility.md) 理解后续版本策略
 
 源码事实来源：

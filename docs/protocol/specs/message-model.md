@@ -15,4 +15,4 @@ Pulse WebSocket 协议使用明确的 `protocol` 字符串和 typed message enve
 - reconnect/resume 行为
 - 兼容规则
 
-Live Listen 的目标方案目前见 [Live Listen MVP 设计](../design/live-listen/mvp.md)；状态模型设计见 [Server 状态](../design/live-listen/server-state.md)、[Native Media 状态](../design/live-listen/native-media-state.md) 和 [Web Media 状态](../design/live-listen/web-media-state.md)。
+Client / device WebSocket 目标方案见 [Client WebSocket 协议设计](../design/client-ws/index.md) 和 [Device WebSocket 协议草案](../design/device-ws/index.md)；device 侧状态模型见 [Device 侧状态机](../design/device.state.md)。

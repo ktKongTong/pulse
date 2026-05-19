@@ -21,7 +21,7 @@
 ## 旧路径搜索
 
 ```bash
-rg -n "docs/app|docs/realtime-current-state|docs/realtime-protocols|docs/live-listen|docs/protocol-evolution|docs/module-boundaries|docs/realtime-react"
+rg -n "docs/app|docs/realtime-current-state|docs/live-listen|docs/protocol-evolution|docs/module-boundaries|docs/realtime-react"
 rg -n "/Users/[^[:space:]]+/pulse" docs README.md AGENTS.md
 rg -n "正在.*迁移|仍然依赖|future plan|还没实现" docs
 ```
