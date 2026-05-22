@@ -140,6 +140,8 @@ actual class PulseBarBridge actual constructor() {
 
     actual fun stopLiveListen() = Unit
 
+    actual fun emitLiveListenLocalStop() = Unit
+
     actual fun submitLiveListenPcmBase64(chunkBase64: String) = Unit
 
     actual fun updateLiveListenMediaState(
@@ -155,6 +157,7 @@ actual class PulseBarBridge actual constructor() {
         artist: String?,
         album: String?,
         artworkUrl: String?,
+        progressSeconds: Double,
         durationSeconds: Double,
         isPlaying: Boolean,
     ) = Unit

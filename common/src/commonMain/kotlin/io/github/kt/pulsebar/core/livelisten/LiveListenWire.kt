@@ -77,6 +77,7 @@ internal data class LiveListenMedia(
     val artist: String? = null,
     val album: String? = null,
     val artworkUrl: String? = null,
+    val progressSeconds: Double = 0.0,
     val durationSeconds: Double? = null,
     val playbackState: LiveListenPlaybackWire? = null,
 )

@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - packages/v2/*
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@latest
   vite-plus: latest

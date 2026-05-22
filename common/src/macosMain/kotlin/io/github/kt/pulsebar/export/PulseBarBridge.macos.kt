@@ -5,14 +5,15 @@ import io.github.kt.pulsebar.core.config.pulseBarConfigFileSystem
 import io.github.kt.pulsebar.core.config.pulseBarConfigPath
 import io.github.kt.pulsebar.core.config.toExport
 import io.github.kt.pulsebar.core.config.toProto
+import io.github.kt.pulsebar.core.devicev2.DeviceV2Client
 import io.github.kt.pulsebar.core.livelisten.LiveListenCaptureRuntime
-import io.github.kt.pulsebar.core.livelisten.LiveListenClient
 import io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig
 import io.github.kt.pulsebar.core.livelisten.LiveListenMedia
 import io.github.kt.pulsebar.core.livelisten.LiveListenMediaPermission
 import io.github.kt.pulsebar.core.livelisten.LiveListenNativeMediaState
 import io.github.kt.pulsebar.core.livelisten.LiveListenPlaybackWire
 import io.github.kt.pulsebar.core.livelisten.LiveListenStats
+import io.github.kt.pulsebar.core.livelisten.LiveListenStopReason
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
 import kotlin.io.encoding.Base64
@@ -141,7 +142,7 @@ actual class PulseBarBridge actual constructor() {
     private val menuStateFlow = MutableStateFlow(latestMenuState)
     private val syncStateFlow = MutableStateFlow<PulseBarSyncState?>(null)
     private val interactionStateFlow = MutableStateFlow<PulseBarInteractionState?>(null)
-    private val liveListenClient = LiveListenClient(scope = scope)
+    private val liveListenClient = DeviceV2Client(scope = scope)
     private val tickMutex = Mutex()
     private var tickLoopJob: Job? = null
 
@@ -286,6 +287,10 @@ actual class PulseBarBridge actual constructor() {
         liveListenClient.stop()
     }
 
+    actual fun emitLiveListenLocalStop() {
+        liveListenClient.emitLocalStop(LiveListenStopReason.MANUAL_STOP)
+    }
+
     actual fun submitLiveListenPcmBase64(chunkBase64: String) {
         val decoded = decodeBase64OrNull(chunkBase64) ?: return
         liveListenClient.submitPcm(decoded)
@@ -315,6 +320,7 @@ actual class PulseBarBridge actual constructor() {
         artist: String?,
         album: String?,
         artworkUrl: String?,
+        progressSeconds: Double,
         durationSeconds: Double,
         isPlaying: Boolean,
     ) {
@@ -332,6 +338,7 @@ actual class PulseBarBridge actual constructor() {
                 artist = artist?.ifBlank { null },
                 album = album?.ifBlank { null },
                 artworkUrl = artworkUrl?.ifBlank { null },
+                progressSeconds = progressSeconds.coerceAtLeast(0.0),
                 durationSeconds = durationSeconds.takeIf { it > 0.0 },
                 playbackState = if (isPlaying) LiveListenPlaybackWire.PLAYING
                 else LiveListenPlaybackWire.PAUSED,

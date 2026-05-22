@@ -1,0 +1,29 @@
+{
+  "name": "@pulse/realtime-worker-v2",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "tsgo -p tsconfig.json",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "mock:device": "pnpm exec tsx scripts/mock-device.ts",
+    "test": "vitest run",
+    "typecheck": "tsgo -p tsconfig.json --noEmit && tsgo -p tsconfig.scripts.json --noEmit",
+    "type": "wrangler types worker-configuration.d.ts"
+  },
+  "dependencies": {
+    "@pulse/v2-realtime-protocol": "workspace:*",
+    "hono": "catalog:hono",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "catalog:worker",
+    "@cloudflare/workers-types": "catalog:worker",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "^4.1.6",
+    "wrangler": "catalog:worker"
+  }
+}

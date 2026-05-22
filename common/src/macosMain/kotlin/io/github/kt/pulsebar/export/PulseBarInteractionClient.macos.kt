@@ -344,11 +344,24 @@ internal class PulseBarInteractionClient(
 
     private fun PulseBarConfig.primaryInteractionEndpoint(): PulseBarEndpointConfig? =
         endpoints.firstOrNull { endpoint ->
-            endpoint.enabled && endpoint.workspaceId.isNotBlank() && resolvedInteractionWsUrl(endpoint) != null
+            endpoint.enabled &&
+                !endpoint.isRealtimeV2DeviceEndpoint() &&
+                endpoint.workspaceId.isNotBlank() &&
+                resolvedInteractionWsUrl(endpoint) != null
         }
 
     private fun PulseBarEndpointConfig.interactionFingerprint(): String =
         "${endpointUrl}::${workspaceId}::${apiKey}"
+
+    private fun PulseBarEndpointConfig.isRealtimeV2DeviceEndpoint(): Boolean =
+        endpointUrl.isLocalRealtimeV2WorkerUrl()
+
+    private fun String.isLocalRealtimeV2WorkerUrl(): Boolean {
+        val base = resolvedEndpointBase(this) ?: trim()
+        val hostAndPath = base.removePrefix("https://").removePrefix("http://")
+        val host = hostAndPath.substringBefore("/").lowercase()
+        return host == "localhost:8787" || host == "127.0.0.1:8787" || host == "[::1]:8787"
+    }
 
     private suspend fun queueOrPlayLocally(
         requestId: String,

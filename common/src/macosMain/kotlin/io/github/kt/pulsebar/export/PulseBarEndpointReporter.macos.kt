@@ -79,6 +79,9 @@ internal class PulseBarEndpointReporter {
         pruneRuntimeState(config.endpoints.map { it.id }.toSet())
         val connectedEndpoints = config.connectedReporterEndpoints()
         probeEndpoints = connectedEndpoints
+        config.endpoints.filter { it.enabled && !it.disconnected && it.isRealtimeV2DeviceEndpoint() }.forEach { endpoint ->
+            syncStates[endpoint.id] = realtimeV2EndpointSnapshot()
+        }
         config.endpoints.filter { !it.enabled }.forEach { endpoint ->
             syncStates[endpoint.id] = EndpointSyncSnapshot(
                 status = "disabled",
@@ -120,13 +123,30 @@ internal class PulseBarEndpointReporter {
             logger(PulseLogCategory.SyncEndpoint).d { "capture.skip reason=endpoint_disabled" }
             lastEndpointFingerprints = emptySet()
             config.endpoints.forEach { endpoint ->
-                syncStates[endpoint.id] = EndpointSyncSnapshot(
-                    status = "disabled",
-                    serverStatus = "unknown",
-                    clientStatus = "unknown",
-                    lastStatus = "skip:endpoint_disabled",
-                    lastErrorMessage = null
-                )
+                syncStates[endpoint.id] = when {
+                    !endpoint.enabled -> EndpointSyncSnapshot(
+                        status = "disabled",
+                        serverStatus = "unknown",
+                        clientStatus = "unknown",
+                        lastStatus = "skip:endpoint_disabled",
+                        lastErrorMessage = null
+                    )
+                    endpoint.disconnected -> EndpointSyncSnapshot(
+                        status = "disconnected",
+                        serverStatus = "unknown",
+                        clientStatus = "available",
+                        lastStatus = "skip:endpoint_disconnected",
+                        lastErrorMessage = null
+                    )
+                    endpoint.enabled && !endpoint.disconnected && endpoint.isRealtimeV2DeviceEndpoint() -> realtimeV2EndpointSnapshot()
+                    else -> EndpointSyncSnapshot(
+                        status = "idle",
+                        serverStatus = "unknown",
+                        clientStatus = "available",
+                        lastStatus = "skip:no_legacy_reporter_endpoint",
+                        lastErrorMessage = null
+                    )
+                }
             }
             return
         }
@@ -235,6 +255,28 @@ internal class PulseBarEndpointReporter {
             drainPendingForRead(endpoint)
         }
         val endpointStates = config.endpoints.map { endpoint ->
+            if (endpoint.enabled && !endpoint.disconnected && endpoint.isRealtimeV2DeviceEndpoint()) {
+                val runtimeState = realtimeV2EndpointSnapshot()
+                return@map PulseBarEndpointSyncState(
+                    id = endpoint.id,
+                    name = endpoint.name,
+                    enabled = true,
+                    transportName = endpoint.transportName,
+                    endpointUrl = endpoint.endpointUrl,
+                    status = runtimeState.status,
+                    lastStatus = runtimeState.lastStatus,
+                    pendingCount = 0,
+                    needsAttention = false,
+                    lastAttemptAtIso8601 = null,
+                    lastProbeAtIso8601 = null,
+                    lastSuccessAtIso8601 = null,
+                    lastFailureAtIso8601 = null,
+                    lastErrorMessage = null,
+                    diagnosticMessage = runtimeState.diagnosticMessage,
+                    acknowledgedSeqMax = 0L,
+                    acknowledgedAtIso8601 = null
+                )
+            }
             val reporterEndpoint = ReporterEndpoint(
                 id = endpoint.id,
                 name = endpoint.name,
@@ -1079,6 +1121,15 @@ private fun EndpointSyncSnapshot.isInactiveState(): Boolean =
         lastStatus == "skip:endpoint_disabled" ||
         lastStatus == "skip:endpoint_disconnected"
 
+private fun realtimeV2EndpointSnapshot(): EndpointSyncSnapshot =
+    EndpointSyncSnapshot(
+        status = "healthy",
+        serverStatus = "available",
+        clientStatus = "available",
+        lastStatus = "skip:realtime_v2_device_endpoint",
+        diagnosticMessage = "Legacy HTTP reporter is disabled for realtime v2 device endpoints"
+    )
+
 private fun combinedStatus(enabled: Boolean, serverStatus: String, clientStatus: String): String {
     if (!enabled) return "disabled"
     return when {
@@ -1143,7 +1194,7 @@ private fun String.toJsonObjectOrNull(): JsonObject? =
 
 private fun PulseBarConfig.enabledReporterEndpoints(): List<ReporterEndpoint> =
     endpoints
-        .filter { it.enabled }
+        .filter { it.enabled && !it.isRealtimeV2DeviceEndpoint() }
         .map { endpoint ->
             ReporterEndpoint(
                 id = endpoint.id,
@@ -1158,7 +1209,7 @@ private fun PulseBarConfig.enabledReporterEndpoints(): List<ReporterEndpoint> =
 
 private fun PulseBarConfig.connectedReporterEndpoints(): List<ReporterEndpoint> =
     endpoints
-        .filter { it.enabled && !it.disconnected }
+        .filter { it.enabled && !it.disconnected && !it.isRealtimeV2DeviceEndpoint() }
         .map { endpoint ->
             ReporterEndpoint(
                 id = endpoint.id,
@@ -1170,3 +1221,13 @@ private fun PulseBarConfig.connectedReporterEndpoints(): List<ReporterEndpoint> 
                 apiKey = endpoint.apiKey
             )
         }
+
+private fun PulseBarEndpointConfig.isRealtimeV2DeviceEndpoint(): Boolean =
+    endpointUrl.isLocalRealtimeV2WorkerUrl()
+
+private fun String.isLocalRealtimeV2WorkerUrl(): Boolean {
+    val base = resolvedEndpointBase(this) ?: trim()
+    val hostAndPath = base.removePrefix("https://").removePrefix("http://")
+    val host = hostAndPath.substringBefore("/").lowercase()
+    return host == "localhost:8787" || host == "127.0.0.1:8787" || host == "[::1]:8787"
+}

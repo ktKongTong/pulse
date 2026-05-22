@@ -1,42 +1,39 @@
 # Client Media Server State
 
-归属：`apps/realtime-worker`
-代码范围：`apps/realtime-worker` Durable Object、`packages/realtime-protocol`
+归属：`apps/realtime-worker-v2`
+代码范围：`apps/realtime-worker-v2` Durable Object、`packages/v2/realtime-protocol`
 状态：draft
-验证：服务端状态设计；落地时需要补 MediaDO、device/client WS schema、worker/browser/native 测试和端到端验证
+验证：协议 schema、worker typecheck、worker WS 测试
 
-本文描述 `MediaDO` 内需要维护的 server state。`MediaDO` 同时接收 device media WS 上报的媒体事实，以及 client media WS 产生的 stream requested。
+本文描述 v2 `MediaDO` 的当前目标状态。`MediaDO` 接收 device media WS 的媒体事实，接收 client media WS 的 stream request，并把 audio chunk fanout 给已 accepted 的 client tabs。
 
 ## MediaDO Properties
 
 ```ts
 type MediaDOState = {
-  deviceMediaConnection: DeviceMediaConnection | null;
-  deviceDisconnectedAt?: string;
-  deviceGraceDeadlineAt?: string;
-  streamRequestRejectedAt?: string;
+  device: DeviceMediaConnection | null;
   deviceStreamState: DeviceStreamState | null;
-  currentMedia: CurrentMedia | null;
-
-  clientSockets: Map<ClientTabKey, MediaClientSocket>;
-  streamClients: Map<ClientTabKey, MediaStreamClient>;
-  graceStreamClients: Map<ClientTabKey, MediaGraceStreamClient>;
-
+  currentMedia: ClientMediaNowPlaying | null;
   streamContext: StreamContext | null;
-  audioBuffer: AudioRingBuffer | null;
-  pendingDeviceCommand: PendingDeviceCommand | null;
-  nextAlarmAt?: string;
-
+  pendingCommand: PendingDeviceCommand | null;
+  streamRequestRejectedAt?: string;
   revision: number;
   updatedAt: string;
+};
+
+type MediaDORuntime = {
+  clientSockets: Map<ClientTabKey, WebSocket>;
+  streamClients: Map<ClientTabKey, WebSocket>;
+  deviceSocket: WebSocket | null;
+  pendingDeviceSessions: Map<WebSocket, string>;
+  pendingChunk: AudioChunkMeta | null;
+  buffer: RingBuffer<BufferedAudioChunk>;
 };
 
 type ClientTabKey = `${string}:${string}`;
 ```
 
 ## Environment
-
-MediaDO runtime 参数从 env 读取：
 
 ```text
 MEDIA_RING_BUFFER_DURATION_MS
@@ -46,13 +43,12 @@ MEDIA_CHUNK_STALL_TIMEOUT_MS = 10000
 
 规则：
 
-- `MEDIA_RING_BUFFER_DURATION_MS` 控制 server audio ring buffer 可回放窗口。
-- `MEDIA_DEVICE_COMMAND_TIMEOUT_MS` 控制 device `stream.requested` / `stream.resume` / `stream.stop` command 过期时间。
-- `MEDIA_CHUNK_STALL_TIMEOUT_MS` 控制 audio chunk stalled 判定，默认 `10000ms`。
+- `MEDIA_RING_BUFFER_DURATION_MS` 控制 server audio ring buffer 的保留时长。
+- `MEDIA_DEVICE_COMMAND_TIMEOUT_MS` 控制 device `stream.requested` / `stream.stop` command 过期时间。
+- ring buffer 容量按 `MEDIA_RING_BUFFER_DURATION_MS / chunk.durationMs` 计算，不按固定 chunk 数计算。
+- `MEDIA_CHUNK_STALL_TIMEOUT_MS` 预留给后续 chunk stall 检测；当前 client-visible state 不暴露 stall/error。
 
 ## Device Media Connection
-
-`deviceMediaConnection` 是当前 accepted device media WS metadata。
 
 ```ts
 type DeviceMediaConnection = {
@@ -60,7 +56,6 @@ type DeviceMediaConnection = {
   deviceId: string;
   deviceSessionId: string;
   connectedAt: string;
-  lastSeenAt: string;
   capabilities: {
     streaming: boolean;
   };
@@ -69,16 +64,12 @@ type DeviceMediaConnection = {
 
 来源：
 
-- device media WS `hello` 被 server 接受后设置。
-- device media WS close/error 后清空，并设置 `deviceDisconnectedAt/deviceGraceDeadlineAt`。
-- `deviceSessionId` 必须来自 device common WS `hello_ack`。
-- device 在 `deviceGraceDeadlineAt` 前重新建立 media WS 时，MediaDO 可以基于现有 `streamContext` 发送 `stream.resume`。
-- device grace 到期后仍未恢复时，MediaDO 将当前 `streamContext.audio.state` 置为 `failed`，并清理 device grace deadline。
-- device grace 的过期由 DO alarm 驱动；最近一次需要唤醒的时间保存在 `nextAlarmAt`。
+- device media WS `hello` 被接受后设置。
+- `deviceSessionId` 必须由 device common WS 签发且仍 active。
+- device media WS close/error 后清空 `device` 和 `pendingCommand`，并广播新的 media state。
+- 同一时间只保留一个 active device media WS；新 device media WS 会覆盖当前 socket。
 
 ## Device Stream State
-
-`deviceStreamState` 来自 device media WS 的 `stream.state.updated`。
 
 ```ts
 type DeviceStreamState = {
@@ -86,44 +77,40 @@ type DeviceStreamState = {
   playback: "playing" | "paused";
   capture: "capturing" | "no-capture";
   streamFormat?: StreamFormat;
-  reason?: StreamBlockedReason | "native_error";
+  reason?: StreamBlockedReason;
   message?: string;
-  updatedAt: string;
 };
 ```
 
 规则：
 
-- `permission` 表达 owner / device policy 是否允许 media streaming。
-- `playback` 表达当前是否有 playable media。
-- `capture` 表达 device 本地是否正在采集。
-- `streamFormat` 是 device 当前输出音频格式事实。
-- `deviceStreamState` 不表达 client stream requested。
+- `deviceStreamState` 只来自 `stream.state.updated`。
+- `stream.state.updated` 会清除 `streamRequestRejectedAt`，让 source 从 rejected/disabled 状态重新按最新 device fact 派生。
+- `permission/playback/capabilities` 只决定 source 是否 `ready`；它们不直接创建 stream request。
 
 ## Current Media
 
-`currentMedia` 来自 device media WS 的 `media.updated`。
-
 ```ts
-type CurrentMedia = {
-  media: LiveListenMedia | null;
+type ClientMediaNowPlaying = {
+  current: LiveListenMedia;
   clock?: LiveListenClock;
+  playback: "playing" | "paused";
   updatedAt: string;
 };
 ```
 
 规则：
 
-- `currentMedia` 是 now playing 展示事实。
-- 曲目、封面、标题、媒体时钟变化只更新 `currentMedia`。
-- `currentMedia` 变化不创建新的 `streamId/generation`。
+- `currentMedia` 来自 device `media.updated`。
+- now playing 变化不创建 `streamId/generation`。
+- 无变化的 media fact 不应触发 revision/broadcast。
 
 ## Client Connections
 
-`clientSockets` 是已连接的 client media WS 集合，按 `(sessionId, tabId)` 唯一。它表示该 tab 正在观测 media state，但不一定贡献 stream requested。
+`clientSockets` 表示已连接且通过 session 校验的 client media WS。
 
 ```ts
-type MediaClientSocket = {
+type MediaClientConnection = {
   connectionId: string;
   sessionId: string;
   tabId: string;
@@ -132,74 +119,36 @@ type MediaClientSocket = {
 };
 ```
 
-`streamClients` 是已发送 `stream.request` 且被 server accepted 的 client tab。只有它贡献 stream requested，并接收 audio chunk。
+`streamClients` 表示已被 server accepted 的 client tab。只有 `streamClients` 接收 audio chunk。
 
 ```ts
-type MediaStreamClient = {
+type StreamClient = {
   connectionId: string;
   sessionId: string;
   tabId: string;
   acceptedAt: string;
-  lastSeenAt: string;
   lastAckSeq?: number;
-};
-```
-
-`graceStreamClients` 是 accepted stream client 短断后仍贡献 stream requested 的 client tab。
-
-```ts
-type MediaGraceStreamClient = {
-  sessionId: string;
-  tabId: string;
-  previousConnectionId: string;
-  disconnectedAt: string;
-  reconnectDeadlineAt: string;
-  lastAckSeq?: number;
-  streamId?: string;
-  generation?: number;
 };
 ```
 
 规则：
 
-- `connectionId` 只标识一条 client media WS。
-- `(sessionId, tabId)` 标识一个 client tab。
-- 不定义独立 stream client id。
-- 不定义 `resumeToken`。
-- 不用 `active` boolean；连接、accepted stream client、grace stream client 分别由 `clientSockets` / `streamClients` / `graceStreamClients` 表达。
-- 同一个 `(sessionId, tabId)` 同时只允许一条 active client media WS；新连接接受后替换旧连接。
-- client media WS connected 后进入 `clientSockets`，但不改变 stream requested。
-- client `stream.request` accepted 后进入 `streamClients`，才改变 stream requested。
-- client 主动 `stream.stop` 后直接移除 `streamClients[(sessionId, tabId)]` 和 `graceStreamClients[(sessionId, tabId)]`，但保留 `clientSockets[(sessionId, tabId)]`。
-- client media WS 非主动 close/error 时，先移除 `clientSockets[(sessionId, tabId)]`；如果该 tab 在 `streamClients` 中，再移动到 `graceStreamClients`。
-- `graceStreamClients` 的过期由 DO alarm 驱动；最近一次需要唤醒的时间保存在 `nextAlarmAt`。
-- client media WS 必须对应同 `(sessionId, tabId)` 的 active common WS。
-- common WS close/error 后，GlobalDO 必须通知 MediaDO revoke 同 `(sessionId, tabId)` 的 client media WS。
-- audio chunk fanout 只发给 `streamClients`。
+- `(sessionId, tabId)` 必须有 active common WS，client media WS 才能 accepted。
+- 同 `(sessionId, tabId)` 同时只允许一条 active client media WS；新连接替换旧连接。
+- client media WS close/error 后移除 `clientSockets` 和 `streamClients`。
+- common WS close/error 后，GlobalDO 调用 MediaDO revoke，对应 client media WS 被关闭并移除。
+- 不保留 client media grace；断开就不再贡献 stream requested。
 
 ## Stream Context
-
-`streamContext` 只描述 server 当前认可的一条音频流。
 
 ```ts
 type StreamContext = {
   streamId: string;
   generation: number;
-
-  audio: {
-    state: "waiting" | "flowing" | "stalled" | "failed";
-    firstSeq?: number;
-    latestSeq?: number;
-    availableFromSeq?: number;
-    firstChunkAt?: string;
-    lastChunkAt?: string;
-    failure?: {
-      code: StreamFailureCode;
-    };
-  };
-
+  latestSeq: number;
+  availableFromSeq: number;
+  codec: StreamCodec;
   format?: StreamFormat;
-
   openedAt: string;
   updatedAt: string;
 };
@@ -207,435 +156,91 @@ type StreamContext = {
 
 字段来源：
 
-- `streamId`：MediaDO 生成。
-- `generation`：MediaDO 初始设置；device `stream.resume` ack 可切换到新的 generation。
-- `audio.state`：MediaDO 根据 chunk、timeout、device ack/error 派生。
-- `audio.firstSeq`：device `stream.requested` 或 `stream.resume` accepted ack 返回。
-- `audio.latestSeq`：MediaDO 收到有效 `audio.chunk` 后更新。
-- `audio.availableFromSeq`：MediaDO 根据 server ring buffer 更新。
-- `audio.firstChunkAt`：当前 generation 第一帧有效 chunk 到达时设置。
-- `audio.lastChunkAt`：每次有效 chunk 到达时更新。
-- `audio.failure`：stream 不可继续时设置。
-- `format`：device `stream.requested` accepted ack 返回；后续格式变化由 `stream.state.updated` 更新。
+- `streamId`：MediaDO 首次 accepted client `stream.request` 时生成。
+- `generation`：初始为 `1`；device ack 可确认同一个 generation。
+- `latestSeq`：有效 `audio.chunk` 到达后更新。
+- `availableFromSeq`：ring buffer 当前最早 chunk seq。
+- `codec/format`：优先来自 device stream state / command ack。
 - `openedAt/updatedAt`：MediaDO 设置。
-
-状态规则：
-
-- 新建 `streamContext` 时，`audio.state = "waiting"`。
-- 新建 `streamContext` 时，`audio.firstSeq/latestSeq/availableFromSeq` 均未设置。
-- device `stream.requested` accepted ack 到达后，MediaDO 设置 `audio.firstSeq/latestSeq/availableFromSeq` 并创建 `audioBuffer`。
-- 收到当前 `streamId/generation` 的有效 chunk 后，`audio.state = "flowing"`。
-- stream requested 仍存在但超过 `MEDIA_CHUNK_STALL_TIMEOUT_MS` 未收到 chunk 时，`audio.state = "stalled"`。
-- `waiting` 状态下，device 已 accepted `stream.requested` / `stream.resume` 后，超过 `MEDIA_CHUNK_STALL_TIMEOUT_MS` 仍未收到第一帧 `audio.chunk`，进入 `stalled`。
-- `flowing` 状态下，距离上一帧 `audio.chunk` 超过 `MEDIA_CHUNK_STALL_TIMEOUT_MS`，进入 `stalled`。
-- device 续流拒绝、device 主动停止、device media WS 不可恢复、buffer 无法恢复或协议错误时，`audio.state = "failed"`。
-- device 初次 `stream.requested` rejected 不进入 `failed`，而是清理当前 stream request，并让 stream source 变为不可请求。
-- stream requested 归零后，MediaDO 向 device 发送 `stream.stop`；stop resolved 后清理 `streamContext`。
-
-## Audio Ring Buffer
-
-`audioBuffer` 保存当前 `streamId/generation` 的 server 侧回放窗口。
-
-```ts
-type AudioRingBuffer = {
-  streamId: string;
-  generation: number;
-  availableFromSeq: number;
-  latestSeq: number;
-  maxDurationMs: number;
-};
-```
 
 规则：
 
-- buffer 只服务 client resume / replay。
-- buffer 不改变 device resume 语义。
-- generation 变化后，旧 generation buffer 不再用于新 generation 播放队列。
-- generation 切换时，MediaDO 必须重置 `audioBuffer` 到新的 `(streamId, generation)`。
-- generation 切换前已发送给 client 的旧 generation chunk 仍由 client 按 stream transition 处理，不再从新 buffer 中 replay。
+- `streamContext` 不是 client-visible failed/stalled 状态机。
+- 当最后一个 `streamClient` 离开时，MediaDO 发送 `stream.stop` command，清空 `streamContext` 和 buffer。
+- device `stream.stopped` 或 `error` 结束当前 stream，通知 stream clients `stream.ended`，清空 `streamClients`、`streamContext` 和 buffer。
 
 ## Pending Device Command
-
-`pendingDeviceCommand` 是 MediaDO 发给 device 的未决动作，不是 stream 状态。
 
 ```ts
 type PendingDeviceCommand = {
   commandId: string;
-  type: "stream.requested" | "stream.resume" | "stream.stop";
+  type: "stream.requested" | "stream.stop";
   streamId?: string;
   generation?: number;
-  fromSeq?: number;
-  sentAt: string;
   expiresAt: string;
 };
 ```
 
 规则：
 
-- `stream.requested` 用于要求 device 为新 `streamId` 开始供流。
-- `stream.resume` 用于要求 device 继续已有 `streamId/generation`。
-- `stream.stop` 用于要求 device 停止当前供流。
-- command resolved、expired 或被替换后清理 `pendingDeviceCommand`。
-- `stream.stop` 不产生 `stopping` 状态。
-- 同一时间只允许一个 `pendingDeviceCommand`。
-- 如果 `pendingDeviceCommand` 存在时 MediaDO 尝试发送新的 device command，说明实现违反协议；server 必须关闭 device media WS，并将当前 `streamContext.audio.state` 置为 `failed`。
-- 收到 ack 时，`commandId` 必须等于当前 pending command；不匹配的 ack 视为 stale ack 并丢弃。
-- pending command 过期后，MediaDO 按该 command 的失败语义更新 `streamContext`，并清理 `pendingDeviceCommand`。
+- 同一时间只允许一个 pending command。
+- 如果 pending command 存在时还要发送新 command，视为实现冲突：关闭 device media WS，清理 pending command。
+- ack 的 `commandId/type` 必须匹配 pending command；不匹配视为实现冲突，关闭 device media WS。
+- `stream.requested` rejected：移除 `streamClients`，设置 `streamRequestRejectedAt`，广播 `source.state = "disabled"`。
+- `stream.requested` timeout：按 rejected 处理，并关闭 device media WS。
+- `stream.stop` timeout：关闭 device media WS，清理 pending command。
+- command timeout 由 DO alarm 驱动。
 
-## Internal Derivations
-
-MediaDO 内部只需要两个核心派生事实：
+## Source Derivation
 
 ```text
-streamRequested =
-  streamClients.size + graceStreamClients.size > 0
+disabled:
+  streamRequestRejectedAt exists
 
-canAcceptStreamRequest =
-  deviceMediaConnection exists
-  and deviceMediaConnection.capabilities.streaming = true
+offline:
+  device is null
+  or deviceStreamState is null
+
+idle:
+  device exists
+  and source is not disabled/offline
+  and (
+    device.capabilities.streaming = false
+    or deviceStreamState.permission = disallow
+    or deviceStreamState.playback = paused
+  )
+
+ready:
+  device exists
+  and device.capabilities.streaming = true
   and deviceStreamState.permission = allow
   and deviceStreamState.playback = playing
 ```
 
-`streamRequested` 决定 server 是否要求 device 供流。`canAcceptStreamRequest` 只用于处理 client `stream.request`。
+规则：
 
-client `stream.source.state` 派生规则：
+- 只有 `ready` 可接受 client `stream.request`。
+- `disabled` 只表示 device rejected/timeout 后的不可接受状态。
+- device 后续发送 `stream.state.updated` 会清除 `disabled`。
 
-```text
-no previous source state and deviceStreamState is null:
-  offline
+## Audio Chunk
 
-previous source state exists and deviceStreamState is null:
-  keep previous source state
-
-offline:
-  deviceMediaConnection is null
-
-disabled:
-  deviceMediaConnection exists
-  and (
-    deviceStreamState.permission = disallow
-    or streamRequestRejectedAt exists
-  )
-
-idle:
-  deviceMediaConnection exists
-  and deviceMediaConnection.capabilities.streaming = true
-  and deviceStreamState.permission = allow
-  and deviceStreamState.playback = paused
-
-ready:
-  canAcceptStreamRequest = true
-```
-
-## Transitions
-
-### Client media WS connected
-
-```text
-precondition:
-  active common WS exists for the same (sessionId, tabId)
-
-effect:
-  add clientSockets[(sessionId, tabId)]
-  do not change stream requested
-```
-
-### Client stream request accepted
-
-```text
-precondition:
-  canAcceptStreamRequest = true
-
-effect:
-  require clientSockets[(sessionId, tabId)] exists
-  add streamClients[(sessionId, tabId)]
-  remove graceStreamClients[(sessionId, tabId)]
-  send stream.accepted to this client immediately
-  if streamRequested changed false -> true:
-    clear failed streamContext if present
-    create streamContext
-    set pendingDeviceCommand = stream.requested
-    send device command stream.requested
-  else:
-    use current streamContext/audioBuffer for replay or subsequent audio fanout
-```
-
-### Client stream stop
-
-```text
-effect:
-  remove streamClients[(sessionId, tabId)]
-  remove graceStreamClients[(sessionId, tabId)]
-  keep clientSockets[(sessionId, tabId)]
-  if streamRequested = false:
-    set pendingDeviceCommand = stream.stop
-    send device command stream.stop
-    clear streamContext after stop resolved
-```
-
-### Client stream request rejected
-
-```text
-precondition:
-  canAcceptStreamRequest = false
-
-effect:
-  do not add streamClients
-  do not change stream requested
-  do not send device stream command
-```
-
-### Client media WS close
-
-```text
-remove clientSockets[(sessionId, tabId)]
-if tab exists in streamClients and close was not caused by stream.stop:
-  move streamClients[(sessionId, tabId)] to graceStreamClients[(sessionId, tabId)]
-  update nextAlarmAt
-else:
-  do not create grace stream client
-```
-
-### Client media WS revoked by common
-
-```text
-trigger:
-  GlobalDO reports common WS close/error for the same (sessionId, tabId)
-
-effect:
-  close client media WS for (sessionId, tabId)
-  remove clientSockets[(sessionId, tabId)]
-  remove streamClients[(sessionId, tabId)]
-  remove graceStreamClients[(sessionId, tabId)]
-  if streamRequested = false:
-    set pendingDeviceCommand = stream.stop
-    send device command stream.stop
-```
-
-### Stream grace expired
-
-```text
-remove graceStreamClients[(sessionId, tabId)]
-if streamRequested = false:
-  set pendingDeviceCommand = stream.stop
-  send device command stream.stop
-  clear streamContext after stop resolved
-```
-
-### Device stream requested accepted
-
-```text
-precondition:
-  streamContext exists
-  pendingDeviceCommand.type = stream.requested
-  ack.commandId = pendingDeviceCommand.commandId
-
-effect:
-  set streamContext.generation = ack.generation
-  set streamContext.audio.firstSeq = ack.firstSeq
-  set streamContext.audio.latestSeq = ack.firstSeq - 1
-  set streamContext.audio.availableFromSeq = ack.firstSeq
-  set streamContext.audio.state = waiting
-  set streamContext.format = ack.streamFormat
-  create audioBuffer for (streamId, generation)
-  clear pendingDeviceCommand
-```
-
-### Device stream requested rejected
-
-```text
-precondition:
-  streamContext exists
-  pendingDeviceCommand.type = stream.requested
-  ack.commandId = pendingDeviceCommand.commandId
-
-effect:
-  remove streamClients for current stream
-  remove graceStreamClients for current stream
-  clear streamContext
-  clear audioBuffer
-  clear pendingDeviceCommand
-  set streamRequestRejectedAt
-  canAcceptStreamRequest = false until next device stream.state.updated
-  notify clientSockets of media state change
-```
-
-### Device stream state updated
-
-```text
-update deviceStreamState
-clear streamRequestRejectedAt
-recompute canAcceptStreamRequest
-if canAcceptStreamRequest becomes false while streamContext exists:
-  mark streamContext.audio.state failed or clear it according to reason
-  set pendingDeviceCommand = stream.stop if device is still connected and capture is active
-  send stream.stop if device is still connected and capture is active
-```
-
-### Device media updated
-
-```text
-update currentMedia
-notify clientSockets of media state change
-```
-
-### Device audio chunk
-
-```text
-accept only when:
-  streamContext exists
-  chunk.streamId = streamContext.streamId
-  chunk.generation = streamContext.generation
-  streamRequested = true
-  streamContext.audio.latestSeq is set
-  chunk.seq = streamContext.audio.latestSeq + 1
-
-effect:
-  append to audioBuffer
-  update streamContext.audio.latestSeq
-  update streamContext.audio.availableFromSeq
-  update streamContext.audio.firstChunkAt if missing
-  update streamContext.audio.lastChunkAt
-  set streamContext.audio.state = flowing
-  fan out chunk to streamClients
+```ts
+type AudioChunkMeta = {
+  streamId: string;
+  generation: number;
+  seq: number;
+  sentAt: string;
+  durationMs: number;
+  byteLength: number;
+  codec: StreamCodec;
+};
 ```
 
 规则：
 
-- `chunk.seq <= streamContext.audio.latestSeq` 的 chunk 视为重复或过期，丢弃。
-- `chunk.seq > streamContext.audio.latestSeq + 1` 表示当前 stream 出现 gap，MediaDO 标记 `audio.state = stalled` 或 `failed`，并通知 client。
-- binary audio frame 必须紧跟对应 `audio.chunk` metadata frame；不匹配按 device media 协议错误处理。
-
-### Device media WS close
-
-```text
-clear deviceMediaConnection
-set deviceDisconnectedAt
-set deviceGraceDeadlineAt
-update nextAlarmAt
-canAcceptStreamRequest becomes false
-if streamContext exists and streamRequested = true:
-  streamContext.audio.state = stalled
-```
-
-### Device media WS reconnected during grace
-
-```text
-precondition:
-  deviceGraceDeadlineAt exists
-  now <= deviceGraceDeadlineAt
-  streamContext exists
-  streamRequested = true
-  streamContext.audio.latestSeq is set
-
-effect:
-  clear deviceDisconnectedAt
-  clear deviceGraceDeadlineAt
-  set pendingDeviceCommand = stream.resume
-  send stream.resume(streamId, generation, fromSeq = streamContext.audio.latestSeq + 1)
-```
-
-### Device grace expired
-
-```text
-clear deviceGraceDeadlineAt
-if streamContext exists:
-  set streamContext.audio.state = failed
-  set streamContext.audio.failure = device_offline
-  notify clientSockets of media state change
-```
-
-### Device resume accepted
-
-```text
-precondition:
-  streamContext exists
-  pendingDeviceCommand.type = stream.resume
-  ack.commandId = pendingDeviceCommand.commandId
-
-effect:
-  update streamContext.generation if ack returns a newer generation
-  set streamContext.audio.firstSeq = ack.firstSeq
-  set streamContext.audio.latestSeq = ack.firstSeq - 1
-  set streamContext.audio.availableFromSeq = ack.unavailableBeforeSeq ?? ack.firstSeq
-  set streamContext.audio.state = waiting
-  if generation changed:
-    reset audioBuffer for new generation
-    notify streamClients of stream generation transition
-  else:
-    keep audioBuffer when it still matches (streamId, generation)
-  clear pendingDeviceCommand
-```
-
-### Device resume rejected
-
-```text
-precondition:
-  streamContext exists
-  pendingDeviceCommand.type = stream.resume
-  ack.commandId = pendingDeviceCommand.commandId
-
-effect:
-  set streamContext.audio.state = failed
-  set streamContext.audio.failure = ack.rejectedReason
-  clear pendingDeviceCommand
-  notify clientSockets of media state change
-```
-
-### Device stream stop resolved
-
-```text
-precondition:
-  pendingDeviceCommand.type = stream.stop
-  ack.commandId = pendingDeviceCommand.commandId
-
-effect:
-  clear pendingDeviceCommand
-  clear streamContext
-  clear audioBuffer
-```
-
-### Pending command expired
-
-```text
-if pendingDeviceCommand.type = stream.requested or stream.resume:
-  set streamContext.audio.state = failed
-  set streamContext.audio.failure = command_timeout
-
-if pendingDeviceCommand.type = stream.stop:
-  clear streamContext
-  clear audioBuffer
-
-clear pendingDeviceCommand
-```
-
-### DO alarm fired
-
-```text
-expire graceStreamClients whose reconnectDeadlineAt <= now
-expire device grace when deviceGraceDeadlineAt <= now
-expire pendingDeviceCommand when expiresAt <= now
-set nextAlarmAt to the next remaining deadline, or clear it
-```
-
-## Invariants
-
-```text
-stream requested = streamClients.size + graceStreamClients.size > 0
-clientSockets require active common WS for same (sessionId, tabId)
-canAcceptStreamRequest=true implies deviceMediaConnection exists
-canAcceptStreamRequest=true implies deviceStreamState.permission=allow
-canAcceptStreamRequest=true implies deviceStreamState.playback=playing
-streamContext exists only while server still recognizes a current stream
-stream.resume never creates streamContext
-stream.stop never creates a stopping state
-stream.stop never creates graceStreamClients entry
-currentMedia changes do not change streamId/generation
-audio chunk must match current streamId/generation
-audio chunk seq must be accepted monotonically
-device connection state does not live inside streamContext
-stream client identity is (sessionId, tabId), not an extra stream client id
-at most one pendingDeviceCommand exists
-nextAlarmAt covers client grace, device grace, and pending command expiry
-```
+- device 必须先发 JSON `audio.chunk` metadata，再紧跟 binary frame。
+- binary `byteLength` 必须等于 metadata `byteLength`；不匹配时关闭 device media WS。
+- MediaDO 只向 `streamClients` fanout audio chunk。
+- MediaDO 维护 ring buffer，并用实际 `durationMs` 计算容量。
+- client ack 只更新对应 stream client 的消费位置；ack 不改变 stream source。

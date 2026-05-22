@@ -62,16 +62,18 @@ final class LiveListenCaptureService: @unchecked Sendable {
         var tapID = AudioObjectID(kAudioObjectUnknown)
         var pcmHandler: (@Sendable (Data) -> Void)?
         var ioProcSequence: UInt64 = 0
-        let sampleRate: UInt32 = 48_000
+        var sampleRate: UInt32
 
         init(
             channels: UInt32,
+            sampleRate: UInt32,
             writer: LiveListenWavWriter?,
             targetFrames: UInt64?,
             pcmHandler: (@Sendable (Data) -> Void)?,
             continuation: AsyncThrowingStream<LiveListenCaptureUpdate, Error>.Continuation
         ) {
             self.channels = channels
+            self.sampleRate = sampleRate
             self.writer = writer
             self.targetFrames = targetFrames
             self.pcmHandler = pcmHandler
@@ -143,6 +145,18 @@ final class LiveListenCaptureService: @unchecked Sendable {
         ] + applications
     }
 
+    func streamSampleRate(for source: LiveListenCaptureSource?) -> UInt32 {
+        do {
+            let outputDeviceID = try Self.defaultOutputDeviceID()
+            let sampleRate = try Self.nominalSampleRate(deviceID: outputDeviceID)
+            appendLiveListenCaptureServiceLog("stream sampleRate=\(sampleRate) source=\(source?.name ?? "nil")")
+            return sampleRate
+        } catch {
+            appendLiveListenCaptureServiceLog("stream sampleRate fallback=48000 error=\(error.localizedDescription)")
+            return 48_000
+        }
+    }
+
     /// Capture a fixed-duration sample to `outputURL` (WAV) for diagnostics.
     func capture(
         source: LiveListenCaptureSource,
@@ -170,13 +184,15 @@ final class LiveListenCaptureService: @unchecked Sendable {
         pcmHandler: (@Sendable (Data) -> Void)?
     ) async throws -> AsyncThrowingStream<LiveListenCaptureUpdate, Error> {
         stop()
+        let sampleRate = streamSampleRate(for: source)
         let stream = AsyncThrowingStream<LiveListenCaptureUpdate, Error> { continuation in
             do {
-                let writer = try outputURL.map { try LiveListenWavWriter(path: $0.path, sampleRate: 48_000, channels: 2) }
+                let writer = try outputURL.map { try LiveListenWavWriter(path: $0.path, sampleRate: sampleRate, channels: 2) }
                 let context = CaptureContext(
                     channels: 2,
+                    sampleRate: sampleRate,
                     writer: writer,
-                    targetFrames: seconds.map { UInt64(48_000 * $0) },
+                    targetFrames: seconds.map { UInt64(Double(sampleRate) * $0) },
                     pcmHandler: pcmHandler,
                     continuation: continuation
                 )
@@ -275,6 +291,14 @@ final class LiveListenCaptureService: @unchecked Sendable {
             throw LiveListenCaptureError.coreAudio("AudioHardwareCreateAggregateDevice", aggregateStatus)
         }
         context.aggregateID = aggregateID
+        try Self.setNominalSampleRate(deviceID: aggregateID, sampleRate: context.sampleRate)
+        let actualSampleRate = try Self.nominalSampleRate(deviceID: aggregateID)
+        if actualSampleRate != context.sampleRate {
+            appendLiveListenCaptureServiceLog("aggregate sampleRate mismatch requested=\(context.sampleRate) actual=\(actualSampleRate)")
+            context.sampleRate = actualSampleRate
+        } else {
+            appendLiveListenCaptureServiceLog("aggregate sampleRate=\(actualSampleRate)")
+        }
 
         let contextPointer = Unmanaged.passUnretained(context).toOpaque()
         var ioProcID: AudioDeviceIOProcID?
@@ -365,6 +389,35 @@ final class LiveListenCaptureService: @unchecked Sendable {
             throw LiveListenCaptureError.coreAudio("DeviceUID", status)
         }
         return uid as String
+    }
+
+    private static func nominalSampleRate(deviceID: AudioDeviceID) throws -> UInt32 {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var sampleRate = Float64(0)
+        var size = UInt32(MemoryLayout<Float64>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &sampleRate)
+        guard status == noErr, sampleRate > 0 else {
+            throw LiveListenCaptureError.coreAudio("NominalSampleRate", status)
+        }
+        return UInt32(sampleRate.rounded())
+    }
+
+    private static func setNominalSampleRate(deviceID: AudioDeviceID, sampleRate: UInt32) throws {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value = Float64(sampleRate)
+        let size = UInt32(MemoryLayout<Float64>.size)
+        let status = AudioObjectSetPropertyData(deviceID, &address, 0, nil, size, &value)
+        guard status == noErr else {
+            throw LiveListenCaptureError.coreAudio("SetNominalSampleRate", status)
+        }
     }
 }
 

@@ -48,11 +48,8 @@ type ClientCommonSessionDetail = {
   sessionId: string;
   tabCount: number;
   user?: ClientCommonUser;
-  focusState: "focused" | "visible" | "background";
-  focusPages: ClientCommonSessionPage[];
-  visiblePages: ClientCommonSessionPage[];
+  pages: ClientCommonSessionPage[];
   lastSeenAt: string;
-  lastFocusedAt?: string;
 };
 
 type ClientCommonSessionPage = {
@@ -61,7 +58,6 @@ type ClientCommonSessionPage = {
   url?: string;
   tabCount: number;
   lastSeenAt: string;
-  lastFocusedAt?: string;
 };
 
 type ClientCommonUser = {
@@ -79,7 +75,6 @@ type ClientCommonActivePageDetail = {
   title?: string;
   url?: string;
   sessionCount: number;
-  focusedSessionCount: number;
   lastSeenAt: string;
 };
 ```
@@ -132,13 +127,11 @@ type ClientPageSnapshot = {
 type ClientPageSessionDetail = {
   sessionId: string;
   tabCount: number;
-  focusState: "focused" | "visible" | "background";
   progress?: {
     percent?: number;
     scrollY?: number;
   };
   lastSeenAt: string;
-  lastFocusedAt?: string;
 };
 ```
 
@@ -209,7 +202,6 @@ type ActivePagesView = {
     title?: string;
     url?: string;
     sessionCount: number;
-    focusedSessionCount: number;
   }>;
 };
 ```
@@ -265,9 +257,7 @@ type GlobalSessionActivityView = {
   sessions: Array<{
     sessionId: string;
     user?: ClientCommonUser;
-    focusState: "focused" | "visible" | "background";
-    focusPages: ClientCommonSessionPage[];
-    visiblePages: ClientCommonSessionPage[];
+    pages: ClientCommonSessionPage[];
   }>;
 };
 ```
@@ -288,7 +278,6 @@ type PageReadersView = {
   sessionCount: number;
   sessions: Array<{
     sessionId: string;
-    focusState: "focused" | "visible" | "background";
     progress?: {
       percent?: number;
       scrollY?: number;

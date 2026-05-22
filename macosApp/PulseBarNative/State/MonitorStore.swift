@@ -228,7 +228,12 @@ final class MonitorStore: ObservableObject {
     }
 
     func seekMedia(to progressSeconds: Double) {
-        _ = bridge.seekMedia(progressSeconds: progressSeconds)
+        if bridge.seekMedia(progressSeconds: progressSeconds) {
+            liveListenStore.publishMediaSeek(
+                progressSeconds: progressSeconds,
+                media: snapshot?.media
+            )
+        }
     }
 
     func acceptInteraction(_ requestId: String) {

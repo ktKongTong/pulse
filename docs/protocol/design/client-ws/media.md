@@ -79,7 +79,7 @@ type ClientMediaStreamStopFrame = {
 规则：
 
 - `stream.stop` 只停止当前 tab 的 stream client 身份。
-- server 移除 `streamClients[(sessionId, tabId)]` 和 `graceStreamClients[(sessionId, tabId)]`。
+- server 移除 `streamClients[(sessionId, tabId)]`。
 - media WS 保持打开，当前 tab 回到 observer。
 - 如果 server 内部 `streamRequested = false`，MediaDO 请求 device 停止供流。
 
@@ -156,9 +156,9 @@ type ClientMediaNowPlaying = {
 `stream.source.state` 规则：
 
 - `ready`：device online，streaming supported，permission allow，playback playing。只有该状态可以发送 `stream.request`。
-- `disabled`：device online，但 permission disallow；或 device 拒绝了上一次 `stream.requested`，且之后还没有新的 device `stream.state.updated`。
+- `disabled`：device 拒绝或超时了上一次 `stream.requested`，且之后还没有新的 device `stream.state.updated`。
 - `offline`：没有 active device media WS。
-- `idle`：device online，permission allow，但 playback paused / 当前没有 playable media。
+- `idle`：device online，但当前 source 不可请求，包括 streaming unsupported、permission disallow、playback paused / 当前没有 playable media。
 - device media WS 已连接但尚未收到首个 `stream.state.updated` 时，server 保持上一帧 source state；如果没有上一帧，则为 `offline`。
 
 `state` 只描述 stream source 和 now playing。当前 tab 是否正在请求或接收 stream，由 SDK 根据本地 pending request 以及 `stream.accepted/rejected/stopped/ended/error` 等运行帧维护。
@@ -188,6 +188,7 @@ type ClientMediaStreamAcceptedFrame = {
 - `stream.accepted` 只表示 server 已接受当前 tab 的 stream request，不表示 device 已经开始推送音频。
 - `stream.replay` 只在 server 已有可 replay 的 ring buffer 时出现。
 - 如果 device 后续拒绝初次 `stream.requested`，server 发送新的 `state`，且在下一次 device `stream.state.updated` 前 `stream.source.state = "disabled"`；当前 tab 回到 observer。
+- 如果 device command 超时，server 按 device 拒绝处理：关闭 device media WS，发送新的 `state`，`stream.source.state = "disabled"`。
 - `stream.error` 只用于已存在音频流后的运行错误，不用于初次 `stream.requested` 被 device 拒绝。
 
 ### Stream Rejected
@@ -233,7 +234,7 @@ type ClientMediaAudioChunkFrame = {
   seq: number;
   sentAt: string;
   durationMs: number;
-  codec: "pcm16-wav" | "opus" | "aac";
+  codec: "pcm16-wav" | "opus" | "aac" | "mp3";
   byteLength: number;
   replayed: boolean;
 };

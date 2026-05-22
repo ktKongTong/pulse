@@ -5,7 +5,7 @@
 状态：draft
 验证：协议设计；落地时需要补 schema、worker/browser 测试和端到端验证
 
-`client.page.ws.v1` 是页面级 WebSocket。每个页面连接一条 page WS，用于把当前 tab 在该页面上的 visibility、focus 和 reading progress 提交给 server，并接收该页面的实时 snapshot。
+`client.page.ws.v1` 是页面级 WebSocket。每个页面连接一条 page WS，用于把当前 tab 在该页面上的 reading progress 和页面 metadata 提交给 server，并接收该页面的实时 snapshot。
 
 ## Connection
 
@@ -72,8 +72,6 @@ type ClientPageUpdateFrame = {
   type: "page.update";
   seq: number;
   observedAt: string;
-  visibility: "visible" | "hidden";
-  focus: "focused" | "unfocused";
   reading?: {
     percent?: number;
     scrollY?: number;
@@ -88,12 +86,10 @@ type ClientPageUpdateFrame = {
 规则：
 
 - `seq` 是当前 page WS connection 内单调递增的序号，重连后重新开始。
-- `visibility` 和 `focus` 必填。
-- `focus=focused` 表示当前 tab 对 endpoint 中的 canonical page 贡献 focus。
-- `visibility=visible` 表示当前 tab 对 endpoint 中的 canonical page 贡献 visible page。
 - `reading` 表示当前 tab 在当前 canonical page 上的最新阅读进度。
 - `page` 用于更新当前页面 metadata。
 - server 按 `observedAt` 和 `seq` 选择同一 session 在同一 page 上最新有效的 tab progress。
+- client tab 的 focus / visibility 不进入 server protocol。
 
 ### Leave
 
@@ -178,25 +174,20 @@ type ClientPageSnapshot = {
 type ClientPageSessionDetail = {
   sessionId: string;
   tabCount: number;
-  focusState: "focused" | "visible" | "background";
   progress?: {
     percent?: number;
     scrollY?: number;
   };
   lastSeenAt: string;
-  lastFocusedAt?: string;
 };
 ```
 
 规则：
 
 - `tabCount` 是该 session 在当前 page 上有效 tab 数。
-- `focused`：该 session 至少有一个 tab 在当前 page 贡献 focus。
-- `visible`：该 session 没有 focused tab，但至少有一个 tab 在当前 page visible。
-- `background`：该 session 在当前 page 没有 focused/visible tab，但 page presence 仍有效，或仍处于 server grace 内。
 - `progress` 取该 session 在当前 page 上 server 选定的最新 reading progress。
 - session 不再有效时直接从 `sessions.recent` 消失。
-- server 固定排序：`focused` 优先，其次 `visible`，其次 `background`；同级按 `lastSeenAt desc`。
+- server 固定排序：按 `lastSeenAt desc`。
 
 ## Error
 
@@ -240,7 +231,7 @@ server -> snapshot
 页面更新：
 
 ```text
-client -> page.update(seq, visibility, focus, reading?, page?)
+client -> page.update(seq, reading?, page?)
 server updates page aggregate
 server updates global aggregate
 server -> page snapshot

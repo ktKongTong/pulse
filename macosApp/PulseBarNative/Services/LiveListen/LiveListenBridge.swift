@@ -21,6 +21,7 @@ protocol LiveListenBridge: AnyObject, Sendable {
         chunkDurationMs: Int32
     )
     func stopLiveListen()
+    func emitLiveListenLocalStop()
     func submitLiveListenPcmBase64(chunkBase64: String)
     func updateLiveListenMediaState(permissionAllow: Bool, playbackPlaying: Bool, captureRunning: Bool)
     func updateLiveListenMedia(
@@ -30,6 +31,7 @@ protocol LiveListenBridge: AnyObject, Sendable {
         artist: String?,
         album: String?,
         artworkUrl: String?,
+        progressSeconds: Double,
         durationSeconds: Double,
         isPlaying: Bool
     )

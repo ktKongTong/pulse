@@ -435,6 +435,9 @@ expect class PulseBarBridge() {
     /** Stop the Live Listen session. Cancels reconnects and closes the socket. */
     fun stopLiveListen()
 
+    /** Stop the active media stream without closing the Live Listen WebSocket. */
+    fun emitLiveListenLocalStop()
+
     /**
      * Hand a PCM16 chunk (little-endian, interleaved) to the Live Listen
      * client. The Swift CoreAudio callback collects samples and forwards
@@ -470,6 +473,7 @@ expect class PulseBarBridge() {
         artist: String?,
         album: String?,
         artworkUrl: String?,
+        progressSeconds: Double,
         durationSeconds: Double,
         isPlaying: Boolean,
     )

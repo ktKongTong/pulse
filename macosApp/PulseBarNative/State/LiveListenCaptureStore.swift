@@ -117,11 +117,11 @@ final class LiveListenCaptureStore: ObservableObject {
             startServerDrivenCapture()
         } else if !snapshot.captureRequested && previouslyRequested && isCapturing {
             log("server requested capture stop")
-            stopCapture()
+            stopCaptureSession()
         }
         if isCapturing && snapshot.connectionStateParsed == .FAILED {
             log("live listen failed during capture")
-            stopCapture()
+            stopCaptureSession()
             statusText = "Live Listen connection failed"
         } else if isCapturing {
             statusText = Self.streamStatusText(
@@ -216,6 +216,7 @@ final class LiveListenCaptureStore: ObservableObject {
                 artist: media.artist,
                 album: media.album,
                 artworkUrl: media.artworkUrl,
+                progressSeconds: media.progressSeconds,
                 durationSeconds: Double(media.durationSeconds),
                 isPlaying: media.isPlaying
             )
@@ -227,6 +228,7 @@ final class LiveListenCaptureStore: ObservableObject {
                 artist: nil,
                 album: nil,
                 artworkUrl: nil,
+                progressSeconds: 0,
                 durationSeconds: 0,
                 isPlaying: false
             )
@@ -238,6 +240,22 @@ final class LiveListenCaptureStore: ObservableObject {
             stopCapture()
             statusText = mediaStreamPermission == .allow ? "Media stopped" : "Media stream disabled"
         }
+    }
+
+    func publishMediaSeek(progressSeconds: Double, media: PulseBarMedia?) {
+        guard let media, media.isPlaying else { return }
+        let normalizedProgress = max(0, progressSeconds)
+        worker.updateLiveListenMedia(
+            providerId: media.providerId,
+            trackId: media.trackId,
+            title: media.title,
+            artist: media.artist,
+            album: media.album,
+            artworkUrl: media.artworkUrl,
+            progressSeconds: normalizedProgress,
+            durationSeconds: Double(media.durationSeconds),
+            isPlaying: media.isPlaying
+        )
     }
 
     func setMediaStreamAllowed(_ allowed: Bool) {
@@ -403,7 +421,7 @@ final class LiveListenCaptureStore: ObservableObject {
             },
             onFinish: { [weak self] in
                 guard let self else { return }
-                if isManual { worker.stopLiveListen() }
+                if isManual { worker.emitLiveListenLocalStop() }
                 pushMediaStateToBridge(captureRunning: false)
                 isCapturing = false
                 updateAggregatePublisherState()
@@ -421,8 +439,12 @@ final class LiveListenCaptureStore: ObservableObject {
     }
 
     func stopCapture() {
+        stopCaptureSession()
+        worker.emitLiveListenLocalStop()
+    }
+
+    private func stopCaptureSession() {
         session.cancel()
-        worker.stopLiveListen()
         pushMediaStateToBridge(captureRunning: false)
         isCapturing = false
         statusText = "Stopped"
@@ -434,15 +456,16 @@ final class LiveListenCaptureStore: ObservableObject {
     private func connectToActiveEndpoint(roomId: String, deviceId: String) {
         guard let endpoint = endpoints.first(where: { $0.id == activeEndpointId }) ?? endpoints.first else { return }
         activeEndpointId = endpoint.id
+        let sampleRate = service.streamSampleRate(for: selectedSource)
         worker.startLiveListen(
             roomId: roomId,
             deviceId: deviceId,
             baseUrl: endpoint.baseUrl,
             workspaceId: endpoint.workspaceId,
             apiKey: endpoint.apiKey,
-            sampleRate: 48_000,
+            sampleRate: Int32(sampleRate),
             channels: 2,
-            chunkDurationMs: 500
+            chunkDurationMs: 1_000
         )
     }
 

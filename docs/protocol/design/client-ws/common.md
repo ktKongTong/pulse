@@ -74,7 +74,7 @@ page room WS -> page presence / reading / focus facts
 因此：
 
 - `activePages` 来自 page room 状态聚合。
-- `sessions.recent[].focusPages` 和 `sessions.recent[].visiblePages` 来自 page room 的 focused/visible tab 状态聚合。
+- `sessions.recent[].pages` 来自 page room 的 tab/page 状态聚合。
 - common WS 不直接上报 active page 列表。
 - common WS 不和 page room 双写同一份页面事实。
 
@@ -192,11 +192,8 @@ type ClientCommonSessionDetail = {
   sessionId: string;
   tabCount: number;
   user?: ClientCommonUser;
-  focusState: "focused" | "visible" | "background";
-  focusPages: ClientCommonSessionPage[];
-  visiblePages: ClientCommonSessionPage[];
+  pages: ClientCommonSessionPage[];
   lastSeenAt: string;
-  lastFocusedAt?: string;
 };
 
 type ClientCommonSessionPage = {
@@ -205,7 +202,6 @@ type ClientCommonSessionPage = {
   url?: string;
   tabCount: number;
   lastSeenAt: string;
-  lastFocusedAt?: string;
 };
 
 type ClientCommonUser = {
@@ -233,26 +229,16 @@ type ClientOwnerFocus = {
 - `sessions.recent` 只返回仍有效的 session。
 - 不返回 offline tombstone。
 - session 离开动画由 client 对比前后 snapshot 自行派生。
-- server 固定排序：`focused` 优先，其次 `visible`，其次 `background`；同级按 `lastSeenAt desc`。
-
-`focusState` 规则：
-
-- `focused`：该 session 至少有一个有效 tab 贡献了 focus page。
-- `visible`：该 session 没有 focus page，但至少有一个有效 tab 仍 visible。
-- `background`：该 session 仍有 active common WS，但当前没有 focused/visible page。
+- server 固定排序：按 `lastSeenAt desc`。
 
 没有 `offline` 状态。session 不再有效时直接从 `sessions.recent` 消失。
 
-多 tab 切换规则：
+多 tab 规则：
 
-- 同一个 session 有两个 tab，tab A focused、tab B visible/background 时，session 聚合为 `focused`。
-- 切到 tab B 后，tab A 失焦、tab B focused，session 仍聚合为 `focused`。
-- 因此同一 session 在同页面或多页面 tab 间切换时，不应在 `focused/visible/background` 间抖动。
-- `focusPages` 是该 session 当前贡献的 focus page 集合，按 `canonicalUrl` 去重。
-- `visiblePages` 是该 session 当前 visible page 集合，按 `canonicalUrl` 去重；它可以包含 `focusPages` 中的页面。
-- 同一个 session 两个 tab 都聚焦或可见同一页面时，该页面只出现一次，并通过 `tabCount` 表达 tab 数。
-- `focusPages` 按 `lastFocusedAt desc` 排序。
-- `visiblePages` 按 `lastSeenAt desc` 排序。
+- `pages` 是该 session 当前存在 page WS 的页面集合，按 `canonicalUrl` 去重。
+- 同一个 session 两个 tab 都打开同一页面时，该页面只出现一次，并通过 `tabCount` 表达 tab 数。
+- `pages` 按 `lastSeenAt desc` 排序。
+- client tab 的 focus / visibility 不进入 server protocol，不参与 server snapshot 和排序。
 
 ### Active Page Detail
 
@@ -262,7 +248,6 @@ type ClientCommonActivePageDetail = {
   title?: string;
   url?: string;
   sessionCount: number;
-  focusedSessionCount: number;
   lastSeenAt: string;
 };
 ```
@@ -270,7 +255,7 @@ type ClientCommonActivePageDetail = {
 选择规则：
 
 - `activePages.top` 来自 page room 聚合。
-- server 固定排序：先 `sessionCount desc`，再 `focusedSessionCount desc`，再 `lastSeenAt desc`。
+- server 固定排序：先 `sessionCount desc`，再 `lastSeenAt desc`。
 - `sessionCount` 按 `sessionId` 去重，不按 tab 去重。
 - 同一个 session 两个 tab 都打开同一页面，该页面 `sessionCount` 仍只加 1。
 - 同一个 session 打开两个不同页面，可以同时让两个页面各自 `sessionCount` 加 1。
