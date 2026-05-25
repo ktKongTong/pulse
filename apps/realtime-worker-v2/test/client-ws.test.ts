@@ -5,15 +5,16 @@ import {
   CLIENT_MEDIA_WS_PROTOCOL,
   CLIENT_PAGE_WS_PROTOCOL,
   DEVICE_MEDIA_PROTOCOL,
-} from "@pulse/v2-realtime-protocol";
+  PRESENCE_PROTOCOL,
+} from "@ktfun/pulse-protocol";
 import type { Env } from "../src/env";
 import {
   connectClientMedia,
   connectCommon,
   connectDevice,
   connectDeviceMedia,
+  nextBinaryMessage,
   nextMessage,
-  nextRawMessage,
   sendReadyStreamState,
   tick,
   wsRequest,
@@ -49,6 +50,42 @@ describe("realtime-worker-v2 client ws", () => {
     });
     common.close();
     pageSocket.close();
+    await tick();
+  });
+
+  it("does not rebroadcast unchanged device focus just because presence timestamps changed", async () => {
+    const { common } = await connectCommon(env as Env, `presence-tab-${crypto.randomUUID()}`);
+    const device = await connectDevice(env as Env);
+
+    const presence = (sentAt: string) => ({
+      protocol: PRESENCE_PROTOCOL,
+      type: "snapshot",
+      payload: {
+        eventId: crypto.randomUUID(),
+        seq: Date.parse(sentAt),
+        observedAt: sentAt,
+        sentAt,
+        state: {
+          availability: { state: "active", idleSeconds: 0 },
+          focus: { app: { id: "com.microsoft.edgemac", name: "Microsoft Edge" } },
+        },
+      },
+    });
+
+    device.common.send(JSON.stringify(presence("2026-05-24T14:53:56.340Z")));
+    expect(await nextMessage(common)).toMatchObject({
+      type: "snapshot",
+      snapshot: { owner: { focus: { app: { id: "com.microsoft.edgemac" } } } },
+    });
+
+    device.common.send(JSON.stringify(presence("2026-05-24T14:54:12.397Z")));
+    await expect(Promise.race([
+      nextMessage(common),
+      tick(50).then(() => "no-message"),
+    ])).resolves.toBe("no-message");
+
+    common.close();
+    device.common.close();
     await tick();
   });
 
@@ -128,6 +165,8 @@ describe("realtime-worker-v2 client ws", () => {
         sentAt: new Date().toISOString(),
       },
     }));
+    const audioFramePromise = nextMessage(clientMedia);
+    const rawAudioPromise = nextBinaryMessage(clientMedia);
     deviceMedia.send(JSON.stringify({
       protocol: DEVICE_MEDIA_PROTOCOL,
       type: "audio.chunk",
@@ -141,9 +180,9 @@ describe("realtime-worker-v2 client ws", () => {
       },
     }));
     deviceMedia.send(new Uint8Array([1, 2, 3, 4]).buffer);
-    expect(await nextMessage(clientMedia)).toMatchObject({ type: "audio.chunk", seq: 2, byteLength: 4 });
-    const raw = await nextRawMessage(clientMedia);
-    expect(raw instanceof ArrayBuffer || raw instanceof Blob).toBe(true);
+    expect(await audioFramePromise).toMatchObject({ type: "audio.chunk", seq: 2, byteLength: 4 });
+    const raw = await rawAudioPromise;
+    expect(raw instanceof ArrayBuffer || ArrayBuffer.isView(raw) || raw instanceof Blob).toBe(true);
     clientMedia.send(JSON.stringify({
       protocol: CLIENT_MEDIA_WS_PROTOCOL,
       type: "ack",

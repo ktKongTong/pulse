@@ -15,12 +15,30 @@ struct ConnectionDetailPane: View {
         monitor.syncState?.endpoints.first { $0.id == endpoint.id }
     }
 
-    private var liveListenEndpoint: LiveListenEndpointPublisherStatus? {
-        monitor.liveListenStore.endpointPublisherStats.first { $0.id == endpoint.id }
+    private var streamEndpoint: StreamEndpointPublisherStatus? {
+        guard endpoint.enabled, !endpoint.disconnected else { return nil }
+        return monitor.streamStore.endpointPublisherStats.first { $0.id == endpoint.id }
+    }
+
+    private var isStreamEndpoint: Bool {
+        hasStreamConnectionFields
+    }
+
+    private var streamStats: PulseBarStreamStats? {
+        streamEndpoint?.stats
     }
 
     private var status: ConnectionRuntimeStatus {
-        resolveConnectionStatus(
+        if !endpoint.enabled || endpoint.disconnected {
+            return .Disconnected
+        }
+        if let streamEndpoint {
+            return streamEndpoint.stats.connectionStateParsed.connectionRuntimeStatus
+        }
+        if hasStreamConnectionFields {
+            return .Disconnected
+        }
+        return resolveConnectionStatus(
             endpoint: endpoint,
             sync: sync,
             manuallyDisconnected: endpoint.disconnected,
@@ -50,9 +68,9 @@ struct ConnectionDetailPane: View {
                             ("Status", status.title),
                             ("Enabled", endpoint.enabled ? "Enabled" : "Disabled"),
                             ("Reason", disconnectedReason),
-                            ("Last probe", sync.map(endpointLastProbeWallClock) ?? "-"),
-                            ("Last success", sync.map(endpointLastSuccessWallClock) ?? "-"),
-                            ("Last failure", sync.map(endpointLastFailureWallClock) ?? "-"),
+                            ("Last probe", lastProbeText),
+                            ("Last success", lastSuccessText),
+                            ("Last failure", lastFailureText),
                         ])
                     }
 
@@ -61,34 +79,21 @@ struct ConnectionDetailPane: View {
                             ("Focus", monitor.snapshot?.appName ?? "No active sample"),
                             ("Media", monitor.snapshot?.media.map { "\($0.title) - \($0.artist)" } ?? "No media"),
                             ("Delivery", deliveryDetail),
-                            ("Live Listen", liveListenStatusText),
-                            ("Capture source", monitor.liveListenStore.selectedSource?.name ?? "No source"),
+                            ("Stream", streamStatusText),
+                            ("Capture source", monitor.streamStore.selectedSource?.name ?? "No source"),
                         ])
 
-                        if endpoint.disconnected {
-                            Text("Live Listen stopped manually for this connection.")
+                        if let streamMessage {
+                            Text(streamMessage)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if let error = monitor.liveListenStore.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
-                           !error.isEmpty {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(streamMessageIsError ? .red : .secondary)
                                 .textSelection(.enabled)
-                        } else if let liveListenEndpoint {
-                            Text(liveListenEndpoint.statusText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text(monitor.liveListenStore.publisherStatusText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
 
                     DetailSection("Local Cache") {
                         KeyValueGrid(rows: [
-                            ("Pending count", "\(sync?.pendingCount ?? monitor.syncState?.pendingCount ?? 0)"),
+                            ("Pending count", pendingCountText),
                         ])
                     }
                 }
@@ -160,7 +165,10 @@ struct ConnectionDetailPane: View {
     }
 
     private var disconnectedReason: String {
-        EndpointPresentation.shared.disconnectedReason(input: buildRuntimeInput())
+        if let stats = streamStats {
+            return stats.lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "-"
+        }
+        return EndpointPresentation.shared.disconnectedReason(input: buildRuntimeInput())
     }
 
     private var connectionActionTitle: String {
@@ -168,10 +176,42 @@ struct ConnectionDetailPane: View {
     }
 
     private var deliveryDetail: String {
-        EndpointPresentation.shared.deliveryDetail(input: buildRuntimeInput())
+        if let streamEndpoint {
+            return streamEndpoint.statusText
+        }
+        return EndpointPresentation.shared.deliveryDetail(input: buildRuntimeInput())
     }
 
-    private var liveListenStatusText: String {
+    private var hasStreamConnectionFields: Bool {
+        !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var lastProbeText: String {
+        if isStreamEndpoint { return "-" }
+        return sync.map(endpointLastProbeWallClock) ?? "-"
+    }
+
+    private var lastSuccessText: String {
+        if let stats = streamStats {
+            return streamLastConnectedAge(stats: stats, nowMillis: nowMillis())
+        }
+        return sync.map(endpointLastSuccessWallClock) ?? "-"
+    }
+
+    private var lastFailureText: String {
+        if let stats = streamStats {
+            return streamLastDisconnectedAge(stats: stats, nowMillis: nowMillis())
+        }
+        return sync.map(endpointLastFailureWallClock) ?? "-"
+    }
+
+    private var pendingCountText: String {
+        if isStreamEndpoint { return "-" }
+        return "\(sync?.pendingCount ?? monitor.syncState?.pendingCount ?? 0)"
+    }
+
+    private var streamStatusText: String {
         if endpoint.disconnected {
             return "Stopped manually"
         }
@@ -179,17 +219,35 @@ struct ConnectionDetailPane: View {
             return "Endpoint disabled"
         }
 
-        let model = monitor.liveListenStore
-        if let liveListenEndpoint {
-            if liveListenEndpoint.stats.connectionStateParsed == .CONNECTED, model.isCapturing {
-                return liveListenEndpoint.stats.isSending ? "Sending audio packets" : model.statusText
+        let model = monitor.streamStore
+        if let streamEndpoint {
+            if streamEndpoint.stats.connectionStateParsed == .CONNECTED, model.isCapturing {
+                return streamEndpoint.stats.isSending ? "Sending audio packets" : model.statusText
             }
-            return liveListenEndpoint.statusText
+            return streamEndpoint.statusText
         }
-        if let error = model.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
-            return error
+        return EndpointPresentation.shared.deliveryDetail(input: buildRuntimeInput())
+    }
+
+    private var streamMessage: String? {
+        if endpoint.disconnected {
+            return "Stream stopped manually for this connection."
         }
-        return model.publisherStatusText
+        if !endpoint.enabled {
+            return "Endpoint disabled."
+        }
+        if let streamEndpoint {
+            return streamEndpoint.statusText
+        }
+        if !hasStreamConnectionFields {
+            return nil
+        }
+        return "No active stream publisher for this endpoint."
+    }
+
+    private var streamMessageIsError: Bool {
+        guard endpoint.enabled, !endpoint.disconnected else { return false }
+        return streamEndpoint?.stats.connectionStateParsed == .FAILED
     }
 
     private func buildRuntimeInput() -> EndpointRuntimeInput {
@@ -203,5 +261,15 @@ struct ConnectionDetailPane: View {
             lastErrorMessage: sync?.lastErrorMessage,
             pendingCount: Int32(sync?.pendingCount ?? 0)
         )
+    }
+
+    private func nowMillis() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000.0)
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
     }
 }

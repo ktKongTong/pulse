@@ -1,6 +1,6 @@
 package io.github.kt.pulsebar.core.devicev2
 
-import io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig
+import io.github.kt.pulsebar.core.stream.StreamConnectionConfig
 import io.ktor.client.plugins.websocket.ClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.header
@@ -8,20 +8,23 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readReason
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-internal suspend fun DeviceV2Client.openCommon(config: LiveListenConnectionConfig): ClientWebSocketSession {
+internal suspend fun DeviceV2Client.openCommon(config: StreamConnectionConfig): ClientWebSocketSession {
     val url = deviceV2CommonUrl(config)
     val session = http.webSocketSession(urlString = url.toString()) {
         if (config.apiKey.isNotBlank()) header("Authorization", "Bearer ${config.apiKey}")
     }
     session.send(Frame.Text(deviceV2CommonHello(config)))
-    updateStats { connectedStats(it, url.toString()) }
-    reconnectAttempt = 0
-    log.i { "device.v2.common.connected url=$url" }
+    updateStats {
+        it.copy(
+            webSocketUrl = url.toString(),
+            statusText = "Device common websocket open, waiting for ack",
+        )
+    }
+    log.i { "device.v2.common.open url=$url" }
     return session
 }
 
@@ -34,6 +37,7 @@ internal suspend fun DeviceV2Client.readCommonAck(session: ClientWebSocketSessio
         val payload = obj["payload"]?.jsonObject ?: continue
         if (payload["accepted"]?.jsonPrimitive?.content == "true") {
             val deviceSessionId = payload["deviceSessionId"]!!.jsonPrimitive.content
+            updateStats { it.copy(statusText = "Device common connected, connecting stream") }
             log.i { "device.v2.common.ack deviceSessionId=$deviceSessionId" }
             return deviceSessionId
         }
@@ -44,16 +48,30 @@ internal suspend fun DeviceV2Client.readCommonAck(session: ClientWebSocketSessio
 
 internal suspend fun DeviceV2Client.runPresence(session: ClientWebSocketSession) {
     var seq = 0L
+    var lastSignature: String? = null
     try {
         while (session.isActive) {
+            presenceOutbound.receive()
             val now = deviceV2NowIso()
-            session.send(Frame.Text(deviceV2PresenceFrame(deviceV2Presence(seq++, now))))
-            delay(2_000L)
+            val presence = deviceV2Presence(seq, now)
+            val signature = presence.state.focus.signature()
+            if (signature != lastSignature) {
+                session.send(Frame.Text(deviceV2PresenceFrame(presence)))
+                lastSignature = signature
+                seq++
+            }
         }
     } finally {
         log.w { "device.v2.common.presence.end active=${session.isActive}" }
     }
 }
+
+private fun DeviceV2Focus.signature(): String =
+    listOf(
+        app?.id.orEmpty(),
+        app?.name.orEmpty(),
+        app?.category.orEmpty(),
+    ).joinToString(separator = "\u001F")
 
 internal suspend fun DeviceV2Client.runCommonInbound(session: ClientWebSocketSession) {
     for (frame in session.incoming) {

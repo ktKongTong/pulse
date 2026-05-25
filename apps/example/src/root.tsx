@@ -1,6 +1,5 @@
-// import { scan } from "react-scan/all-environments";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
-import { PulseRealtimeV2Provider } from "@pulse/v2-realtime-react";
+import { PulseRealtimeV2Provider } from "@ktfun/pulse";
 import { realtimeConfig } from "./lib/config";
 import { TooltipProvider } from "./components/ui/tooltip";
 import "./styles.css";
@@ -25,10 +24,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#faf8f6" />
-        <script
+        {/*<script
           crossOrigin="anonymous"
           src="https://unpkg.com/react-scan/dist/auto.global.js"
-        ></script>
+        ></script>*/}
         <Meta />
         <Links />
       </head>

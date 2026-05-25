@@ -10,6 +10,7 @@ import platform.Foundation.NSDateFormatterNoStyle
 import platform.Foundation.NSISO8601DateFormatWithFractionalSeconds
 import platform.Foundation.NSISO8601DateFormatWithInternetDateTime
 import platform.Foundation.NSISO8601DateFormatter
+import platform.Foundation.NSLock
 import platform.Foundation.NSString
 import platform.Foundation.NSUUID
 import platform.Foundation.dateWithTimeIntervalSince1970
@@ -18,17 +19,37 @@ import platform.Foundation.timeIntervalSince1970
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun resolveAppDisplayName(bundleId: String): String? {
     if (bundleId.isBlank() || bundleId == "unknown") return null
-    // NSWorkspace.urlForApplication(withBundleIdentifier:) is only available
-    // through the cinterop-generated @ObjCClass. Use the NSBundle shortcut
-    // which works via NSBundle.bundleWithIdentifier.
-    val bundle = NSBundle.bundleWithIdentifier(bundleId) ?: return null
-    val info = bundle.infoDictionary ?: return null
-    val display = info["CFBundleDisplayName"] as? String
-    if (!display.isNullOrBlank()) return display
-    val name = info["CFBundleName"] as? String
-    if (!name.isNullOrBlank()) return name
-    return null
+    appDisplayNameCacheLock.lock()
+    try {
+        appDisplayNameCache[bundleId]?.let { return it.value }
+    } finally {
+        appDisplayNameCacheLock.unlock()
+    }
+
+    // Touching the bundle catalogue can wake macOS security services. Cache
+    // both hits and misses so repeated focus events do not repeat it.
+    val resolved = run {
+        val bundle = NSBundle.bundleWithIdentifier(bundleId) ?: return@run null
+        val info = bundle.infoDictionary ?: return@run null
+        val display = info["CFBundleDisplayName"] as? String
+        if (!display.isNullOrBlank()) return@run display
+        val name = info["CFBundleName"] as? String
+        if (!name.isNullOrBlank()) return@run name
+        null
+    }
+    appDisplayNameCacheLock.lock()
+    try {
+        appDisplayNameCache[bundleId] = CachedAppDisplayName(resolved)
+    } finally {
+        appDisplayNameCacheLock.unlock()
+    }
+    return resolved
 }
+
+private data class CachedAppDisplayName(val value: String?)
+
+private val appDisplayNameCacheLock = NSLock()
+private val appDisplayNameCache = mutableMapOf<String, CachedAppDisplayName>()
 
 /** Cache one formatter — NSDateFormatter is expensive to allocate per call. */
 private val wallClockTimeFormatter: NSDateFormatter by lazy {

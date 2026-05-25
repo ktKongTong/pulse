@@ -2,17 +2,23 @@ import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 
-const backend = process.env.VITE_REALTIME_V2_BACKEND ?? "http://localhost:8787";
+import { cloudflare } from "@cloudflare/vite-plugin";
+// const backend = process.env.VITE_REALTIME_V2_BACKEND ?? "https://pulse.koft.fun";
 
 export default defineConfig({
-  plugins: [tailwindcss(), reactRouter()],
+  plugins: [
+    // cloudflare({
+    //   viteEnvironment: { name: "ssr" },
+    // }),
+    tailwindcss(),
+    reactRouter(),
+  ],
   resolve: {
     tsconfigPaths: true,
   },
-  server: {
-    port: 8910,
-    proxy: {
-      "/api": { target: backend, changeOrigin: true, ws: true },
-    },
-  },
+  // server: {
+  //   proxy: {
+  //     "/api": { target: backend, changeOrigin: true, ws: true },
+  //   },
+  // },
 });

@@ -4,7 +4,7 @@ import {
   DEVICE_CONNECTION_PROTOCOL,
   DEVICE_MEDIA_CONNECTION_PROTOCOL,
   DEVICE_MEDIA_PROTOCOL,
-} from "@pulse/v2-realtime-protocol";
+} from "@ktfun/pulse-protocol";
 import type { Env } from "../src/env";
 
 export function wsRequest(url: string) {
@@ -22,6 +22,17 @@ export function nextMessage(socket: WebSocket): Promise<unknown> {
 export function nextRawMessage(socket: WebSocket): Promise<MessageEvent["data"]> {
   return new Promise((resolve) => {
     socket.addEventListener("message", (event) => resolve(event.data), { once: true });
+  });
+}
+
+export function nextBinaryMessage(socket: WebSocket): Promise<MessageEvent["data"]> {
+  return new Promise((resolve) => {
+    const listener = (event: MessageEvent) => {
+      if (typeof event.data === "string") return;
+      socket.removeEventListener("message", listener);
+      resolve(event.data);
+    };
+    socket.addEventListener("message", listener);
   });
 }
 

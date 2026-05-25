@@ -1,6 +1,6 @@
 package io.github.kt.pulsebar.core.devicev2
 
-internal fun deviceV2CommonHello(config: io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig): String =
+internal fun deviceV2CommonHello(config: io.github.kt.pulsebar.core.stream.StreamConnectionConfig): String =
     deviceV2Json.encodeToString(
         DeviceV2Frame.serializer(DeviceV2CommonHelloPayload.serializer()),
         DeviceV2Frame(

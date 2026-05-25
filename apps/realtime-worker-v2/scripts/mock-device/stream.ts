@@ -1,4 +1,4 @@
-import { DEVICE_MEDIA_PROTOCOL } from "@pulse/v2-realtime-protocol";
+import { DEVICE_MEDIA_PROTOCOL } from "@ktfun/pulse-protocol";
 import { readFile } from "node:fs/promises";
 import type { JsonObject, JsonSocket } from "./socket";
 

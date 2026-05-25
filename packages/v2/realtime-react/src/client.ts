@@ -1,4 +1,5 @@
-import type { ClientPageMetadata } from "@pulse/v2-realtime-protocol";
+'use client'
+import type { ClientPageMetadata } from "@ktfun/pulse-protocol";
 import { nextConnection } from "./connection";
 import { claimSession } from "./session";
 import { RealtimeV2StateStore } from "./state";

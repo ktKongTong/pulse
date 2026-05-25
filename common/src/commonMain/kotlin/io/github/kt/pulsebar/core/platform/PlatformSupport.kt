@@ -10,9 +10,9 @@ package io.github.kt.pulsebar.core.platform
  * bundle catalogue. Returns null when the platform can't find a matching
  * bundle, in which case callers should fall back to the untouched name.
  *
- * macOS walks `NSWorkspace.urlForApplication(withBundleIdentifier:)` →
- * `Bundle.object(forInfoDictionaryKey:)` for `CFBundleDisplayName` /
- * `CFBundleName`. JVM returns null.
+ * macOS resolves this from `NSBundle.bundleWithIdentifier` and caches both
+ * hits and misses because focus events can repeat the same bundle id. JVM
+ * returns null.
  */
 internal expect fun resolveAppDisplayName(bundleId: String): String?
 
@@ -49,13 +49,13 @@ expect fun newPulseUuid(): String
 
 /**
  * Normalize a user-entered endpoint base URL so downstream consumers have
- * a clean host (no trailing path like `/api/v2/presence/ingest` or
- * `/api/v1/live-listen`). Returns null when the URL can't be parsed or
- * ends up empty.
+ * a clean host (no trailing path like `/api/v2/presence/ingest`,
+ * `/api/v1/stream`, or legacy stream paths). Returns null when the URL
+ * can't be parsed or ends up empty.
  *
- * Moved to Kotlin so both the presence reporter and the Live Listen client
+ * Moved to Kotlin so both the presence reporter and the Stream client
  * use the exact same normalization. Previously the Swift UI did its own
- * stripping in `LiveListenEndpointConfig.normalizedLiveListenBaseURL`.
+ * stripping in `StreamEndpointConfig.normalizedStreamBaseURL`.
  */
 fun normalizePulseBaseUrl(raw: String): String? {
     val trimmed = raw.trim()
@@ -65,6 +65,8 @@ fun normalizePulseBaseUrl(raw: String): String? {
         "/v2/presence/ingest",
         "/api/v1/meta",
         "/v1/meta",
+        "/api/v1/stream",
+        "/v1/stream",
         "/api/v1/live-listen",
         "/v1/live-listen",
     )

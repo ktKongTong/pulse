@@ -1,4 +1,4 @@
-import type { OwnerFocus } from "@pulse/v2-realtime-protocol";
+import type { OwnerFocus } from "@ktfun/pulse-protocol";
 import type { PageAggregate } from "./client";
 
 export function ownerFocusEqual(
@@ -7,8 +7,7 @@ export function ownerFocusEqual(
 ) {
   if (left === right) return true;
   if (!left || !right) return false;
-  return left.updatedAt === right.updatedAt &&
-    left.app?.id === right.app?.id &&
+  return left.app?.id === right.app?.id &&
     left.app?.name === right.app?.name &&
     left.app?.category === right.app?.category &&
     left.app?.icon === right.app?.icon &&

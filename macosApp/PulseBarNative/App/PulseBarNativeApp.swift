@@ -8,7 +8,7 @@ final class PulseBarNativeAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         monitor.start()
-        monitor.requestLiveListenAudioCapturePermissionAtStartup()
+        monitor.requestStreamAudioCapturePermissionAtStartup()
         statusItemController = StatusItemController(monitor: monitor)
     }
 
@@ -44,6 +44,7 @@ struct PulseBarNativeApp: App {
                         appDelegate.monitor.start()
                     }
                 }
+                .disabled(appDelegate.monitor.isPermissionPromptBlockingInteraction)
                 .keyboardShortcut("m", modifiers: [.command, .shift])
             }
         }

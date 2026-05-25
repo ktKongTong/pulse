@@ -1,4 +1,4 @@
-import { CLIENT_MEDIA_WS_PROTOCOL } from "@pulse/v2-realtime-protocol";
+import { CLIENT_MEDIA_WS_PROTOCOL } from "@ktfun/pulse-protocol";
 import type { ClientAttachment, MediaStoredState, StreamContext } from "../state/media";
 import { tabKey } from "../state/keys";
 import { nowIso } from "../utils/time";

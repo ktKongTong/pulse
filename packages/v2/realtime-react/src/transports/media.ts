@@ -1,7 +1,8 @@
+'use client'
 import {
   CLIENT_MEDIA_WS_PROTOCOL,
   ClientMediaServerFrameSchema,
-} from "@pulse/v2-realtime-protocol";
+} from "@ktfun/pulse-protocol";
 import { nextConnection } from "../connection";
 import { resolveSdkVersion } from "../session";
 import type { RealtimeV2StateStore } from "../state";

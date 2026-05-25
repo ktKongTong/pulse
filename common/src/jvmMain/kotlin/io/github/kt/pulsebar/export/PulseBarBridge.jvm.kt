@@ -127,7 +127,7 @@ actual class PulseBarBridge actual constructor() {
     actual val interactionState: Flow<PulseBarInteractionState> = emptyFlow()
     actual val todayStats: Flow<PulseBarTodayStats> = emptyFlow()
 
-    actual fun startLiveListen(
+    actual fun startStream(
         roomId: String,
         deviceId: String,
         baseUrl: String,
@@ -138,19 +138,19 @@ actual class PulseBarBridge actual constructor() {
         chunkDurationMs: Int,
     ) = Unit
 
-    actual fun stopLiveListen() = Unit
+    actual fun stopStream() = Unit
 
-    actual fun emitLiveListenLocalStop() = Unit
+    actual fun emitStreamLocalStop() = Unit
 
-    actual fun submitLiveListenPcmBase64(chunkBase64: String) = Unit
+    actual fun submitStreamPcmBase64(chunkBase64: String) = Unit
 
-    actual fun updateLiveListenMediaState(
+    actual fun updateStreamMediaState(
         permissionAllow: Boolean,
         playbackPlaying: Boolean,
         captureRunning: Boolean,
     ) = Unit
 
-    actual fun updateLiveListenMedia(
+    actual fun updateStreamMedia(
         providerId: String?,
         trackId: String?,
         title: String?,
@@ -162,5 +162,5 @@ actual class PulseBarBridge actual constructor() {
         isPlaying: Boolean,
     ) = Unit
 
-    actual val liveListenStats: Flow<PulseBarLiveListenStats> = emptyFlow()
+    actual val streamStats: Flow<PulseBarStreamStats> = emptyFlow()
 }

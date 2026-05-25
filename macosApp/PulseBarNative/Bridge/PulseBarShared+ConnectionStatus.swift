@@ -14,17 +14,17 @@ import SwiftUI
 
 typealias ConnectionRuntimeStatus = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.ConnectionRuntimeStatus
 
-extension PulseBarLiveListenStats {
-    /// Parse `PulseBarLiveListenConnectionState` from its `.name` string.
+extension PulseBarStreamStats {
+    /// Parse `PulseBarStreamConnectionState` from its `.name` string.
     /// Avoids the Swift Export enum-getter crash path.
-    var connectionStateParsed: PulseBarLiveListenConnectionState {
+    var connectionStateParsed: PulseBarStreamConnectionState {
         switch connectionStateName {
-        case "CONNECTING": return .CONNECTING
-        case "CONNECTED": return .CONNECTED
-        case "RECONNECTING": return .RECONNECTING
-        case "STOPPING": return .STOPPING
-        case "STOPPED": return .STOPPED
-        case "FAILED": return .FAILED
+        case "CONNECTING", "Connecting": return .CONNECTING
+        case "CONNECTED", "Connected": return .CONNECTED
+        case "RECONNECTING", "Reconnecting": return .RECONNECTING
+        case "STOPPING", "Stopping": return .STOPPING
+        case "STOPPED", "Stopped": return .STOPPED
+        case "FAILED", "Failed": return .FAILED
         default: return .IDLE
         }
     }
@@ -36,7 +36,19 @@ extension ConnectionRuntimeStatus {
         case .Connected: return .green
         case .Disconnected: return .red
         case .Reconnecting: return .yellow
-        default: return .secondary
+        }
+    }
+}
+
+extension PulseBarStreamConnectionState {
+    var connectionRuntimeStatus: ConnectionRuntimeStatus {
+        switch self {
+        case .CONNECTED:
+            return .Connected
+        case .CONNECTING, .RECONNECTING, .STOPPING:
+            return .Reconnecting
+        case .IDLE, .STOPPED, .FAILED:
+            return .Disconnected
         }
     }
 }

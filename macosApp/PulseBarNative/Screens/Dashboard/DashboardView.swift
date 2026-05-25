@@ -39,6 +39,33 @@ struct PulseBarDashboardView: View {
             .environmentObject(monitor)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .windowBackgroundColor))
+            .disabled(monitor.isPermissionPromptBlockingInteraction)
+            .overlay {
+                if monitor.isPermissionPromptBlockingInteraction {
+                    PermissionPendingOverlay()
+                }
+            }
+        }
+    }
+}
+
+private struct PermissionPendingOverlay: View {
+    var body: some View {
+        ZStack {
+            Color(nsColor: .windowBackgroundColor)
+                .opacity(0.72)
+                .ignoresSafeArea()
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Waiting for system audio permission")
+                    .font(.headline)
+                Text("Respond to the macOS permission prompt to continue.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(20)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }

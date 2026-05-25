@@ -1,4 +1,4 @@
-import type { ClientCommonActivePageDetail, ClientCommonGlobalSnapshot, ClientCommonSessionDetail, ClientCommonSessionPage, ClientPageSnapshot, ClientUser, OwnerFocus } from "@pulse/v2-realtime-protocol";
+import type { ClientCommonActivePageDetail, ClientCommonGlobalSnapshot, ClientCommonSessionDetail, ClientCommonSessionPage, ClientPageSnapshot, ClientUser, OwnerFocus } from "@ktfun/pulse-protocol";
 import { byLastSeenDesc, isNewerLastSeen, maxIso } from "./client-ordering";
 
 export interface CommonConnectionMeta {

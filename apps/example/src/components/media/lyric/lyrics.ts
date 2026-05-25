@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { MediaStatus } from "@/hooks/media-model";
+import type { MediaStatus } from "@ktfun/pulse";
 
 export interface LyricLine {
   timeSeconds: number;

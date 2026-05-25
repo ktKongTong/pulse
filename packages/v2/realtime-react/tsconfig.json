@@ -6,7 +6,7 @@
     "rootDir": "src",
     "jsx": "react-jsx",
     "declaration": true,
-    "declarationMap": true,
+    "declarationMap": false,
     "outDir": "dist",
     "strict": true,
     "skipLibCheck": true,

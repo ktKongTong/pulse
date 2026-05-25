@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { CLIENT_COMMON_WS_PROTOCOL, ClientCommonClientFrameSchema, ClientSessionClaimRequestSchema, type ClientSessionClaimResponse, type ClientUser, type OwnerFocus } from "@pulse/v2-realtime-protocol";
+import { CLIENT_COMMON_WS_PROTOCOL, ClientCommonClientFrameSchema, ClientSessionClaimRequestSchema, type ClientSessionClaimResponse, type ClientUser, type OwnerFocus } from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
 import { mediaStub, pageStub } from "../env";
 import { buildGlobalSnapshot, emptyGlobalState, type CommonConnectionMeta, type GlobalStoredState, type PageAggregate } from "../state/client";

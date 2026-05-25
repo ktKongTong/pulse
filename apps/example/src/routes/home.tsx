@@ -1,6 +1,6 @@
 
 import { useMemo } from "react";
-import { usePagePresence } from "@/hooks/use-page-presence";
+import { usePagePresence } from "@ktfun/pulse";
 import { StatusHero } from "../components/status-hero";
 
 function getStatusPageContext() {

@@ -10,10 +10,8 @@ import type {
 
 export function selectGlobalOnlineCount(
   state: PulseRealtimeV2Snapshot,
-): GlobalOnlineCountView {
-  return {
-    sessionCount: state.common.snapshot?.sessions.totalCount ?? 0,
-  };
+): number {
+  return state.common.snapshot?.sessions.totalCount ?? 0
 }
 
 export function selectActivePages(

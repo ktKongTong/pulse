@@ -1,4 +1,4 @@
-import type { ClientAudioChunk } from "@pulse/v2-realtime-react";
+import type { ClientAudioChunk } from "@ktfun/pulse";
 
 type SourceState = {
   audio: HTMLAudioElement;

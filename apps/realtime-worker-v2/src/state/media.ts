@@ -4,7 +4,7 @@ import type {
   DeviceStreamState,
   StreamCodec,
   StreamFormat,
-} from "@pulse/v2-realtime-protocol";
+} from "@ktfun/pulse-protocol";
 
 export interface DeviceMediaConnection {
   connectionId: string;

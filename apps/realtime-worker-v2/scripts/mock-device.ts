@@ -2,7 +2,7 @@ import {
   DEVICE_CONNECTION_PROTOCOL,
   DEVICE_MEDIA_CONNECTION_PROTOCOL,
   DEVICE_MEDIA_PROTOCOL,
-} from "@pulse/v2-realtime-protocol";
+} from "@ktfun/pulse-protocol";
 import {
   buildMediaUpdate,
   buildPresenceSnapshot,

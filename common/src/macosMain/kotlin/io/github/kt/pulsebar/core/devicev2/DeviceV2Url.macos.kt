@@ -1,14 +1,14 @@
 package io.github.kt.pulsebar.core.devicev2
 
-import io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig
+import io.github.kt.pulsebar.core.stream.StreamConnectionConfig
 import io.ktor.http.URLBuilder
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
 
-internal fun deviceV2CommonUrl(config: LiveListenConnectionConfig): Url =
+internal fun deviceV2CommonUrl(config: StreamConnectionConfig): Url =
     deviceV2Url(config, listOf("", "api", "v1", "device", "ws"), listOf("deviceId" to config.deviceId))
 
-internal fun deviceV2MediaUrl(config: LiveListenConnectionConfig, deviceSessionId: String): Url =
+internal fun deviceV2MediaUrl(config: StreamConnectionConfig, deviceSessionId: String): Url =
     deviceV2Url(
         config,
         listOf("", "api", "v1", "device", "media", "ws"),
@@ -16,7 +16,7 @@ internal fun deviceV2MediaUrl(config: LiveListenConnectionConfig, deviceSessionI
     )
 
 private fun deviceV2Url(
-    config: LiveListenConnectionConfig,
+    config: StreamConnectionConfig,
     path: List<String>,
     params: List<Pair<String, String>>,
 ): Url {

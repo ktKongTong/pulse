@@ -74,14 +74,14 @@ class PulseBarConfigFactoryTest {
         assertEquals(PulseBarTransport.HTTP_BATCH, PulseBarConfigFactory.transportByName("HTTP_BATCH"))
     }
 
-    @Test fun liveListenCandidates_prefersEnabledAndCredentialed() {
+    @Test fun streamCandidates_prefersEnabledAndCredentialed() {
         val draft = PulseBarConfigFactory.toDraft(sampleConfig())
-        val candidates = PulseBarConfigFactory.liveListenCandidateEndpoints(draft)
+        val candidates = PulseBarConfigFactory.streamCandidateEndpoints(draft)
         assertEquals(1, candidates.size)
         assertEquals("e-1", candidates[0].id)
     }
 
-    @Test fun liveListenCandidates_fallsBackToAnyWithCreds() {
+    @Test fun streamCandidates_excludesDisconnectedEndpoints() {
         val draft = PulseBarConfigFactory.toDraft(sampleConfig()).let {
             PulseBarConfigDraft(
                 endpoints = listOf(it.endpoints[0].copy(enabled = false, disconnected = true)),
@@ -96,9 +96,28 @@ class PulseBarConfigFactoryTest {
                 interactionPlaybackModeName = it.interactionPlaybackModeName,
             )
         }
-        val candidates = PulseBarConfigFactory.liveListenCandidateEndpoints(draft)
-        assertEquals(1, candidates.size)
-        assertTrue(!candidates[0].enabled)
+        val candidates = PulseBarConfigFactory.streamCandidateEndpoints(draft)
+        assertEquals(0, candidates.size)
+    }
+
+    @Test fun streamCandidates_allowsEmptyApiKey() {
+        val draft = PulseBarConfigFactory.toDraft(sampleConfig()).let {
+            PulseBarConfigDraft(
+                endpoints = listOf(it.endpoints[0].copy(apiKey = "")),
+                idleThresholdSeconds = it.idleThresholdSeconds,
+                changeStabilityMillis = it.changeStabilityMillis,
+                heartbeatSeconds = it.heartbeatSeconds,
+                appPollingMillis = it.appPollingMillis,
+                pagePollingMillis = it.pagePollingMillis,
+                mediaPollingMillis = it.mediaPollingMillis,
+                allowWebInteractions = it.allowWebInteractions,
+                interactionExecutionModeName = it.interactionExecutionModeName,
+                interactionPlaybackModeName = it.interactionPlaybackModeName,
+            )
+        }
+        val resolved = PulseBarConfigFactory.resolvedStreamEndpoints(draft)
+        assertEquals(1, resolved.size)
+        assertEquals("", resolved[0].apiKey)
     }
 
     @Test fun defaultEndpoint_shape() {

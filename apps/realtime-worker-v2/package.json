@@ -14,7 +14,7 @@
     "type": "wrangler types worker-configuration.d.ts"
   },
   "dependencies": {
-    "@pulse/v2-realtime-protocol": "workspace:*",
+    "@ktfun/pulse-protocol": "workspace:*",
     "hono": "catalog:hono",
     "zod": "catalog:"
   },

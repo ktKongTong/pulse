@@ -38,11 +38,11 @@ class PulseBarConfigDraft(
 )
 
 /**
- * Live Listen endpoint pre-resolved for the platform shell — all string
+ * Stream endpoint pre-resolved for the platform shell — all string
  * trimming + URL normalization done on the Kotlin side. Swift only wraps
  * [baseUrl] in a `URL`.
  */
-class LiveListenEndpointResolved(
+class StreamEndpointResolved(
     val id: String,
     val name: String,
     val baseUrl: String,
@@ -114,30 +114,27 @@ object PulseBarConfigFactory {
         interactionPlaybackModeName = draft.interactionPlaybackModeName,
     )
 
-    /** Used by the Live Listen presentation code — "connectable" endpoints are those that have creds + URL. */
-    fun liveListenCandidateEndpoints(draft: PulseBarConfigDraft): List<PulseBarEndpointDraft> {
-        val enabled = draft.endpoints.filter { it.enabled && !it.disconnected && hasLiveListenCredentials(it) }
-        if (enabled.isNotEmpty()) return enabled
-        // Fall back to any endpoint with credentials (disabled/disconnected still wired for debug panes).
-        return draft.endpoints.filter { hasLiveListenCredentials(it) }
+    /** Used by the Stream presentation code — connectable endpoints need a URL + workspace. API key is optional. */
+    fun streamCandidateEndpoints(draft: PulseBarConfigDraft): List<PulseBarEndpointDraft> {
+        return draft.endpoints.filter { it.enabled && !it.disconnected && hasStreamCredentials(it) }
     }
 
     /**
-     * Live Listen endpoints resolved into what Swift actually needs:
+     * Stream endpoints resolved into what Swift actually needs:
      * normalized `baseUrl` (shared `normalizePulseBaseUrl` output), trimmed
      * `name` / `workspaceId`, the raw `apiKey`. Swift wraps `baseUrl` in
      * `URL(string:)` — no more trimming / normalizing on the Swift side.
      *
      * Returns an empty list when none of the candidates have a valid URL.
      */
-    fun resolvedLiveListenEndpoints(draft: PulseBarConfigDraft): List<LiveListenEndpointResolved> =
-        liveListenCandidateEndpoints(draft).mapNotNull { candidate ->
+    fun resolvedStreamEndpoints(draft: PulseBarConfigDraft): List<StreamEndpointResolved> =
+        streamCandidateEndpoints(draft).mapNotNull { candidate ->
             val workspaceId = candidate.workspaceId.trim()
             val apiKey = candidate.apiKey
-            if (workspaceId.isEmpty() || apiKey.isEmpty()) return@mapNotNull null
+            if (workspaceId.isEmpty()) return@mapNotNull null
             val baseUrl = io.github.kt.pulsebar.core.platform.normalizePulseBaseUrl(candidate.endpointUrl)
                 ?: return@mapNotNull null
-            LiveListenEndpointResolved(
+            StreamEndpointResolved(
                 id = candidate.id,
                 name = candidate.name.trim(),
                 baseUrl = baseUrl,
@@ -160,8 +157,8 @@ object PulseBarConfigFactory {
         return if (colonIndex < 0) hostPort.ifEmpty { baseUrl } else hostPort.substring(0, colonIndex).ifEmpty { baseUrl }
     }
 
-    private fun hasLiveListenCredentials(endpoint: PulseBarEndpointDraft): Boolean =
-        endpoint.workspaceId.trim().isNotEmpty() && endpoint.apiKey.isNotEmpty() && endpoint.endpointUrl.trim().isNotEmpty()
+    private fun hasStreamCredentials(endpoint: PulseBarEndpointDraft): Boolean =
+        endpoint.workspaceId.trim().isNotEmpty() && endpoint.endpointUrl.trim().isNotEmpty()
 
     fun transportByName(raw: String): PulseBarTransport = when (raw) {
         "WEBHOOK" -> PulseBarTransport.WEBHOOK

@@ -10,6 +10,7 @@ ENTITLEMENTS="$ROOT/macosApp/PulseBarNative/PulseBarNative.entitlements"
 SHARED_LIB="$PRODUCTS/libPulseBarShared.a"
 OPEN_APP=1
 VERIFY_LAUNCH=0
+REBUILD_KOTLIN=1
 
 for arg in "$@"; do
   case "$arg" in
@@ -19,12 +20,34 @@ for arg in "$@"; do
     --verify)
       VERIFY_LAUNCH=1
       ;;
+    --skip-kotlin)
+      REBUILD_KOTLIN=0
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
       exit 2
       ;;
   esac
 done
+
+if [[ "$REBUILD_KOTLIN" -eq 1 ]]; then
+  SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+  export SDK_NAME="macosx${SDK_VERSION}"
+  export CONFIGURATION="Debug"
+  export TARGET_BUILD_DIR="$PRODUCTS"
+  export BUILT_PRODUCTS_DIR="$PRODUCTS"
+  export ARCHS="arm64"
+  export DEPLOYMENT_TARGET_SETTING_NAME="MACOSX_DEPLOYMENT_TARGET"
+  export MACOSX_DEPLOYMENT_TARGET="14.0"
+  export FRAMEWORKS_FOLDER_PATH="PulseBarNative.app/Contents/Frameworks"
+  export DERIVED_FILE_DIR="$DERIVED/Build/Intermediates.noindex/PulseBarNative.build/Debug/PulseBarNative.build/DerivedSources"
+  export JAVA_HOME="${JAVA_HOME:-$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home}"
+  export PATH="$JAVA_HOME/bin:$PATH"
+  export GRADLE_USER_HOME="$ROOT/.gradle-xcode"
+  export KONAN_DATA_DIR="${KONAN_DATA_DIR:-$HOME/.konan}"
+  mkdir -p "$TARGET_BUILD_DIR" "$DERIVED_FILE_DIR"
+  (cd "$ROOT" && ./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode)
+fi
 
 if [[ ! -f "$SHARED_LIB" ]]; then
   echo "Missing shared export library: $SHARED_LIB" >&2

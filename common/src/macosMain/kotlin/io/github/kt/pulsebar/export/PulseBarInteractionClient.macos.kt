@@ -347,6 +347,8 @@ internal class PulseBarInteractionClient(
             endpoint.enabled &&
                 !endpoint.isRealtimeV2DeviceEndpoint() &&
                 endpoint.workspaceId.isNotBlank() &&
+                endpoint.siteId.isNotBlank() &&
+                endpoint.apiKey.isNotBlank() &&
                 resolvedInteractionWsUrl(endpoint) != null
         }
 

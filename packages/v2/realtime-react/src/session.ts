@@ -1,7 +1,7 @@
 import {
   CLIENT_COMMON_WS_PROTOCOL,
   ClientSessionClaimResponseSchema,
-} from "@pulse/v2-realtime-protocol";
+} from "@ktfun/pulse-protocol";
 import {
   getOrCreateTabId,
   readStoredSessionId,

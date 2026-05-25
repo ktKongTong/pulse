@@ -9,7 +9,7 @@ enum class PulseLogCategory(val tag: String) {
     ConfigStore("config.store"),
     StatsRefresh("stats.refresh"),
     SyncEndpoint("sync.endpoint"),
-    LiveListenSession("live_listen.session"),
+    StreamSession("stream.session"),
     PlatformAdapter("platform.adapter"),
 }
 

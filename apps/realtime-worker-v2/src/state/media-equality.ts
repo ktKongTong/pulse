@@ -1,4 +1,4 @@
-import type { ClientMediaNowPlaying, DeviceStreamState } from "@pulse/v2-realtime-protocol";
+import type { ClientMediaNowPlaying, DeviceStreamState } from "@ktfun/pulse-protocol";
 import type { DeviceMediaConnection, MediaStoredState } from "./media";
 
 export function mediaStateEqual(left: MediaStoredState, right: MediaStoredState) {

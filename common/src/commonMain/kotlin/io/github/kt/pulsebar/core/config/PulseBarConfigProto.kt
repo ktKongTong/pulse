@@ -21,7 +21,7 @@ internal data class PulseBarConfigProto(
     val appPollingMillis: Int = 500,
     val pagePollingMillis: Int = 2_000,
     val mediaPollingMillis: Int = 500,
-    val allowWebInteractions: Boolean = true,
+    val allowWebInteractions: Boolean = false,
     val interactionExecutionMode: InteractionExecutionModeProto = InteractionExecutionModeProto.CONFIRM,
     val interactionPlaybackMode: InteractionPlaybackModeProto = InteractionPlaybackModeProto.PLAY_NEXT,
 ) {

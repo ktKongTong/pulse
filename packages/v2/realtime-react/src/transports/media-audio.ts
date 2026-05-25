@@ -1,4 +1,5 @@
-import type { ClientMediaAudioChunkFrame } from "@pulse/v2-realtime-protocol";
+'use client'
+import type { ClientMediaAudioChunkFrame } from "@ktfun/pulse-protocol";
 import type { ClientAudioChunk, StreamRuntimeState } from "../types";
 
 export function validChunkForStream(

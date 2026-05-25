@@ -1,28 +1,28 @@
 package io.github.kt.pulsebar.core.devicev2
 
-import io.github.kt.pulsebar.core.livelisten.LiveListenCaptureRuntime
-import io.github.kt.pulsebar.core.livelisten.LiveListenMediaPermission
-import io.github.kt.pulsebar.core.livelisten.LiveListenNativeMediaState
-import io.github.kt.pulsebar.core.livelisten.LiveListenPlaybackWire
-import io.github.kt.pulsebar.core.livelisten.LiveListenStats
+import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
+import io.github.kt.pulsebar.core.stream.StreamMediaPermission
+import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
+import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
+import io.github.kt.pulsebar.core.stream.StreamStats
 
-internal fun defaultMediaState() = LiveListenNativeMediaState(
-    permission = LiveListenMediaPermission.ALLOW,
-    playback = LiveListenPlaybackWire.PAUSED,
-    capture = LiveListenCaptureRuntime.NO_CAPTURE,
+internal fun defaultMediaState() = StreamNativeMediaState(
+    permission = StreamMediaPermission.ALLOW,
+    playback = StreamPlaybackWire.PAUSED,
+    capture = StreamCaptureRuntime.NO_CAPTURE,
 )
 
-internal fun DeviceV2Client.connectingStats(stats: LiveListenStats): LiveListenStats =
+internal fun DeviceV2Client.connectingStats(stats: StreamStats): StreamStats =
     stats.copy(
-        connectionState = if (reconnectAttempt == 0) LiveListenStats.ConnectionState.Connecting
-        else LiveListenStats.ConnectionState.Reconnecting,
+        connectionState = if (reconnectAttempt == 0) StreamStats.ConnectionState.Connecting
+        else StreamStats.ConnectionState.Reconnecting,
         lastErrorMessage = null,
         statusText = "Connecting to device v2 server...",
     )
 
-internal fun DeviceV2Client.connectedStats(stats: LiveListenStats, url: String): LiveListenStats =
+internal fun DeviceV2Client.connectedStats(stats: StreamStats, url: String): StreamStats =
     stats.copy(
-        connectionState = LiveListenStats.ConnectionState.Connected,
+        connectionState = StreamStats.ConnectionState.Connected,
         webSocketUrl = url,
         lastConnectedAtMillis = deviceV2NowMillis(),
         reconnectCount = stats.reconnectCount + if (reconnectAttempt > 0) 1 else 0,
@@ -32,9 +32,9 @@ internal fun DeviceV2Client.connectedStats(stats: LiveListenStats, url: String):
         lastErrorMessage = null,
     )
 
-internal fun DeviceV2Client.disconnectedStats(stats: LiveListenStats, reason: String): LiveListenStats =
+internal fun DeviceV2Client.disconnectedStats(stats: StreamStats, reason: String): StreamStats =
     stats.copy(
-        connectionState = LiveListenStats.ConnectionState.Reconnecting,
+        connectionState = StreamStats.ConnectionState.Reconnecting,
         lastDisconnectedAtMillis = deviceV2NowMillis(),
         lastErrorMessage = reason,
         statusText = "Disconnected: $reason",
@@ -42,9 +42,21 @@ internal fun DeviceV2Client.disconnectedStats(stats: LiveListenStats, reason: St
         captureRequested = false,
     )
 
-internal fun stoppedStats(stats: LiveListenStats): LiveListenStats =
+internal fun failedStats(stats: StreamStats, reason: String): StreamStats =
     stats.copy(
-        connectionState = LiveListenStats.ConnectionState.Stopped,
+        connectionState = StreamStats.ConnectionState.Failed,
+        lastDisconnectedAtMillis = deviceV2NowMillis(),
+        lastErrorMessage = reason,
+        reconnectDelaySeconds = null,
+        nextReconnectAtMillis = null,
+        statusText = "Failed: $reason",
+        isSending = false,
+        captureRequested = false,
+    )
+
+internal fun stoppedStats(stats: StreamStats): StreamStats =
+    stats.copy(
+        connectionState = StreamStats.ConnectionState.Stopped,
         statusText = "Device v2 client stopped",
         isSending = false,
         captureRequested = false,
@@ -58,7 +70,7 @@ internal suspend fun DeviceV2Client.sleepBeforeReconnect() {
     val seconds = reconnectDelaySeconds(reconnectAttempt)
     updateStats {
         it.copy(
-            connectionState = LiveListenStats.ConnectionState.Reconnecting,
+            connectionState = StreamStats.ConnectionState.Reconnecting,
             reconnectAttempt = reconnectAttempt,
             reconnectDelaySeconds = seconds.toDouble(),
             nextReconnectAtMillis = deviceV2NowMillis() + seconds * 1_000L,

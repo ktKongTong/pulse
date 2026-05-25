@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { CLIENT_PAGE_WS_PROTOCOL, ClientPageClientFrameSchema, type ClientPageHelloFrame, type ClientPageUpdateFrame } from "@pulse/v2-realtime-protocol";
+import { CLIENT_PAGE_WS_PROTOCOL, ClientPageClientFrameSchema, type ClientPageHelloFrame, type ClientPageUpdateFrame } from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
 import { globalStub } from "../env";
 import { aggregatePage, buildPageSnapshot, type TabPageState } from "../state/client";

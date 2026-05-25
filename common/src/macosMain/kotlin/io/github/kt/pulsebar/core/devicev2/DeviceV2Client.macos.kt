@@ -1,13 +1,13 @@
 package io.github.kt.pulsebar.core.devicev2
 
-import io.github.kt.pulsebar.core.livelisten.LiveListenCaptureRuntime
-import io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig
-import io.github.kt.pulsebar.core.livelisten.LiveListenMedia
-import io.github.kt.pulsebar.core.livelisten.LiveListenMediaPermission
-import io.github.kt.pulsebar.core.livelisten.LiveListenNativeMediaState
-import io.github.kt.pulsebar.core.livelisten.LiveListenPlaybackWire
-import io.github.kt.pulsebar.core.livelisten.LiveListenStats
-import io.github.kt.pulsebar.core.livelisten.LiveListenStopReason
+import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
+import io.github.kt.pulsebar.core.stream.StreamConnectionConfig
+import io.github.kt.pulsebar.core.stream.StreamMedia
+import io.github.kt.pulsebar.core.stream.StreamMediaPermission
+import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
+import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
+import io.github.kt.pulsebar.core.stream.StreamStats
+import io.github.kt.pulsebar.core.stream.StreamStopReason
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
 import io.ktor.client.HttpClient
@@ -22,6 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.onFailure
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,24 +30,26 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 internal class DeviceV2Client(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
-    internal val log = logger(PulseLogCategory.LiveListenSession)
+    internal val log = logger(PulseLogCategory.StreamSession)
     internal val http = HttpClient(Darwin) { install(WebSockets) }
     private val mutex = Mutex()
     internal val pcmChannel = Channel<ByteArray>(capacity = 256)
     internal val mediaOutbound = Channel<String>(capacity = 64)
-    private val _stats = MutableStateFlow(LiveListenStats())
-    val stats: StateFlow<LiveListenStats> = _stats.asStateFlow()
+    internal val presenceOutbound = Channel<Unit>(capacity = Channel.CONFLATED)
+    private val _stats = MutableStateFlow(StreamStats())
+    val stats: StateFlow<StreamStats> = _stats.asStateFlow()
 
     private var connectionJob: Job? = null
-    private var currentConfig: LiveListenConnectionConfig? = null
+    private var currentConfig: StreamConnectionConfig? = null
     internal var mediaState = defaultMediaState()
-    internal var currentMedia: LiveListenMedia? = null
+    internal var currentMedia: StreamMedia? = null
     internal var reconnectAttempt = 0
     internal var pcmBuffer = ByteArray(0)
     internal var activeStream: DeviceV2ActiveStream? = null
@@ -55,7 +58,7 @@ internal class DeviceV2Client(
     internal var chunkDurationMs = 500
     internal var chunkBytes = deviceV2ChunkBytesFor(chunkDurationMs, sampleRate, channels)
 
-    fun start(config: LiveListenConnectionConfig) {
+    fun start(config: StreamConnectionConfig) {
         scope.launch {
             mutex.withLock {
                 if (currentConfig == config && connectionJob?.isActive == true) return@withLock
@@ -93,17 +96,21 @@ internal class DeviceV2Client(
         }
     }
 
-    fun updateMediaState(next: LiveListenNativeMediaState) {
+    fun updateMediaState(next: StreamNativeMediaState) {
         mediaState = next
         mediaOutbound.trySend(currentStreamStateFrame())
     }
 
-    fun updateMedia(next: LiveListenMedia?) {
+    fun updateMedia(next: StreamMedia?) {
         currentMedia = next
         if (next != null) mediaOutbound.trySend(currentMediaFrame(next))
     }
 
-    fun emitLocalStop(reason: LiveListenStopReason) {
+    fun publishPresence() {
+        presenceOutbound.trySend(Unit)
+    }
+
+    fun emitLocalStop(reason: StreamStopReason) {
         val stream = activeStream ?: return
         activeStream = null
         pcmBuffer = ByteArray(0)
@@ -121,11 +128,11 @@ internal class DeviceV2Client(
         log.i { "local.stop reason=$reason streamId=${stream.streamId}" }
     }
 
-    internal fun updateStats(transform: (LiveListenStats) -> LiveListenStats) {
+    internal fun updateStats(transform: (StreamStats) -> StreamStats) {
         _stats.update(transform)
     }
 
-    private suspend fun runLoop(config: LiveListenConnectionConfig) {
+    private suspend fun runLoop(config: StreamConnectionConfig) {
         while (scope.isActive) {
             if (reconnectAttempt > 0) sleepBeforeReconnect()
             _stats.update { connectingStats(it) }
@@ -136,22 +143,59 @@ internal class DeviceV2Client(
             if (err != null) log.w(err) { "device.v2.failed reason=$reason" }
             activeStream = null
             pcmBuffer = ByteArray(0)
-            _stats.update { disconnectedStats(it, reason) }
             if (!scope.isActive) return
+            if (shouldFailPermanently(reason, reconnectAttempt)) {
+                _stats.update { failedStats(it, reason) }
+                return
+            }
+            _stats.update { disconnectedStats(it, reason) }
             reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(6)
         }
     }
 
-    private suspend fun runSession(config: LiveListenConnectionConfig) {
+    private suspend fun runSession(config: StreamConnectionConfig) {
         val common = openCommon(config)
         val deviceSessionId = readCommonAck(common)
         coroutineScope {
             val commonInboundJob = launch { runCommonInbound(common) }
-            val presenceJob = launch { runPresence(common) }
-            val mediaJob = launch { runMedia(config, deviceSessionId) }
-            mediaJob.join()
-            presenceJob.cancel()
-            commonInboundJob.cancel()
+            var presenceJob: Job? = null
+            val mediaReady = Channel<Unit>(capacity = 1)
+            val mediaJob = launch {
+                runMedia(config, deviceSessionId) {
+                    mediaReady.trySend(Unit).onFailure {
+                        log.w { "device.v2.media.ready signal dropped" }
+                    }
+                }
+            }
+            try {
+                select<Unit> {
+                    commonInboundJob.onJoin { }
+                    mediaReady.onReceive {
+                        presenceJob = launch { runPresence(common) }
+                        publishPresence()
+                    }
+                    mediaJob.onJoin { }
+                }
+                if (presenceJob != null) {
+                    select<Unit> {
+                        commonInboundJob.onJoin { }
+                        mediaJob.onJoin { }
+                    }
+                }
+            } finally {
+                mediaReady.close()
+                presenceJob?.cancelAndJoin()
+                commonInboundJob.cancelAndJoin()
+                mediaJob.cancelAndJoin()
+            }
         }
+    }
+
+    private fun shouldFailPermanently(reason: String, attempt: Int): Boolean {
+        if (attempt >= 6) return true
+        return reason.contains("invalid_session", ignoreCase = true) ||
+            reason.contains("hello rejected", ignoreCase = true) ||
+            reason.contains("unsupported", ignoreCase = true) ||
+            reason.contains("policy", ignoreCase = true)
     }
 }

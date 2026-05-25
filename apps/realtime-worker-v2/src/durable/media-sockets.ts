@@ -1,4 +1,4 @@
-import { CLIENT_MEDIA_WS_PROTOCOL, DEVICE_MEDIA_PROTOCOL } from "@pulse/v2-realtime-protocol";
+import { CLIENT_MEDIA_WS_PROTOCOL, DEVICE_MEDIA_PROTOCOL } from "@ktfun/pulse-protocol";
 import { mediaStateFrame } from "../state/media";
 import { tabKey } from "../state/keys";
 import { nowIso } from "../utils/time";

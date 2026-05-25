@@ -1,10 +1,10 @@
 package io.github.kt.pulsebar.core.devicev2
 
-import io.github.kt.pulsebar.core.livelisten.LiveListenCaptureRuntime
-import io.github.kt.pulsebar.core.livelisten.LiveListenMedia
-import io.github.kt.pulsebar.core.livelisten.LiveListenMediaPermission
-import io.github.kt.pulsebar.core.livelisten.LiveListenNativeMediaState
-import io.github.kt.pulsebar.core.livelisten.LiveListenPlaybackWire
+import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
+import io.github.kt.pulsebar.core.stream.StreamMedia
+import io.github.kt.pulsebar.core.stream.StreamMediaPermission
+import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
+import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -58,17 +58,17 @@ internal enum class DeviceV2RejectedReason {
     @SerialName("native_error") NATIVE_ERROR,
 }
 
-internal fun LiveListenNativeMediaState.toDeviceV2StreamState(format: DeviceV2StreamFormat): DeviceV2StreamState =
+internal fun StreamNativeMediaState.toDeviceV2StreamState(format: DeviceV2StreamFormat): DeviceV2StreamState =
     DeviceV2StreamState(
-        permission = if (permission == LiveListenMediaPermission.ALLOW) "allow" else "disallow",
-        playback = if (playback == LiveListenPlaybackWire.PLAYING) "playing" else "paused",
-        capture = if (capture == LiveListenCaptureRuntime.CAPTURING) "capturing" else "no-capture",
+        permission = if (permission == StreamMediaPermission.ALLOW) "allow" else "disallow",
+        playback = if (playback == StreamPlaybackWire.PLAYING) "playing" else "paused",
+        capture = if (capture == StreamCaptureRuntime.CAPTURING) "capturing" else "no-capture",
         streamFormat = format,
         reason = reason?.serialName(),
         message = message,
     )
 
-internal fun LiveListenMedia.toDeviceV2MediaItem(): DeviceV2MediaItem =
+internal fun StreamMedia.toDeviceV2MediaItem(): DeviceV2MediaItem =
     DeviceV2MediaItem(
         provider = providerId,
         providerId = providerId,
@@ -82,16 +82,16 @@ internal fun LiveListenMedia.toDeviceV2MediaItem(): DeviceV2MediaItem =
         linkUrl = linkUrl,
         progressSeconds = progressSeconds.takeIf { it >= 0.0 },
         durationSeconds = durationSeconds,
-        playbackState = if (playbackState == LiveListenPlaybackWire.PLAYING) "playing" else "paused",
+        playbackState = if (playbackState == StreamPlaybackWire.PLAYING) "playing" else "paused",
     )
 
-private fun io.github.kt.pulsebar.core.livelisten.LiveListenBlockedReason.serialName(): String = when (this) {
-    io.github.kt.pulsebar.core.livelisten.LiveListenBlockedReason.NO_PLAYABLE_MEDIA -> "no_playable_media"
-    io.github.kt.pulsebar.core.livelisten.LiveListenBlockedReason.CAPTURE_PERMISSION_MISSING -> "capture_permission_missing"
-    io.github.kt.pulsebar.core.livelisten.LiveListenBlockedReason.CAPTURE_PERMISSION_REVOKED -> "capture_permission_revoked"
-    io.github.kt.pulsebar.core.livelisten.LiveListenBlockedReason.CAPTURE_SOURCE_UNAVAILABLE -> "capture_source_unavailable"
-    io.github.kt.pulsebar.core.livelisten.LiveListenBlockedReason.CAPTURE_SOURCE_LOST -> "capture_source_lost"
-    io.github.kt.pulsebar.core.livelisten.LiveListenBlockedReason.UNSUPPORTED_APP -> "unsupported_app"
-    io.github.kt.pulsebar.core.livelisten.LiveListenBlockedReason.NATIVE_ERROR -> "native_error"
+private fun io.github.kt.pulsebar.core.stream.StreamBlockedReason.serialName(): String = when (this) {
+    io.github.kt.pulsebar.core.stream.StreamBlockedReason.NO_PLAYABLE_MEDIA -> "no_playable_media"
+    io.github.kt.pulsebar.core.stream.StreamBlockedReason.CAPTURE_PERMISSION_MISSING -> "capture_permission_missing"
+    io.github.kt.pulsebar.core.stream.StreamBlockedReason.CAPTURE_PERMISSION_REVOKED -> "capture_permission_revoked"
+    io.github.kt.pulsebar.core.stream.StreamBlockedReason.CAPTURE_SOURCE_UNAVAILABLE -> "capture_source_unavailable"
+    io.github.kt.pulsebar.core.stream.StreamBlockedReason.CAPTURE_SOURCE_LOST -> "capture_source_lost"
+    io.github.kt.pulsebar.core.stream.StreamBlockedReason.UNSUPPORTED_APP -> "unsupported_app"
+    io.github.kt.pulsebar.core.stream.StreamBlockedReason.NATIVE_ERROR -> "native_error"
     else -> null
 } ?: "native_error"

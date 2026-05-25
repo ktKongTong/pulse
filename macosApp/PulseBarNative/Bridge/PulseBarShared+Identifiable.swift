@@ -21,8 +21,8 @@ extension PulseBarInteractionItem: @retroactive Identifiable {
 
 extension PulseBarEndpointSyncState: @retroactive Identifiable {}
 extension PulseBarEndpointDraft: @retroactive Identifiable {}
-extension LiveListenEndpointResolved: @retroactive Identifiable {}
+extension StreamEndpointResolved: @retroactive Identifiable {}
 
-extension PulseBarLiveListenStats: @retroactive @unchecked Sendable {}
+extension PulseBarStreamStats: @retroactive @unchecked Sendable {}
 extension PulseBarMedia: @retroactive @unchecked Sendable {}
 extension PulseBarSnapshot: @retroactive @unchecked Sendable {}

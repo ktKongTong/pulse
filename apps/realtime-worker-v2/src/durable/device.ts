@@ -3,7 +3,7 @@ import {
   DEVICE_CONNECTION_PROTOCOL,
   DeviceCommonClientFrameSchema,
   type DeviceCommonConnectionHelloFrame,
-} from "@pulse/v2-realtime-protocol";
+} from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
 import { globalStub } from "../env";
 import { parseFrame } from "../utils/frame";

@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { CLIENT_MEDIA_WS_PROTOCOL, DeviceMediaClientFrameSchema } from "@pulse/v2-realtime-protocol";
+import { CLIENT_MEDIA_WS_PROTOCOL, DeviceMediaClientFrameSchema } from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
 import { emptyMediaState, type AudioChunkMeta, type BufferedAudioChunk, type ClientAttachment, type DeviceAttachment, type MediaStoredState, type PendingDeviceAttachment } from "../state/media";
 import { tabKey } from "../state/keys";

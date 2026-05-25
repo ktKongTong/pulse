@@ -1,9 +1,10 @@
+'use client'
 import {
   CLIENT_PAGE_WS_PROTOCOL,
   ClientPageServerFrameSchema,
   type ClientPageMetadata,
   type ClientPageSnapshot,
-} from "@pulse/v2-realtime-protocol";
+} from "@ktfun/pulse-protocol";
 import { nextConnection } from "../connection";
 import { resolveSdkVersion } from "../session";
 import type { RealtimeV2StateStore } from "../state";

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { CLIENT_COMMON_WS_PROTOCOL } from "@pulse/v2-realtime-protocol";
+import { CLIENT_COMMON_WS_PROTOCOL } from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
 import { globalStub, mediaStub, pageStub } from "../env";
 import { badRequest, json } from "../utils/http";

@@ -1,6 +1,6 @@
 package io.github.kt.pulsebar.core.devicev2
 
-import io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig
+import io.github.kt.pulsebar.core.stream.StreamConnectionConfig
 import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.header
 import io.ktor.websocket.Frame
@@ -12,7 +12,11 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-internal suspend fun DeviceV2Client.runMedia(config: LiveListenConnectionConfig, deviceSessionId: String) {
+internal suspend fun DeviceV2Client.runMedia(
+    config: StreamConnectionConfig,
+    deviceSessionId: String,
+    onReady: suspend () -> Unit = {},
+) {
     val url = deviceV2MediaUrl(config, deviceSessionId)
     log.i { "device.v2.media.open url=$url" }
     val session = http.webSocketSession(urlString = url.toString()) {
@@ -21,8 +25,11 @@ internal suspend fun DeviceV2Client.runMedia(config: LiveListenConnectionConfig,
     log.i { "device.v2.media.connected url=$url" }
     session.send(Frame.Text(deviceV2MediaHello(chunkDurationMs)))
     readMediaAck(session)
+    updateStats { connectedStats(it, url.toString()) }
+    reconnectAttempt = 0
     session.send(Frame.Text(currentStreamStateFrame()))
     currentMedia?.let { session.send(Frame.Text(currentMediaFrame(it))) }
+    onReady()
     coroutineScope {
         val inbound = launch { runMediaInbound(session) }
         val pcm = launch { runPcmBatcher(session) }
@@ -63,7 +70,7 @@ internal fun DeviceV2Client.currentStreamStateFrame(): String =
         ),
     )
 
-internal fun DeviceV2Client.currentMediaFrame(media: io.github.kt.pulsebar.core.livelisten.LiveListenMedia): String =
+internal fun DeviceV2Client.currentMediaFrame(media: io.github.kt.pulsebar.core.stream.StreamMedia): String =
     deviceV2MediaUpdateFrame(
         deviceV2NowIso().let { now ->
         DeviceV2MediaUpdatePayload(

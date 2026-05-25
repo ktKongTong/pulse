@@ -1,19 +1,19 @@
 import { memo, useMemo, type ReactNode } from "react";
 import { MusicIcon } from "lucide-react";
-import { useClientMediaDisplayState } from "@pulse/v2-realtime-react";
 import {
   mapCurrentMedia,
   mediaTitle,
   resolveHeading,
+  useClientMediaDisplayState,
+  useMediaProgress,
   type DisplayMedia,
   type MediaStatus,
-} from "../../hooks/media-model";
+} from "@ktfun/pulse";
 import {
   buildDefaultMediaLyricsQuery,
   resolveLyricCue,
   useMediaLyrics,
 } from "./lyric/lyrics";
-import { useMediaProgress } from "@/hooks/use-media-progress";
 import { cn } from "../../lib/utils";
 import { StreamControl } from "./live-listen-control";
 import { AnimatedLyricStack } from "./lyric/animated-lyric";

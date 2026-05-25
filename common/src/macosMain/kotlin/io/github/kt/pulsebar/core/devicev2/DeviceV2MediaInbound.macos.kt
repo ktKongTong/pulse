@@ -1,8 +1,8 @@
 package io.github.kt.pulsebar.core.devicev2
 
-import io.github.kt.pulsebar.core.livelisten.LiveListenCaptureRuntime
-import io.github.kt.pulsebar.core.livelisten.LiveListenMediaPermission
-import io.github.kt.pulsebar.core.livelisten.LiveListenPlaybackWire
+import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
+import io.github.kt.pulsebar.core.stream.StreamMediaPermission
+import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
 import io.ktor.client.plugins.websocket.ClientWebSocketSession
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readReason
@@ -108,8 +108,8 @@ private fun rejectedAck(commandId: String, commandType: String, reason: DeviceV2
     )
 
 private fun DeviceV2Client.rejectionReason(): DeviceV2RejectedReason? = when {
-    mediaState.permission != LiveListenMediaPermission.ALLOW -> DeviceV2RejectedReason.CAPTURE_PERMISSION_MISSING
-    mediaState.playback != LiveListenPlaybackWire.PLAYING -> DeviceV2RejectedReason.NO_PLAYABLE_MEDIA
-    mediaState.capture == LiveListenCaptureRuntime.CAPTURING -> null
+    mediaState.permission != StreamMediaPermission.ALLOW -> DeviceV2RejectedReason.CAPTURE_PERMISSION_MISSING
+    mediaState.playback != StreamPlaybackWire.PLAYING -> DeviceV2RejectedReason.NO_PLAYABLE_MEDIA
+    mediaState.capture == StreamCaptureRuntime.CAPTURING -> null
     else -> null
 }

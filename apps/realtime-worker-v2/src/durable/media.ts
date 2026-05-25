@@ -5,7 +5,7 @@ import {
   DeviceMediaClientFrameSchema,
   type ClientMediaHelloFrame,
   type DeviceMediaConnectionHelloFrame,
-} from "@pulse/v2-realtime-protocol";
+} from "@ktfun/pulse-protocol";
 import { deviceStub, globalStub } from "../env";
 import {
   MediaBase,

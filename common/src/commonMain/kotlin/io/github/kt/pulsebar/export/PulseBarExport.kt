@@ -222,7 +222,7 @@ class PulseBarSyncState(
     val endpoints: List<PulseBarEndpointSyncState>
 )
 
-enum class PulseBarLiveListenConnectionState {
+enum class PulseBarStreamConnectionState {
     IDLE,
     CONNECTING,
     CONNECTED,
@@ -233,12 +233,12 @@ enum class PulseBarLiveListenConnectionState {
 }
 
 /**
- * Swift-export-friendly mirror of the shared `LiveListenStats`. All fields
+ * Swift-export-friendly mirror of the shared `StreamStats`. All fields
  * use primitives so the Swift layer doesn't have to juggle `KotlinLong?`
  * boxes — `0L`/`-1L` act as sentinels where absence matters.
  */
-class PulseBarLiveListenStats(
-    val connectionState: PulseBarLiveListenConnectionState,
+class PulseBarStreamStats(
+    val connectionState: PulseBarStreamConnectionState,
     val connectionStateName: String,
     val webSocketUrl: String?,
     val lastConnectedAtMillis: Long,        // 0 == never
@@ -275,44 +275,44 @@ class PulseBarLiveListenStats(
  * Send-bitrate, null when the client hasn't measured yet. `0.0` is the
  * wire sentinel for "unknown".
  */
-fun liveListenSendBitrateKbpsOrNull(stats: PulseBarLiveListenStats): Double? =
+fun streamSendBitrateKbpsOrNull(stats: PulseBarStreamStats): Double? =
     if (stats.sendBitrateKbps > 0.0) stats.sendBitrateKbps else null
 
 /** Human `Xs ago` / `now` age for the stat's last-send timestamp. */
-fun liveListenLastSendAge(stats: PulseBarLiveListenStats, nowMillis: Long): String =
+fun streamLastSendAge(stats: PulseBarStreamStats, nowMillis: Long): String =
     io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatAge(
         if (stats.lastSendAtMillis > 0L) stats.lastSendAtMillis else null, nowMillis,
     )
 
-fun liveListenLastConnectedAge(stats: PulseBarLiveListenStats, nowMillis: Long): String =
+fun streamLastConnectedAge(stats: PulseBarStreamStats, nowMillis: Long): String =
     io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatAge(
         if (stats.lastConnectedAtMillis > 0L) stats.lastConnectedAtMillis else null, nowMillis,
     )
 
-fun liveListenLastDisconnectedAge(stats: PulseBarLiveListenStats, nowMillis: Long): String =
+fun streamLastDisconnectedAge(stats: PulseBarStreamStats, nowMillis: Long): String =
     io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatAge(
         if (stats.lastDisconnectedAtMillis > 0L) stats.lastDisconnectedAtMillis else null, nowMillis,
     )
 
-fun liveListenQueueRange(stats: PulseBarLiveListenStats): String =
+fun streamQueueRange(stats: PulseBarStreamStats): String =
     io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatQueueRange(
         stats.queuedFirstSequence, stats.queuedLastSequence,
     )
 
-fun liveListenSendBitrateDisplay(stats: PulseBarLiveListenStats): String =
+fun streamSendBitrateDisplay(stats: PulseBarStreamStats): String =
     io.github.kt.pulsebar.core.presentation.PulseBarFormatters.formatOptionalDouble(
-        liveListenSendBitrateKbpsOrNull(stats),
+        streamSendBitrateKbpsOrNull(stats),
     )
 
 /**
- * Factory for [PulseBarLiveListenStats] default instances. Lets the Swift
+ * Factory for [PulseBarStreamStats] default instances. Lets the Swift
  * shell avoid constructing a 30-field class inline for the "no stats yet"
  * placeholder state.
  */
-object PulseBarLiveListenStatsFactory {
-    fun idle(): PulseBarLiveListenStats = PulseBarLiveListenStats(
-        connectionState = PulseBarLiveListenConnectionState.IDLE,
-        connectionStateName = PulseBarLiveListenConnectionState.IDLE.name,
+object PulseBarStreamStatsFactory {
+    fun idle(): PulseBarStreamStats = PulseBarStreamStats(
+        connectionState = PulseBarStreamConnectionState.IDLE,
+        connectionStateName = PulseBarStreamConnectionState.IDLE.name,
         webSocketUrl = null,
         lastConnectedAtMillis = 0L,
         lastDisconnectedAtMillis = 0L,
@@ -339,7 +339,7 @@ object PulseBarLiveListenStatsFactory {
         sendBitrateKbps = 0.0,
         lastChunkBytes = 0L,
         chunkDurationMs = 500,
-        statusText = "Live Listen client idle",
+        statusText = "Stream client idle",
         captureRequested = false,
     )
 }
@@ -361,11 +361,10 @@ expect class PulseBarBridge() {
     /**
      * Advance the bridge one orchestration step: probe the frontmost app +
      * media, update usage counters, hand the resulting snapshot to the
-     * reporter, opportunistically drain pending replays. Safe to call
-     * frequently; respects the change-stability and heartbeat windows.
+     * reporter, opportunistically drain pending replays.
      *
-     * Called by Kotlin's internal tick loop. Platforms should prefer
-     * [forceTick] for user-driven events instead of calling this directly.
+     * Intended for external platform events such as frontmost-app activation.
+     * Do not call this from a timer; use explicit system/user events.
      */
     fun tick()
 
@@ -381,8 +380,8 @@ expect class PulseBarBridge() {
      * underlying Kotlin coroutine is cancelled automatically when the
      * enclosing Swift `Task` is cancelled.
      *
-     * Emits the current cached value on subscribe and every time the
-     * bridge's tick loop publishes a new one.
+     * Emits the current cached value on subscribe and every time an explicit
+     * bridge event publishes a new one.
      */
     val menuState: Flow<PulseBarMenuState>
 
@@ -408,11 +407,11 @@ expect class PulseBarBridge() {
     val todayStats: Flow<PulseBarTodayStats>
 
     /**
-     * Start (or restart) the Live Listen device session against the given
+     * Start (or restart) the Stream device session against the given
      * endpoint. Safe to call repeatedly: if a session is already running
      * with the same parameters this is a no-op.
      *
-     * @param roomId room the device should join (typically `live-listen:<owner>`)
+     * @param roomId room the device should join (typically `stream:<owner>`)
      * @param deviceId stable identifier for this device (typically `owner`)
      * @param baseUrl server base URL (e.g. `https://pulse.example.com`)
      * @param workspaceId workspace the endpoint belongs to
@@ -421,7 +420,7 @@ expect class PulseBarBridge() {
      * @param channels captured PCM channel count (hint for WAV framing; defaults to 2)
      * @param chunkDurationMs audio chunk duration in milliseconds
      */
-    fun startLiveListen(
+    fun startStream(
         roomId: String,
         deviceId: String,
         baseUrl: String,
@@ -432,29 +431,29 @@ expect class PulseBarBridge() {
         chunkDurationMs: Int,
     )
 
-    /** Stop the Live Listen session. Cancels reconnects and closes the socket. */
-    fun stopLiveListen()
+    /** Stop the Stream session. Cancels reconnects and closes the socket. */
+    fun stopStream()
 
-    /** Stop the active media stream without closing the Live Listen WebSocket. */
-    fun emitLiveListenLocalStop()
+    /** Stop the active media stream without closing the Stream WebSocket. */
+    fun emitStreamLocalStop()
 
     /**
-     * Hand a PCM16 chunk (little-endian, interleaved) to the Live Listen
+     * Hand a PCM16 chunk (little-endian, interleaved) to the Stream
      * client. The Swift CoreAudio callback collects samples and forwards
      * them as a Base64-encoded string — the ByteArray construction path
      * through Swift Export is currently limited to `fatalError()`
      * initializers, so a primitive-typed envelope is used at the boundary.
      */
-    fun submitLiveListenPcmBase64(chunkBase64: String)
+    fun submitStreamPcmBase64(chunkBase64: String)
 
     /**
      * Forward the owner-side media state (is media playing? permission?
      * capture runtime?) to the server. `playbackPlaying = true` means
      * the owner's app is currently playing audio; `permissionAllow = true`
-     * means the owner has enabled Live Listen; `captureRunning = true` means
+     * means the owner has enabled Stream; `captureRunning = true` means
      * the CoreAudio tap is actively producing samples.
      */
-    fun updateLiveListenMediaState(
+    fun updateStreamMediaState(
         permissionAllow: Boolean,
         playbackPlaying: Boolean,
         captureRunning: Boolean,
@@ -462,11 +461,11 @@ expect class PulseBarBridge() {
 
     /**
      * Forward the currently-playing track metadata to the server so it can
-     * drive the Live Listen UI (title, artist, album art...). Pass all-null
+     * drive the Stream UI (title, artist, album art...). Pass all-null
      * to clear; pass an empty trackId when unknown. Safe to call whenever a
      * new track starts — duplicate values are de-duped by the server.
      */
-    fun updateLiveListenMedia(
+    fun updateStreamMedia(
         providerId: String?,
         trackId: String?,
         title: String?,
@@ -479,9 +478,9 @@ expect class PulseBarBridge() {
     )
 
     /**
-     * Live Listen telemetry stream (connection state, queue depth,
+     * Stream telemetry stream (connection state, queue depth,
      * bitrate, errors). Emits the current snapshot on subscribe and every
      * time something changes.
      */
-    val liveListenStats: Flow<PulseBarLiveListenStats>
+    val streamStats: Flow<PulseBarStreamStats>
 }

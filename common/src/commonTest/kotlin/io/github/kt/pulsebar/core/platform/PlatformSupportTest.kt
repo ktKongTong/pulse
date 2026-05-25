@@ -22,10 +22,14 @@ class PlatformSupportTest {
         )
     }
 
-    @Test fun stripsMetaAndLiveListen() {
+    @Test fun stripsMetaAndStream() {
         assertEquals(
             "http://localhost:8900",
             normalizePulseBaseUrl("http://localhost:8900/api/v1/meta"),
+        )
+        assertEquals(
+            "http://localhost:8900",
+            normalizePulseBaseUrl("http://localhost:8900/api/v1/stream"),
         )
         assertEquals(
             "http://localhost:8900",

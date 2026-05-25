@@ -6,14 +6,14 @@ import io.github.kt.pulsebar.core.config.pulseBarConfigPath
 import io.github.kt.pulsebar.core.config.toExport
 import io.github.kt.pulsebar.core.config.toProto
 import io.github.kt.pulsebar.core.devicev2.DeviceV2Client
-import io.github.kt.pulsebar.core.livelisten.LiveListenCaptureRuntime
-import io.github.kt.pulsebar.core.livelisten.LiveListenConnectionConfig
-import io.github.kt.pulsebar.core.livelisten.LiveListenMedia
-import io.github.kt.pulsebar.core.livelisten.LiveListenMediaPermission
-import io.github.kt.pulsebar.core.livelisten.LiveListenNativeMediaState
-import io.github.kt.pulsebar.core.livelisten.LiveListenPlaybackWire
-import io.github.kt.pulsebar.core.livelisten.LiveListenStats
-import io.github.kt.pulsebar.core.livelisten.LiveListenStopReason
+import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
+import io.github.kt.pulsebar.core.stream.StreamConnectionConfig
+import io.github.kt.pulsebar.core.stream.StreamMedia
+import io.github.kt.pulsebar.core.stream.StreamMediaPermission
+import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
+import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
+import io.github.kt.pulsebar.core.stream.StreamStats
+import io.github.kt.pulsebar.core.stream.StreamStopReason
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
 import kotlin.io.encoding.Base64
@@ -32,9 +32,7 @@ import io.ktor.http.contentType
 import io.ktor.http.content.TextContent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,7 +41,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -93,6 +90,13 @@ private data class MediaProbeSpec(
     val parser: (List<String>) -> PulseBarMedia?
 )
 
+private fun emptyInteractionState() =
+    PulseBarInteractionState(
+        pendingCount = 0,
+        items = emptyList(),
+        lastStatus = "disabled",
+    )
+
 @OptIn(ExperimentalForeignApi::class)
 actual class PulseBarBridge actual constructor() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -102,7 +106,6 @@ actual class PulseBarBridge actual constructor() {
         path = pulseBarConfigPath(),
     )
     private val reporter = PulseBarEndpointReporter()
-    private val interactionClient: PulseBarInteractionClient
     private val mediaProbes by lazy {
         listOf(
             MediaProbeSpec(
@@ -138,19 +141,15 @@ actual class PulseBarBridge actual constructor() {
     private var pendingElapsedMillis: Long = 0L
 
     @Volatile private var latestMenuState: PulseBarMenuState = emptyMenuState()
-    @Volatile private var currentPollIntervalMillis: Long = DEFAULT_POLL_INTERVAL_MS
     private val menuStateFlow = MutableStateFlow(latestMenuState)
     private val syncStateFlow = MutableStateFlow<PulseBarSyncState?>(null)
-    private val interactionStateFlow = MutableStateFlow<PulseBarInteractionState?>(null)
-    private val liveListenClient = DeviceV2Client(scope = scope)
+    private val interactionStateFlow = MutableStateFlow(emptyInteractionState())
+    private val streamClient = DeviceV2Client(scope = scope)
     private val tickMutex = Mutex()
-    private var tickLoopJob: Job? = null
 
     init {
         val initial = currentConfig()
-        interactionClient = PulseBarInteractionClient(initial)
         reporter.updateConfig(initial)
-        currentPollIntervalMillis = resolvePollIntervalMs(initial)
         logger(PulseLogCategory.AppLifecycle).i {
             "bridge.initialized endpoints=${initial.endpoints.size} enabled=${initial.endpoints.count { it.enabled }}"
         }
@@ -159,24 +158,23 @@ actual class PulseBarBridge actual constructor() {
                 val export = proto.toExport()
                 reporter.updateConfig(export)
                 reporter.resetIfDisabled(export)
-                interactionClient.updateConfig(export)
-                currentPollIntervalMillis = resolvePollIntervalMs(export)
                 logger(PulseLogCategory.ConfigStore).d {
                     "config.observed endpoints=${export.endpoints.size}" +
                         " enabled=${export.endpoints.count { it.enabled }}" +
                         " disconnected=${export.endpoints.count { it.disconnected }}" +
-                        " pollMs=${currentPollIntervalMillis}"
+                        " eventDriven=true"
                 }
+                runCatching { runTick(forcePublish = true, forceReplay = false) }
+                    .onFailure { error ->
+                        logger(PulseLogCategory.StatsRefresh).w(error) { "config.tick.failed" }
+                    }
             }
         }
-        tickLoopJob = scope.launch {
-            while (isActive) {
-                runCatching { runTick(forcePublish = false, forceReplay = false) }
-                    .onFailure { error ->
-                        logger(PulseLogCategory.StatsRefresh).w(error) { "tick.failed" }
-                    }
-                delay(currentPollIntervalMillis)
-            }
+        scope.launch {
+            runCatching { runTick(forcePublish = true, forceReplay = false) }
+                .onFailure { error ->
+                    logger(PulseLogCategory.StatsRefresh).w(error) { "initial.tick.failed" }
+                }
         }
     }
 
@@ -188,18 +186,23 @@ actual class PulseBarBridge actual constructor() {
     actual fun readMenuState(): PulseBarMenuState = latestMenuState
 
     actual fun tick() {
-        scope.launch { runTick(forcePublish = false, forceReplay = false) }
+        scope.launch {
+            runTick(forcePublish = false, forceReplay = false)
+            streamClient.publishPresence()
+        }
     }
 
     actual fun forceTick() {
-        scope.launch { runTick(forcePublish = true, forceReplay = true) }
+        scope.launch {
+            runTick(forcePublish = true, forceReplay = true)
+            streamClient.publishPresence()
+        }
     }
 
     private suspend fun runTick(forcePublish: Boolean, forceReplay: Boolean) {
         tickMutex.withLock {
             val config = currentConfig()
             val snapshot = readSnapshot()
-            interactionClient.reconcilePlayback(snapshot.media)
             updateUsage(snapshot)
             reporter.capture(snapshot, config)
             if (forceReplay) {
@@ -227,7 +230,7 @@ actual class PulseBarBridge actual constructor() {
         latestMenuState = next
         menuStateFlow.value = next
         syncStateFlow.value = reporter.readSyncState(currentConfig())
-        interactionStateFlow.value = interactionClient.readState()
+        interactionStateFlow.value = emptyInteractionState()
     }
 
     actual val menuState: Flow<PulseBarMenuState> = menuStateFlow.asStateFlow()
@@ -239,7 +242,7 @@ actual class PulseBarBridge actual constructor() {
         syncStateFlow.asStateFlow().filterNotNull()
 
     actual val interactionState: Flow<PulseBarInteractionState> =
-        interactionStateFlow.asStateFlow().filterNotNull()
+        interactionStateFlow.asStateFlow()
 
     actual val todayStats: Flow<PulseBarTodayStats> = flow {
         val todayIso = todayKey()
@@ -259,7 +262,7 @@ actual class PulseBarBridge actual constructor() {
             }
     }
 
-    actual fun startLiveListen(
+    actual fun startStream(
         roomId: String,
         deviceId: String,
         baseUrl: String,
@@ -269,8 +272,8 @@ actual class PulseBarBridge actual constructor() {
         channels: Int,
         chunkDurationMs: Int,
     ) {
-        liveListenClient.start(
-            LiveListenConnectionConfig(
+        streamClient.start(
+            StreamConnectionConfig(
                 roomId = roomId,
                 deviceId = deviceId,
                 baseUrl = baseUrl,
@@ -283,37 +286,37 @@ actual class PulseBarBridge actual constructor() {
         )
     }
 
-    actual fun stopLiveListen() {
-        liveListenClient.stop()
+    actual fun stopStream() {
+        streamClient.stop()
     }
 
-    actual fun emitLiveListenLocalStop() {
-        liveListenClient.emitLocalStop(LiveListenStopReason.MANUAL_STOP)
+    actual fun emitStreamLocalStop() {
+        streamClient.emitLocalStop(StreamStopReason.MANUAL_STOP)
     }
 
-    actual fun submitLiveListenPcmBase64(chunkBase64: String) {
+    actual fun submitStreamPcmBase64(chunkBase64: String) {
         val decoded = decodeBase64OrNull(chunkBase64) ?: return
-        liveListenClient.submitPcm(decoded)
+        streamClient.submitPcm(decoded)
     }
 
-    actual fun updateLiveListenMediaState(
+    actual fun updateStreamMediaState(
         permissionAllow: Boolean,
         playbackPlaying: Boolean,
         captureRunning: Boolean,
     ) {
-        liveListenClient.updateMediaState(
-            LiveListenNativeMediaState(
-                permission = if (permissionAllow) LiveListenMediaPermission.ALLOW
-                else LiveListenMediaPermission.DISALLOW,
-                playback = if (playbackPlaying) LiveListenPlaybackWire.PLAYING
-                else LiveListenPlaybackWire.PAUSED,
-                capture = if (captureRunning) LiveListenCaptureRuntime.CAPTURING
-                else LiveListenCaptureRuntime.NO_CAPTURE,
+        streamClient.updateMediaState(
+            StreamNativeMediaState(
+                permission = if (permissionAllow) StreamMediaPermission.ALLOW
+                else StreamMediaPermission.DISALLOW,
+                playback = if (playbackPlaying) StreamPlaybackWire.PLAYING
+                else StreamPlaybackWire.PAUSED,
+                capture = if (captureRunning) StreamCaptureRuntime.CAPTURING
+                else StreamCaptureRuntime.NO_CAPTURE,
             ),
         )
     }
 
-    actual fun updateLiveListenMedia(
+    actual fun updateStreamMedia(
         providerId: String?,
         trackId: String?,
         title: String?,
@@ -327,11 +330,11 @@ actual class PulseBarBridge actual constructor() {
         val hasAnyField = sequenceOf(providerId, trackId, title, artist, album, artworkUrl)
             .any { !it.isNullOrBlank() } || durationSeconds > 0.0
         if (!hasAnyField) {
-            liveListenClient.updateMedia(null)
+            streamClient.updateMedia(null)
             return
         }
-        liveListenClient.updateMedia(
-            LiveListenMedia(
+        streamClient.updateMedia(
+            StreamMedia(
                 providerId = providerId?.ifBlank { null },
                 trackId = trackId?.ifBlank { null },
                 title = title?.ifBlank { null },
@@ -340,14 +343,14 @@ actual class PulseBarBridge actual constructor() {
                 artworkUrl = artworkUrl?.ifBlank { null },
                 progressSeconds = progressSeconds.coerceAtLeast(0.0),
                 durationSeconds = durationSeconds.takeIf { it > 0.0 },
-                playbackState = if (isPlaying) LiveListenPlaybackWire.PLAYING
-                else LiveListenPlaybackWire.PAUSED,
+                playbackState = if (isPlaying) StreamPlaybackWire.PLAYING
+                else StreamPlaybackWire.PAUSED,
             ),
         )
     }
 
-    actual val liveListenStats: Flow<PulseBarLiveListenStats> =
-        liveListenClient.stats.map { it.toExport() }
+    actual val streamStats: Flow<PulseBarStreamStats> =
+        streamClient.stats.map { it.toExport() }
 
     actual fun readStats(dayIso: String, limit: Int): PulseBarStatsPage {
         val rows = store.topRowsForDay(dayIso, limit)
@@ -378,13 +381,11 @@ actual class PulseBarBridge actual constructor() {
     actual fun readConfig(): PulseBarConfig = currentConfig()
 
     actual fun updateConfig(config: PulseBarConfig) {
-        // Writes hit DataStore; the `configs` flow subscriber in init() fans
-        // out to reporter and interactionClient. No imperative updates here.
         configStore.replace(config.toProto())
     }
 
     actual fun readInteractionState(): PulseBarInteractionState =
-        interactionClient.readState()
+        emptyInteractionState()
 
     actual fun readSyncState(): PulseBarSyncState =
         reporter.readSyncState(currentConfig())
@@ -394,11 +395,9 @@ actual class PulseBarBridge actual constructor() {
         return true
     }
 
-    actual fun acceptInteraction(requestId: String): Boolean =
-        interactionClient.accept(requestId)
+    actual fun acceptInteraction(requestId: String): Boolean = false
 
-    actual fun dismissInteraction(requestId: String): Boolean =
-        interactionClient.dismiss(requestId)
+    actual fun dismissInteraction(requestId: String): Boolean = false
 
     actual fun mediaCommand(command: PulseBarPlaybackCommand): Boolean {
         val appleScriptVerb = when (command) {
@@ -791,11 +790,6 @@ actual class PulseBarBridge actual constructor() {
 
     private fun currentConfig(): PulseBarConfig = configStore.snapshot().toExport()
 
-    private fun resolvePollIntervalMs(config: PulseBarConfig): Long =
-        config.appPollingMillis
-            .toLong()
-            .coerceIn(MIN_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS)
-
     private fun emptyMenuState(): PulseBarMenuState =
         PulseBarMenuState(
             snapshot = null,
@@ -815,12 +809,6 @@ actual class PulseBarBridge actual constructor() {
     }
 
     private fun todayKey(): String = iso8601Now().substring(0, 10)
-
-    private companion object {
-        const val DEFAULT_POLL_INTERVAL_MS: Long = 750L
-        const val MIN_POLL_INTERVAL_MS: Long = 500L
-        const val MAX_POLL_INTERVAL_MS: Long = 5_000L
-    }
 }
 
 private data class SessionParts(
@@ -838,10 +826,10 @@ private fun parseSessionParts(session: SessionState): SessionParts {
     )
 }
 
-private fun LiveListenStats.toExport(): PulseBarLiveListenStats =
-    PulseBarLiveListenStats(
+private fun StreamStats.toExport(): PulseBarStreamStats =
+    PulseBarStreamStats(
         connectionState = connectionState.toExport(),
-        connectionStateName = connectionState.name,
+        connectionStateName = connectionState.toExport().name,
         webSocketUrl = webSocketUrl,
         lastConnectedAtMillis = lastConnectedAtMillis ?: 0L,
         lastDisconnectedAtMillis = lastDisconnectedAtMillis ?: 0L,
@@ -872,14 +860,14 @@ private fun LiveListenStats.toExport(): PulseBarLiveListenStats =
         captureRequested = captureRequested,
     )
 
-private fun LiveListenStats.ConnectionState.toExport(): PulseBarLiveListenConnectionState = when (this) {
-    LiveListenStats.ConnectionState.Idle -> PulseBarLiveListenConnectionState.IDLE
-    LiveListenStats.ConnectionState.Connecting -> PulseBarLiveListenConnectionState.CONNECTING
-    LiveListenStats.ConnectionState.Connected -> PulseBarLiveListenConnectionState.CONNECTED
-    LiveListenStats.ConnectionState.Reconnecting -> PulseBarLiveListenConnectionState.RECONNECTING
-    LiveListenStats.ConnectionState.Stopping -> PulseBarLiveListenConnectionState.STOPPING
-    LiveListenStats.ConnectionState.Stopped -> PulseBarLiveListenConnectionState.STOPPED
-    LiveListenStats.ConnectionState.Failed -> PulseBarLiveListenConnectionState.FAILED
+private fun StreamStats.ConnectionState.toExport(): PulseBarStreamConnectionState = when (this) {
+    StreamStats.ConnectionState.Idle -> PulseBarStreamConnectionState.IDLE
+    StreamStats.ConnectionState.Connecting -> PulseBarStreamConnectionState.CONNECTING
+    StreamStats.ConnectionState.Connected -> PulseBarStreamConnectionState.CONNECTED
+    StreamStats.ConnectionState.Reconnecting -> PulseBarStreamConnectionState.RECONNECTING
+    StreamStats.ConnectionState.Stopping -> PulseBarStreamConnectionState.STOPPING
+    StreamStats.ConnectionState.Stopped -> PulseBarStreamConnectionState.STOPPED
+    StreamStats.ConnectionState.Failed -> PulseBarStreamConnectionState.FAILED
 }
 
 @OptIn(ExperimentalEncodingApi::class)

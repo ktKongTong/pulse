@@ -1,7 +1,7 @@
 import {
   useCommonConnection,
   useOwnerFocusView,
-} from "@pulse/v2-realtime-react";
+} from "@ktfun/pulse";
 import { FocusSwitcher } from "./focus/focus-switcher";
 import { MediaState } from "./media/media-state";
 

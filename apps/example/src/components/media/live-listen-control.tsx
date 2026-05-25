@@ -1,12 +1,14 @@
 import { Podcast } from "lucide-react";
+import { useStreamControl } from "@ktfun/pulse";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { useStreamControl } from "../../hooks/use-stream-control";
+import { unlockAudioStream } from "../../lib/audio-stream-player";
 
 export function StreamControl({ className }: { className?: string }) {
 
-  const { streamable, streaming, disabled, requestStream, stopStream } = useStreamControl()
+  const { streamable, streaming, disabled, requestStream, stopStream } =
+    useStreamControl({ unlockAudio: unlockAudioStream })
 
   const toggleStream = () => {
     if (streaming) stopStream()

@@ -1,5 +1,6 @@
+'use client'
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import type { ClientPageMetadata } from "@pulse/v2-realtime-protocol";
+import type { ClientPageMetadata } from "@ktfun/pulse-protocol";
 import { usePulseRealtimeV2Client } from "./provider";
 import {
   selectActivePages,
@@ -58,11 +59,11 @@ export function useGlobalOnlineCount() {
 }
 
 export function useActivePages() {
-  return usePulseRealtimeV2Selector(selectActivePages);
+  return usePulseRealtimeV2Selector(selectActivePages, deepEqual);
 }
 
 export function useOwnerFocus() {
-  return usePulseRealtimeV2Selector(selectOwnerFocus);
+  return usePulseRealtimeV2Selector(selectOwnerFocus, deepEqual);
 }
 
 export function useOwnerFocusView() {
@@ -80,11 +81,11 @@ export function useOwnerFocusView() {
 }
 
 export function useGlobalSessionPreview() {
-  return usePulseRealtimeV2Selector(selectGlobalSessionPreview);
+  return usePulseRealtimeV2Selector(selectGlobalSessionPreview, deepEqual);
 }
 
 export function useGlobalSessionActivity() {
-  return usePulseRealtimeV2Selector(selectGlobalSessionActivity);
+  return usePulseRealtimeV2Selector(selectGlobalSessionActivity, deepEqual);
 }
 
 export function useClientPage(
@@ -172,10 +173,53 @@ export function useMediaControls() {
   };
 }
 
+export function useStreamControl(options: { unlockAudio?: () => void } = {}) {
+  const client = usePulseRealtimeV2Client();
+  const { streaming, streamable, disabled } = useClientStreamControlState();
+  const requestStream = () => {
+    if (!streamable) return null;
+    options.unlockAudio?.();
+    return client.requestStream();
+  };
+  const stopStream = () => {
+    if (!streaming) return false;
+    return client.stopStream();
+  };
+  return {
+    streaming,
+    streamable,
+    disabled,
+    requestStream,
+    stopStream,
+  };
+}
+
 export function shallowEqual<T extends object>(left: T, right: T) {
   if (left === right) return true;
   const leftKeys = Object.keys(left) as Array<keyof T>;
   const rightKeys = Object.keys(right) as Array<keyof T>;
   if (leftKeys.length !== rightKeys.length) return false;
   return leftKeys.every((key) => Object.is(left[key], right[key]));
+}
+
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (!isObject(left) || !isObject(right)) return false
+
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+
+  if (leftKeys.length !== rightKeys.length) return false;
+
+  return leftKeys.every((key) => {
+    if (!Object.prototype.hasOwnProperty.call(right, key)) {
+      return false;
+    }
+    return deepEqual(left[key], right[key]);
+  });
 }

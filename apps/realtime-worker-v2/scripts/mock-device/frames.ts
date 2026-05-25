@@ -1,4 +1,4 @@
-import { DEVICE_MEDIA_PROTOCOL, PRESENCE_PROTOCOL } from "@pulse/v2-realtime-protocol";
+import { DEVICE_MEDIA_PROTOCOL, PRESENCE_PROTOCOL } from "@ktfun/pulse-protocol";
 
 export const tracks = [
   {

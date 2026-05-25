@@ -1,4 +1,4 @@
-import AppKit
+@preconcurrency import AppKit
 import Combine
 import Foundation
 @preconcurrency import PulseBarShared
@@ -39,7 +39,7 @@ final class MonitorStore: ObservableObject {
         appPollingMillis: 500,
         pagePollingMillis: 2000,
         mediaPollingMillis: 500,
-        allowWebInteractions: true,
+        allowWebInteractions: false,
         interactionExecutionModeName: "CONFIRM",
         interactionPlaybackModeName: "PLAY_NEXT"
     )
@@ -50,22 +50,28 @@ final class MonitorStore: ObservableObject {
 
     private let bridge: PulseBarBridge
     private var observerTasks: [Task<Void, Never>] = []
-    let liveListenStore: LiveListenCaptureStore
+    let streamStore: StreamCaptureStore
     private var subscribed = false
+    private var frontmostAppObserver: NSObjectProtocol?
 
     init() {
         self.bridge = PulseBarBridge()
-        self.liveListenStore = LiveListenCaptureStore(bridge: bridge)
+        self.streamStore = StreamCaptureStore(bridge: bridge)
     }
 
     deinit {
         for t in observerTasks { t.cancel() }
+        if let frontmostAppObserver {
+            Task { @MainActor in
+                NSWorkspace.shared.notificationCenter.removeObserver(frontmostAppObserver)
+            }
+        }
     }
 
     // MARK: - Lifecycle
 
     func start() {
-        PulseNativeLog.info(.liveListenSession, "monitor.start")
+        PulseNativeLog.info(.streamSession, "monitor.start")
         if subscribed {
             isPaused = false
             return
@@ -75,6 +81,16 @@ final class MonitorStore: ObservableObject {
         subscribed = true
 
         let bridge = self.bridge
+        frontmostAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshForFrontmostApplicationChange()
+            }
+        }
+
         let menuTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
                 for try await state in bridge.menuState.asAsyncSequence() {
@@ -120,7 +136,7 @@ final class MonitorStore: ObservableObject {
         }
         observerTasks.append(todayTask)
 
-        liveListenStore.updateEndpoints(liveListenEndpoints)
+        streamStore.updateEndpoints(streamEndpoints)
     }
 
     func stop() {
@@ -129,63 +145,80 @@ final class MonitorStore: ObservableObject {
     }
 
     func togglePaused() {
+        guard userInteractionAllowed("togglePaused") else { return }
         if !isMonitoring { start(); return }
         isPaused.toggle()
         if !isPaused { bridge.forceTick() }
     }
 
     func resumeAndRefresh() {
+        streamStore.refreshAudioCapturePermissionStatus()
         if !isMonitoring { start(); return }
         isPaused = false
         bridge.forceTick()
     }
 
     func refreshMenuBarContent() {
+        streamStore.refreshAudioCapturePermissionStatus()
         if !isMonitoring { start(); return }
         isPaused = false
         bridge.forceTick()
     }
 
-    // MARK: - Live Listen convenience
-
-    func prepareLiveListenCapturePane() {
-        liveListenStore.refreshSources()
-        liveListenStore.updateEndpoints(liveListenEndpoints)
+    private func refreshForFrontmostApplicationChange() {
+        guard isMonitoring, !isPaused else { return }
+        bridge.tick()
     }
 
-    func requestLiveListenAudioCapturePermissionAtStartup() {
-        liveListenStore.requestAudioCapturePermissionAtStartup()
+    // MARK: - Stream convenience
+
+    var isPermissionPromptBlockingInteraction: Bool {
+        streamStore.blocksUserInteractionForAudioPermission
     }
 
-    func startDebugNativeLiveListenStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
-        liveListenStore.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
-        let endpoints = liveListenEndpoints
+    func prepareStreamCapturePane() {
+        guard userInteractionAllowed("prepareStreamCapturePane") else { return }
+        streamStore.refreshSources()
+        streamStore.updateEndpoints(streamEndpoints)
+    }
+
+    func requestStreamAudioCapturePermissionAtStartup() {
+        streamStore.requestAudioCapturePermissionAtStartup()
+    }
+
+    func startDebugNativeStreamStream(preferredProvider: String? = nil, preferredBundleId: String? = nil) {
+        guard userInteractionAllowed("startDebugNativeStreamStream") else { return }
+        streamStore.selectPreferredSource(preferredProvider: preferredProvider, preferredBundleId: preferredBundleId)
+        let endpoints = streamEndpoints
         let endpointList = endpoints.map { $0.baseUrl }.joined(separator: ",")
-        let source = liveListenStore.selectedSource?.name ?? "nil"
-        PulseNativeLog.info(.liveListenSession, "debug.stream.start endpoints=\(endpointList) source=\(source)")
-        liveListenStore.updateEndpoints(endpoints)
+        let source = streamStore.selectedSource?.name ?? "nil"
+        PulseNativeLog.info(.streamSession, "debug.stream.start endpoints=\(endpointList) source=\(source)")
+        streamStore.updateEndpoints(endpoints)
         dashboardSelection = .connection
-        liveListenStore.startNativeStream()
+        streamStore.startNativeStream()
     }
 
-    func stopDebugNativeLiveListenStream() {
-        PulseNativeLog.info(.liveListenSession, "debug.stream.stop")
-        liveListenStore.stopCapture()
+    func stopDebugNativeStreamStream() {
+        guard userInteractionAllowed("stopDebugNativeStreamStream") else { return }
+        PulseNativeLog.info(.streamSession, "debug.stream.stop")
+        streamStore.stopCapture()
     }
 
-    var liveListenEndpoints: [LiveListenEndpointResolved] {
-        PulseBarConfigFactory.shared.resolvedLiveListenEndpoints(draft: settingsDraft)
+    var streamEndpoints: [StreamEndpointResolved] {
+        PulseBarConfigFactory.shared.resolvedStreamEndpoints(draft: settingsDraft)
     }
 
     // MARK: - Settings commands
 
     func saveConfig() {
+        guard userInteractionAllowed("saveConfig") else { return }
         bridge.updateConfig(config: PulseBarConfigFactory.shared.fromDraft(draft: settingsDraft))
         bridge.forceTick()
-        liveListenStore.updateEndpoints(liveListenEndpoints)
+        streamStore.updateEndpoints(streamEndpoints)
     }
 
     func addEndpoint() {
+        guard userInteractionAllowed("addEndpoint") else { return }
         var next = settingsDraft.endpoints
         if next.isEmpty {
             next.append(PulseBarConfigFactory.shared.defaultPrimaryEndpoint())
@@ -196,40 +229,55 @@ final class MonitorStore: ObservableObject {
     }
 
     func removeEndpoint(_ endpointID: String) {
+        guard userInteractionAllowed("removeEndpoint") else { return }
         settingsDraft.endpoints = settingsDraft.endpoints.filter { $0.id != endpointID }
         saveConfig()
     }
 
     func setEndpointEnabled(_ endpointID: String, enabled: Bool) {
+        guard userInteractionAllowed("setEndpointEnabled") else { return }
         guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
         endpoint.enabled = enabled
         saveConfig()
     }
 
     func disconnectEndpoint(_ endpointID: String) {
+        guard userInteractionAllowed("disconnectEndpoint") else { return }
         guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
         endpoint.disconnected = true
         connectingEndpointIDs.remove(endpointID)
         saveConfig()
+        if isStreamEndpoint(endpoint) {
+            streamStore.updateEndpoints(streamEndpoints)
+            streamStore.disconnectEndpoint(endpointID)
+        }
     }
 
     func connectEndpoint(_ endpointID: String) {
+        guard userInteractionAllowed("connectEndpoint") else { return }
         guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
         endpoint.disconnected = false
-        connectingEndpointIDs.insert(endpointID)
         saveConfig()
+        if isStreamEndpoint(endpoint) {
+            streamStore.updateEndpoints(streamEndpoints)
+            streamStore.reconnectServer(endpointID: endpointID)
+            return
+        }
+        connectingEndpointIDs.insert(endpointID)
         retryEndpoint(endpointID: endpointID)
     }
 
     // MARK: - Media / interaction commands
 
     func mediaCommand(_ command: PulseBarPlaybackCommand) {
+        guard userInteractionAllowed("mediaCommand") else { return }
         _ = bridge.mediaCommand(command: command)
     }
 
     func seekMedia(to progressSeconds: Double) {
+        guard userInteractionAllowed("seekMedia") else { return }
         if bridge.seekMedia(progressSeconds: progressSeconds) {
-            liveListenStore.publishMediaSeek(
+            streamStore.publishMediaSeek(
                 progressSeconds: progressSeconds,
                 media: snapshot?.media
             )
@@ -237,16 +285,19 @@ final class MonitorStore: ObservableObject {
     }
 
     func acceptInteraction(_ requestId: String) {
+        guard userInteractionAllowed("acceptInteraction") else { return }
         _ = bridge.acceptInteraction(requestId: requestId)
         bridge.forceTick()
     }
 
     func dismissInteraction(_ requestId: String) {
+        guard userInteractionAllowed("dismissInteraction") else { return }
         _ = bridge.dismissInteraction(requestId: requestId)
         bridge.forceTick()
     }
 
     func retryEndpoint(endpointID: String? = nil) {
+        guard userInteractionAllowed("retryEndpoint") else { return }
         if let endpointID {
             connectingEndpointIDs.insert(endpointID)
         }
@@ -260,7 +311,7 @@ final class MonitorStore: ObservableObject {
 
     private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
         snapshot = state.snapshot
-        liveListenStore.updateCurrentMedia(state.snapshot?.media)
+        streamStore.updateCurrentMedia(state.snapshot?.media)
     }
 
     private func applyTodayStatsUpdate(_ stats: PulseBarTodayStats) {
@@ -270,7 +321,7 @@ final class MonitorStore: ObservableObject {
 
     private func applyConfigUpdate(_ config: PulseBarConfig) {
         settingsDraft = PulseBarConfigFactory.shared.toDraft(config: config)
-        liveListenStore.updateEndpoints(liveListenEndpoints)
+        streamStore.updateEndpoints(streamEndpoints)
     }
 
     private func applySyncStateUpdate(_ state: PulseBarSyncState) {
@@ -291,5 +342,18 @@ final class MonitorStore: ObservableObject {
                 connectingEndpointIDs.remove(endpoint.id)
             }
         }
+    }
+
+    private func isStreamEndpoint(_ endpoint: PulseBarEndpointDraft) -> Bool {
+        !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func userInteractionAllowed(_ command: String) -> Bool {
+        guard !isPermissionPromptBlockingInteraction else {
+            PulseNativeLog.info(.streamSession, "\(command) blocked while audio permission prompt is pending")
+            return false
+        }
+        return true
     }
 }
