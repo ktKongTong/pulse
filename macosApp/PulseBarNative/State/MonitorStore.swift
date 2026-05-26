@@ -57,6 +57,7 @@ final class MonitorStore: ObservableObject {
     private var frontmostAppObserver: NSObjectProtocol?
     private var connectionStores: [String: ConnectionStore] = [:]
     private let nowPlayingEventSource = NowPlayingEventSource()
+    private var connectedMediaEndpointIDs: Set<String> = []
 
     init() {
         self.bridge = PulseBarBridge()
@@ -240,11 +241,15 @@ final class MonitorStore: ObservableObject {
     // MARK: - Media / interaction commands
 
     func mediaCommand(_ command: PulseBarPlaybackCommand) {
-
+        let success = nowPlayingEventSource.mediaCommand(command)
+        PulseNativeLog.info(.streamSession, "native.mediaCommand command=\(String(describing: command)) success=\(success)")
+        if success { refreshNowPlayingSoon() }
     }
 
     func seekMedia(to progressSeconds: Double) {
-
+        let success = nowPlayingEventSource.seek(to: progressSeconds)
+        PulseNativeLog.info(.streamSession, "native.seekMedia progress=\(progressSeconds) success=\(success)")
+        if success { refreshNowPlayingSoon() }
     }
 
     // MARK: - Observer handlers
@@ -269,11 +274,30 @@ final class MonitorStore: ObservableObject {
 
     private func applyConnectionStatesUpdate(_ states: [PulseBarConnectionState]) {
         connectionStatesByEndpointID = Dictionary(uniqueKeysWithValues: states.map { ($0.endpointId, $0) })
+        let connected = Set(states.compactMap { state in
+            state.media.phaseName == "HelloAccepted" ? state.endpointId : nil
+        })
+        let newlyConnected = connected.subtracting(connectedMediaEndpointIDs)
+        connectedMediaEndpointIDs = connected
+        if !newlyConnected.isEmpty {
+            PulseNativeLog.info(.streamSession, "native.media.connected endpoints=\(newlyConnected.sorted().joined(separator: ",")) refreshNowPlaying")
+            nowPlayingEventSource.refresh()
+        }
     }
 
     private func isStreamEndpoint(_ endpoint: PulseBarEndpointDraft) -> Bool {
         !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func refreshNowPlayingSoon() {
+        nowPlayingEventSource.refresh()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.nowPlayingEventSource.refresh()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.nowPlayingEventSource.refresh()
+        }
     }
 
 }
@@ -364,7 +388,7 @@ private final class NowPlayingEventSource: @unchecked Sendable {
         observers.append(observer)
     }
 
-    private func refresh() {
+    func refresh() {
         guard let getNowPlayingInfo, let getNowPlayingApplicationIsPlaying else { return }
         let queue = DispatchQueue.main
         getNowPlayingApplicationIsPlaying(queue) { [weak self] isPlaying in
@@ -426,6 +450,58 @@ private final class NowPlayingEventSource: @unchecked Sendable {
 
     private static func readPlayerFallbackSnapshot() -> NowPlayingSnapshot? {
         readSpotifySnapshot() ?? readMusicSnapshot()
+    }
+
+    func mediaCommand(_ command: PulseBarPlaybackCommand) -> Bool {
+        let spotifyVerb: String
+        let musicVerb: String
+        switch command {
+        case .PREVIOUS:
+            spotifyVerb = "previous track"
+            musicVerb = "previous track"
+        case .TOGGLE_PLAY_PAUSE:
+            spotifyVerb = "playpause"
+            musicVerb = "playpause"
+        case .NEXT:
+            spotifyVerb = "next track"
+            musicVerb = "next track"
+        @unknown default:
+            return false
+        }
+        return Self.runAppleScript("""
+        tell application id "com.spotify.client"
+            if it is running then
+                \(spotifyVerb)
+                return "ok"
+            end if
+        end tell
+        """) == "ok" || Self.runAppleScript("""
+        tell application id "com.apple.Music"
+            if it is running then
+                \(musicVerb)
+                return "ok"
+            end if
+        end tell
+        """) == "ok"
+    }
+
+    func seek(to progressSeconds: Double) -> Bool {
+        let normalized = String(progressSeconds)
+        return Self.runAppleScript("""
+        tell application id "com.spotify.client"
+            if it is running then
+                set player position to \(normalized)
+                return "ok"
+            end if
+        end tell
+        """) == "ok" || Self.runAppleScript("""
+        tell application id "com.apple.Music"
+            if it is running then
+                set player position to \(normalized)
+                return "ok"
+            end if
+        end tell
+        """) == "ok"
     }
 
     private static func readSpotifySnapshot() -> NowPlayingSnapshot? {

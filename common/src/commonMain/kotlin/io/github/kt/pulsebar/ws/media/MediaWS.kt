@@ -119,10 +119,22 @@ internal class MediaWS(
         }
     }
 
-    private fun sendCurrentStateSnapshot() {
+    private suspend fun sendCurrentStateSnapshot() {
         val state = streamStateFlow.value
-        updateNativeMediaState(state.mediaState)
-        updateNowPlaying(state.mediaState.media ?: state.mediaFlow.value)
+        val media = state.mediaState.media ?: state.mediaFlow.value
+        transitionState(MediaRuntimeEvent.MediaStateChanged(state.mediaState))
+        log.d { "media.state.send.snapshot endpointId=$endpointId playback=${state.mediaState.playback} capture=${state.mediaState.capture} media=${state.mediaState.media?.title ?: "nil"}" }
+        wsManager.send(
+            DeviceV2StreamStatePayload(
+                sentAt = nowInIso8601(),
+                state = state.mediaState.toDeviceV2StreamState(state.streamFormat),
+            )
+        )
+        if (media != null) {
+            transitionState(MediaRuntimeEvent.PlayingChanged(media))
+            log.d { "media.updated.send.snapshot endpointId=$endpointId title=${media.title ?: "nil"} playback=${media.playbackState}" }
+            wsManager.send(DeviceV2MediaUpdatePayload(media.toDeviceV2MediaItem()))
+        }
     }
 
     internal fun stopStream(reason: StreamStopReason) {
@@ -160,9 +172,14 @@ internal class MediaWS(
                     }
                     .filterIsInstance<Frame.Text>()
                     .mapNotNull { frame ->
-                        frame.readText().toDeviceV2IncomingCommand()
+                        val text = frame.readText()
+                        log.d { "media.inbound.raw endpointId=$endpointId text=$text" }
+                        text.toDeviceV2IncomingCommand()
                     }
-                    .collect { message -> handleServerStreamCommand(message) }
+                    .collect { message ->
+                        log.d { "media.inbound.command endpointId=$endpointId commandId=${message.commandId} type=${message.type.cmd} payload=${message.command}" }
+                        handleServerStreamCommand(message)
+                    }
 //        log.w { "device.v2.media.inbound.end" }
             }
             val pcm = launch {

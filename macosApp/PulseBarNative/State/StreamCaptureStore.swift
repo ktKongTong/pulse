@@ -433,6 +433,7 @@ final class StreamCaptureStore: ObservableObject {
             media.title ?? "",
             media.artist ?? "",
             media.album ?? "",
+            String(media.progressSeconds),
             String(media.durationSeconds ?? 0),
             media.isPlaying ? "playing" : "paused"
         ].joined(separator: "|")
