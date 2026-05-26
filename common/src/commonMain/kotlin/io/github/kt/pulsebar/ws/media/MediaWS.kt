@@ -264,10 +264,28 @@ internal class MediaWS(
         commandId: String,
         command: JsonObject,
     ) {
-        val streamId = command["streamId"]?.jsonPrimitive?.content ?: return
-        val generation = command["generation"]?.jsonPrimitive?.content?.toIntOrNull() ?: return
+        val streamId = command["streamId"]?.jsonPrimitive?.content ?: run {
+            log.w { "media.command.stream.invalid endpointId=$endpointId commandId=$commandId missing=streamId payload=$command" }
+            return
+        }
+        val generation = command["generation"]?.jsonPrimitive?.content?.toIntOrNull() ?: run {
+            log.w { "media.command.stream.invalid endpointId=$endpointId commandId=$commandId missing=generation payload=$command" }
+            return
+        }
+        val mediaState = streamStateFlow.value.mediaState
+        log.i {
+            "media.command.stream.requested endpointId=$endpointId commandId=$commandId streamId=$streamId " +
+                "generation=$generation permission=${mediaState.permission} playback=${mediaState.playback} " +
+                "capture=${mediaState.capture} media=${mediaState.media?.title ?: "nil"}"
+        }
         val reason = rejectionReason()
         if (reason != null) {
+            val rejectedState = streamStateFlow.value.mediaState
+            log.w {
+                "media.command.stream.rejected endpointId=$endpointId commandId=$commandId streamId=$streamId " +
+                    "generation=$generation reason=$reason permission=${rejectedState.permission} " +
+                    "playback=${rejectedState.playback} capture=${rejectedState.capture} media=${rejectedState.media?.title ?: "nil"}"
+            }
             wsManager.send(
                 DeviceV2RejectedAckPayload(
                     commandId = commandId,
@@ -280,6 +298,9 @@ internal class MediaWS(
             return
         }
         activeStream = DeviceV2ActiveStream(streamId, generation, 0L)
+        log.i {
+            "media.command.stream.accepted endpointId=$endpointId commandId=$commandId streamId=$streamId generation=$generation"
+        }
         wsManager.send(
             DeviceV2AcceptedAckPayload(
                 commandId = commandId,

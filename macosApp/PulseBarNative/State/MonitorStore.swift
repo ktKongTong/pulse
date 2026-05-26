@@ -196,9 +196,10 @@ final class MonitorStore: ObservableObject {
 
     private func handleNowPlayingChange(_ snapshot: NativeMediaSnapshot?) {
         guard isMonitoring, !isPaused else { return }
-        let label = snapshot?.title ?? "nil"
-        PulseNativeLog.info(.streamSession, "native.nowPlaying title=\(label) playing=\(snapshot?.isPlaying == true)")
-        streamStore.updateCurrentMedia(snapshot)
+        if streamStore.updateCurrentMedia(snapshot) {
+            let label = snapshot?.title ?? "nil"
+            PulseNativeLog.info(.streamSession, "native.media.changed title=\(label) playing=\(snapshot?.isPlaying == true)")
+        }
     }
 
     private func nowMillis() -> Int64 {
@@ -283,7 +284,8 @@ final class MonitorStore: ObservableObject {
         let newlyConnected = connected.subtracting(connectedMediaEndpointIDs)
         connectedMediaEndpointIDs = connected
         if !newlyConnected.isEmpty {
-            PulseNativeLog.info(.streamSession, "native.media.connected endpoints=\(newlyConnected.sorted().joined(separator: ",")) refreshNowPlaying")
+            PulseNativeLog.info(.streamSession, "native.media.connected endpoints=\(newlyConnected.sorted().joined(separator: ",")) publishCurrentState refreshNowPlaying")
+            streamStore.republishCurrentMediaState()
             nowPlayingEventSource.refresh()
         }
     }
@@ -416,7 +418,6 @@ private final class NowPlayingEventSource: @unchecked Sendable {
 
     private static func makeSnapshot(info: CFDictionary?, isPlaying: Bool) -> NowPlayingSnapshot? {
         guard let raw = info as? [String: Any], !raw.isEmpty else {
-            PulseNativeLog.debug(.streamSession, "media.remote info.empty nil=\(info == nil)")
             return nil
         }
         let title = string(raw, "kMRMediaRemoteNowPlayingInfoTitle")
@@ -429,12 +430,8 @@ private final class NowPlayingEventSource: @unchecked Sendable {
             ?? [title, artist, album].compactMap { $0 }.joined(separator: "|")
 
         guard title != nil || artist != nil || album != nil || !uniqueId.isEmpty else {
-            let keys = raw.keys.sorted().joined(separator: ",")
-            PulseNativeLog.debug(.streamSession, "media.remote info.noPlayable keys=\(keys)")
             return nil
         }
-
-        PulseNativeLog.debug(.streamSession, "media.remote info title=\(title ?? "nil") artist=\(artist ?? "nil") playing=\(isPlaying)")
 
         return NowPlayingSnapshot(
             providerId: "system",

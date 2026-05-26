@@ -226,9 +226,10 @@ final class StreamCaptureStore: ObservableObject {
         }
     }
 
-    func updateCurrentMedia(_ media: NativeMediaSnapshot?) {
+    @discardableResult
+    func updateCurrentMedia(_ media: NativeMediaSnapshot?) -> Bool {
         let signature = mediaSignature(media)
-        guard shouldPublishMediaUpdate(signature: signature, media: media) else { return }
+        guard shouldPublishMediaUpdate(signature: signature, media: media) else { return false }
         lastPublishedMediaSignature = signature
         lastPublishedProgressSeconds = media?.progressSeconds
         lastPublishedMediaObservedAtMillis = nowMillis()
@@ -271,6 +272,11 @@ final class StreamCaptureStore: ObservableObject {
             stopCapture()
             statusText = mediaStreamPermission == .allow ? "Media stopped" : "Media stream disabled"
         }
+        return true
+    }
+
+    func republishCurrentMediaState() {
+        pushMediaStateToBridge()
     }
 
     func setMediaStreamAllowed(_ allowed: Bool) {
