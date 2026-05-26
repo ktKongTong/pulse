@@ -1,10 +1,20 @@
 package io.github.kt.pulsebar.ws.connection
 
 
+import io.github.kt.pulsebar.ws.common.DeviceV2CommonHelloPayload
+import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
 import io.github.kt.pulsebar.ws.DEVICE_CONNECTION_PROTOCOL_V1
 import io.github.kt.pulsebar.ws.DEVICE_MEDIA_CONNECTION_PROTOCOL_V1
 import io.github.kt.pulsebar.ws.DEVICE_MEDIA_PROTOCOL_V1
 import io.github.kt.pulsebar.ws.PRESENCE_PROTOCOL_V2
+import io.github.kt.pulsebar.ws.media.DeviceV2AcceptedAckPayload
+import io.github.kt.pulsebar.ws.media.DeviceV2AudioChunkPayload
+import io.github.kt.pulsebar.ws.media.DeviceV2MediaHelloPayload
+import io.github.kt.pulsebar.ws.media.DeviceV2MediaUpdatePayload
+import io.github.kt.pulsebar.ws.media.DeviceV2RejectedAckPayload
+import io.github.kt.pulsebar.ws.media.DeviceV2StoppedAckPayload
+import io.github.kt.pulsebar.ws.media.DeviceV2StreamStatePayload
+import io.github.kt.pulsebar.ws.media.DeviceV2StreamStoppedPayload
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialInfo
 import kotlinx.serialization.Serializable
@@ -75,7 +85,22 @@ internal fun List<Annotation>.deviceV2MessageMeta(): DeviceV2MessageMeta? =
         }
     }
 
-internal inline fun <reified P: WSPayload> deviceV2Frame(payload: P): String {
+internal fun deviceV2Frame(payload: WSPayload): String =
+    when (payload) {
+        is DeviceV2CommonHelloPayload -> deviceV2FrameTyped(payload)
+        is DeviceV2PresencePayload -> deviceV2FrameTyped(payload)
+        is DeviceV2MediaHelloPayload -> deviceV2FrameTyped(payload)
+        is DeviceV2StreamStatePayload -> deviceV2FrameTyped(payload)
+        is DeviceV2MediaUpdatePayload -> deviceV2FrameTyped(payload)
+        is DeviceV2AcceptedAckPayload -> deviceV2FrameTyped(payload)
+        is DeviceV2RejectedAckPayload -> deviceV2FrameTyped(payload)
+        is DeviceV2StoppedAckPayload -> deviceV2FrameTyped(payload)
+        is DeviceV2AudioChunkPayload -> deviceV2FrameTyped(payload)
+        is DeviceV2StreamStoppedPayload -> deviceV2FrameTyped(payload)
+        else -> error("Unsupported WS payload: ${payload::class.simpleName}")
+    }
+
+private inline fun <reified P: WSPayload> deviceV2FrameTyped(payload: P): String {
     val payloadSerializer = serializer<P>()
 
     val message = payloadSerializer.descriptor.annotations

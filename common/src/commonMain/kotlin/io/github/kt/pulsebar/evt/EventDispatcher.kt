@@ -1,25 +1,50 @@
 package io.github.kt.pulsebar.evt
 
+import io.github.kt.pulsebar.core.config.PulseBarConfigStore
 import io.github.kt.pulsebar.core.log.PulseBarLog
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
+import io.github.kt.pulsebar.export.ConnectEndpointCommand
+import io.github.kt.pulsebar.export.DisableEndpointCommand
+import io.github.kt.pulsebar.export.DisconnectEndpointCommand
+import io.github.kt.pulsebar.export.EnableEndpointCommand
 import io.github.kt.pulsebar.export.NativeDeviceEvent
+import io.github.kt.pulsebar.export.NativeFrontmostAppChanged
+import io.github.kt.pulsebar.export.RemoveEndpointCommand
+import io.github.kt.pulsebar.focus.DeviceV2Availability
+import io.github.kt.pulsebar.focus.DeviceV2Focus
+import io.github.kt.pulsebar.focus.DeviceV2PresenceState
+import io.github.kt.pulsebar.platform.App
+import io.github.kt.pulsebar.platform.newPulseUuid
 import io.github.kt.pulsebar.ws.DeviceV2Client
+import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
+import io.github.kt.pulsebar.ws.common.epochMillisToIso8601
+import io.github.kt.pulsebar.ws.connection.DeviceWsPhase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 
-internal object EventDispatcher {
+internal class EventDispatcher(
+    private val scope: CoroutineScope,
+    private val state: MutableStateFlow<RuntimeState>,
+    private val configStore: PulseBarConfigStore,
+    private val connectEndpoint: (String) -> Unit,
+) {
     private val eventBus: NativeDeviceEventBus = NativeDeviceEventBus()
     internal val streamClients: MutableStateFlow<Map<String, DeviceV2Client>> = MutableStateFlow(emptyMap())
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     init {
         scope.launch {
             eventBus.events
-                .collect { event -> routeNativeEvent(event) }
+                .collect { event ->
+                    runCatching { routeNativeEvent(event) }
+                        .onFailure { error ->
+                            if (error is CancellationException) throw error
+                            log.e(error) { "native.event.failed event=${event::class.simpleName}" }
+                        }
+                }
         }
     }
     private val log: PulseBarLog = logger(PulseLogCategory.NativeEvent)
@@ -27,7 +52,79 @@ internal object EventDispatcher {
         eventBus.emit(event)
     }
 
-    private fun routeNativeEvent(event: NativeDeviceEvent) {
+    private suspend fun routeNativeEvent(event: NativeDeviceEvent) {
         log.i { event.toString() }
+        when (event) {
+            is NativeFrontmostAppChanged ->
+                handleFrontmostAppChanged(event)
+
+            is ConnectEndpointCommand ->
+                connectEndpoint(event.endpointId)
+
+            is DisconnectEndpointCommand ->
+                removeClient(event.endpointId)
+
+            is EnableEndpointCommand ->
+                setEndpointEnabled(event.endpointId, enabled = true)
+
+            is DisableEndpointCommand -> {
+                setEndpointEnabled(event.endpointId, enabled = false)
+                removeClient(event.endpointId)
+            }
+
+            is RemoveEndpointCommand -> {
+                removeClient(event.endpointId)
+                configStore.update { current ->
+                    current.copy(endpoints = current.endpoints.filterNot { it.id == event.endpointId })
+                }
+            }
+        }
+    }
+
+    private suspend fun handleFrontmostAppChanged(event: NativeFrontmostAppChanged) {
+        state.update {
+            it.copy(
+                focusSate = (it.focusSate ?: FocusSate(name = event.name, id = event.bundleId)).copy(
+                    name = event.name,
+                    id = event.bundleId
+                )
+            )
+        }
+        // save2sqlite
+        streamClients.value.entries
+            .filter { it.value.deviceWsState.value.phase == DeviceWsPhase.Connected }
+            .forEach { entry ->
+                runCatching {
+                    entry.value.connectedCommonWS.presenceOutbound.send(
+                        DeviceV2PresencePayload(
+                            eventId = newPulseUuid(),
+                            seq = 1,
+                            observedAt = epochMillisToIso8601(event.observedAtMillis),
+                            state = DeviceV2PresenceState(
+                                availability = DeviceV2Availability(state = "active", idleSeconds = 0),
+                                focus = DeviceV2Focus(App(event.name, event.bundleId)),
+                            ),
+                        )
+                    )
+                }.onFailure { error ->
+                    if (error is CancellationException) throw error
+                    log.w(error) { "presence.enqueue.failed endpointId=${entry.key}" }
+                }
+            }
+    }
+
+    private fun removeClient(endpointId: String) {
+        streamClients.value[endpointId]?.dispose()
+        streamClients.update { it - endpointId }
+    }
+
+    private suspend fun setEndpointEnabled(endpointId: String, enabled: Boolean) {
+        configStore.update { current ->
+            current.copy(
+                endpoints = current.endpoints.map { endpoint ->
+                    if (endpoint.id == endpointId) endpoint.copy(enabled = enabled) else endpoint
+                },
+            )
+        }
     }
 }

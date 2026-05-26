@@ -79,7 +79,7 @@ class PulseBarMedia(
 fun mediaDurationSecondsOrNull(media: PulseBarMedia): Int? =
     if (media.durationSeconds > 0) media.durationSeconds else null
 
-class PulseBarSnapshot(
+data class PulseBarSnapshot(
     val appName: String,
     val bundleId: String,
     val pageTitle: String?,
@@ -92,7 +92,7 @@ class PulseBarSnapshot(
 fun snapshotObservedAtEpochMillis(snapshot: PulseBarSnapshot): Long? =
     parseIso8601ToMillis(snapshot.observedAtIso8601)
 
-class PulseBarMenuState(
+data class PulseBarMenuState(
     val snapshot: PulseBarSnapshot?,
     val firstUsage: PulseBarUsageRow?,
     val secondUsage: PulseBarUsageRow?,
@@ -210,7 +210,7 @@ fun endpointLastSuccessWallClock(state: PulseBarEndpointSyncState): String =
 fun endpointLastFailureWallClock(state: PulseBarEndpointSyncState): String =
     formatWallClockTime(endpointLastFailureAtEpochMillis(state))
 
-class PulseBarSyncState(
+data class PulseBarSyncState(
     val enabled: Boolean,
     val enabledEndpointCount: Int,
     val totalEndpointCount: Int,
@@ -230,6 +230,40 @@ enum class PulseBarStreamConnectionState {
     STOPPED,
     FAILED,
 }
+
+class PulseBarConnectionWsState(
+    val phaseName: String,
+    val url: String?,
+    val lastConnectedAtMillis: Long,
+    val lastDisconnectedAtMillis: Long,
+    val lastSendAtMillis: Long,
+    val lastReceiveAtMillis: Long,
+    val messagesSent: Long,
+    val messagesReceived: Long,
+    val lastErrorMessage: String?,
+)
+
+class PulseBarConnectionState(
+    val endpointId: String,
+    val name: String,
+    val enabled: Boolean,
+    val endpointUrl: String,
+    val workspaceId: String,
+    val connectionState: PulseBarStreamConnectionState,
+    val connectionStateName: String,
+    val statusText: String,
+    val isConnecting: Boolean,
+    val manuallyDisconnected: Boolean,
+    val lastConnectedAtMillis: Long,
+    val lastDisconnectedAtMillis: Long,
+    val nextReconnectAtMillis: Long,
+    val reconnectDelaySeconds: Double,
+    val reconnectAttempt: Int,
+    val reconnectCount: Long,
+    val lastErrorMessage: String?,
+    val common: PulseBarConnectionWsState,
+    val media: PulseBarConnectionWsState,
+)
 
 /**
  * Swift-export-friendly mirror of the shared `StreamStats`. All fields
@@ -344,18 +378,17 @@ object PulseBarStreamStatsFactory {
 }
 
 expect class PulseBarBridge() {
-    fun readMenuState(): PulseBarMenuState
     fun readConfig(): PulseBarConfig
     fun updateConfig(config: PulseBarConfig)
-    fun readStats(dayIso: String, limit: Int): PulseBarStatsPage
-    fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats
+//    fun readStats(dayIso: String, limit: Int): PulseBarStatsPage
+//    fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats
 //    fun readInteractionState(): PulseBarInteractionState
     fun readSyncState(): PulseBarSyncState
     fun retryEndpoint(): Boolean
 //    fun acceptInteraction(requestId: String): Boolean
 //    fun dismissInteraction(requestId: String): Boolean
-    fun mediaCommand(command: PulseBarPlaybackCommand): Boolean
-    fun seekMedia(progressSeconds: Double): Boolean
+//    fun mediaCommand(command: PulseBarPlaybackCommand): Boolean
+//    fun seekMedia(progressSeconds: Double): Boolean
 
 
     /**
@@ -389,6 +422,10 @@ expect class PulseBarBridge() {
      */
     val todayStats: Flow<PulseBarTodayStats>
 
+    val connectionStates: Flow<List<PulseBarConnectionState>>
+
+    fun connectionState(endpointId: String): Flow<PulseBarConnectionState>
+
     /**
      * Start (or restart) the Stream device session against the given
      * endpoint. Safe to call repeatedly: if a session is already running
@@ -417,14 +454,14 @@ expect class PulseBarBridge() {
     fun connect(endpointId: String)
 
     /** Stop the Stream session. Cancels reconnects and closes the socket. */
-    fun stopStream()
+//    fun stopStream()
 
 
     fun emitNativeEvent(event: NativeDeviceEvent)
 
     
     /** Stop the active media stream without closing the Stream WebSocket. */
-    fun emitStreamLocalStop()
+//    fun emitStreamLocalStop()
 
     /**
      * Hand a PCM16 chunk (little-endian, interleaved) to the Stream
@@ -433,7 +470,7 @@ expect class PulseBarBridge() {
      * through Swift Export is currently limited to `fatalError()`
      * initializers, so a primitive-typed envelope is used at the boundary.
      */
-    fun submitStreamPcmBase64(chunkBase64: String)
+//    fun submitStreamPcmBase64(chunkBase64: String)
 
     /**
      * Forward the owner-side media state (is media playing? permission?
@@ -442,11 +479,11 @@ expect class PulseBarBridge() {
      * means the owner has enabled Stream; `captureRunning = true` means
      * the CoreAudio tap is actively producing samples.
      */
-    fun updateStreamMediaState(
-        permissionAllow: Boolean,
-        playbackPlaying: Boolean,
-        captureRunning: Boolean,
-    )
+//    fun updateStreamMediaState(
+//        permissionAllow: Boolean,
+//        playbackPlaying: Boolean,
+//        captureRunning: Boolean,
+//    )
 
     /**
      * Forward the currently-playing track metadata to the server so it can
@@ -454,17 +491,17 @@ expect class PulseBarBridge() {
      * to clear; pass an empty trackId when unknown. Safe to call whenever a
      * new track starts — duplicate values are de-duped by the server.
      */
-    fun updateStreamMedia(
-        providerId: String?,
-        trackId: String?,
-        title: String?,
-        artist: String?,
-        album: String?,
-        artworkUrl: String?,
-        progressSeconds: Double,
-        durationSeconds: Double,
-        isPlaying: Boolean,
-    )
+//    fun updateStreamMedia(
+//        providerId: String?,
+//        trackId: String?,
+//        title: String?,
+//        artist: String?,
+//        album: String?,
+//        artworkUrl: String?,
+//        progressSeconds: Double,
+//        durationSeconds: Double,
+//        isPlaying: Boolean,
+//    )
 
     /**
      * Stream telemetry stream (connection state, queue depth,

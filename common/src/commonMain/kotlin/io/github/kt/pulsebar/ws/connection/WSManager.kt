@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.ws.connection
 
+import io.github.kt.pulsebar.core.log.PulseLogCategory
+import io.github.kt.pulsebar.core.log.logger
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.ClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocketSession
@@ -12,6 +14,7 @@ import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -62,6 +65,8 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
             listenJob.cancelAndJoin()
 //            logger.info("cancel old connection")
         }
+
+        logger(PulseLogCategory.StreamSession).d { "connecting" }
         transition(WsConnectionEvent.Connecting(config.url.toString()))
 
 //        logger.info("Connecting to $deviceSessionId")
@@ -70,6 +75,7 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
                 header("Authorization", "Bearer ${config.apiKey}")
             }
         }
+        logger(PulseLogCategory.StreamSession).d { "connection opened" }
         session = newSession
         incomingFlow = newSession.incoming.consumeAsFlow()
             .onEach { transition(WsConnectionEvent.MessageReceived()) }
@@ -77,6 +83,7 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
         transition(WsConnectionEvent.Opened)
         try {
             transition(WsConnectionEvent.HelloSent)
+            logger(PulseLogCategory.StreamSession).d { "handshake" }
             val r = handshake(getHelloMsg, onHandshake, config.handShakeTimeout)
             transition(WsConnectionEvent.HelloAccepted)
             return@withLock r
@@ -116,13 +123,16 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
         getHelloMsg: (session: ClientWebSocketSession) -> WSPayload,) = connect(config, getHelloMsg) {}
     private suspend fun <T>handshake(
         getHelloMsg: (session: ClientWebSocketSession) -> WSPayload,
-        onHandshake: suspend (payload: JsonObject) -> T,timeout: Duration = 3.seconds
+        onHandshake: suspend (payload: JsonObject) -> T,timeout: Duration = 10.seconds
     ): T {
+
         val payload = withTimeoutOrNull(timeout) {
+            logger(PulseLogCategory.StreamSession).d { "sending handshake frame" }
             send(getHelloMsg(session))
             session.incoming
                 .receiveAsFlow()
                 .mapNotNull { frame ->
+                    logger(PulseLogCategory.StreamSession).d { "frame received" }
                     when (frame) {
                         is Frame.Text -> {
                             frame.readText().toHelloAckPayloadOrNull()
@@ -160,6 +170,10 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
         listenJob = scope.launch {
             try {
                 listener(currentSession)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                transition(WsConnectionEvent.Failed(error.message ?: "unknown error"))
+                logger(PulseLogCategory.StreamSession).w(error) { "ws.listen.failed url=${currentSession.call.request.url}" }
             } finally {
                 if (currentSession.isActive) {
                     currentSession.close()
@@ -175,6 +189,7 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
 
 internal fun String.toHelloAckPayloadOrNull(): JsonObject? {
     val obj = runCatching {
+        logger(PulseLogCategory.StreamSession).d { "parsing $this" }
         deviceV2Json.parseToJsonElement(this).jsonObject
     }.getOrNull() ?: return null
     if (obj["type"]?.jsonPrimitive?.contentOrNull != "hello_ack") {

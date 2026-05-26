@@ -30,7 +30,6 @@ final class StreamCaptureStore: ObservableObject {
     @Published private(set) var isCapturing = false
     @Published private(set) var statusText = "Idle"
     @Published private(set) var meter = StreamCaptureMeter()
-    @Published private(set) var lastSampleURL: URL?
     @Published private(set) var errorMessage: String?
     @Published private(set) var publisherStatusText = "Publisher idle"
     @Published private(set) var publisherStats: PulseBarStreamStats = PulseBarStreamStatsFactory.shared.idle()
@@ -78,7 +77,6 @@ final class StreamCaptureStore: ObservableObject {
     // MARK: - Internal state
 
     private var endpoints: [StreamEndpointResolved] = []
-    private var activeEndpointId: String?
     private let service = StreamCaptureService()
     private lazy var session = StreamCaptureSession(service: service)
     private var startupPermissionTask: Task<Void, Never>?
@@ -106,15 +104,10 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     private func subscribeStats() {
-        // let stream = worker.streamStatsStream()
-        // statsTask = Task { @MainActor [weak self] in
-        //     for await snapshot in stream {
-        //         guard let self else { return }
-        //         applyStatsSnapshot(snapshot)
-        //     }
-        // }
+        // stream stats
     }
 
+    // map stats to ui state
     private func applyStatsSnapshot(_ snapshot: PulseBarStreamStats) {
         let previouslyRequested = publisherStats.captureRequested
         publisherStats = snapshot
@@ -150,19 +143,10 @@ final class StreamCaptureStore: ObservableObject {
                 // emitStopStreamEvent()
                 // worker.stopStream()
             }
-            activeEndpointId = nil
             publisherStatusText = "Configure a Stream endpoint in Settings"
             updateAggregatePublisherState()
             return
         }
-
-        let primary = endpoints.first
-        if let primary, activeEndpointId != primary.id {
-            activeEndpointId = primary.id
-        } else if activeEndpointId == nil {
-            activeEndpointId = primary?.id
-        }
-        connectToActiveEndpoint(roomId: "stream:owner", deviceId: "owner")
         pushMediaStateToBridge()
         updateAggregatePublisherState()
         if !isCapturing {
@@ -324,79 +308,6 @@ final class StreamCaptureStore: ObservableObject {
         runStreamingSession(source: source)
     }
 
-    /// Manual debug entry: "Start native stream" button in the capture pane.
-    func startNativeStream(roomId: String = "stream:owner", deviceId: String = "owner") {
-        log("startNativeStream called room=\(roomId) device=\(deviceId) isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil") endpoints=\(endpoints.map { $0.baseUrl }.joined(separator: ","))")
-        guard allowCommandWhilePermissionPromptPending("startNativeStream") else { return }
-        guard !isCapturing, let source = selectedSource else {
-            log("startNativeStream ignored isCapturing=\(isCapturing) selected=\(selectedSource?.name ?? "nil")")
-            return
-        }
-        guard !endpoints.isEmpty else {
-            errorMessage = "Configure an endpoint URL, Workspace ID, and API Key in Settings > Endpoints before starting a native stream."
-            publisherStatusText = "Missing Native endpoint config"
-            return
-        }
-        guard mediaStreamPermission == .allow else {
-            publisherStatusText = "Media stream permission disallowed"
-            return
-        }
-        guard mediaPlaybackStatus == .playing else {
-            publisherStatusText = "No playing media"
-            return
-        }
-
-        errorMessage = nil
-        statusText = "Starting stream…"
-        publisherStatusText = "Connecting Stream servers…"
-        isCapturing = true
-        meter = StreamCaptureMeter()
-
-        connectToActiveEndpoint(roomId: roomId, deviceId: deviceId)
-        runStreamingSession(source: source, isManual: true)
-    }
-
-    /// Fixed-duration debug sample that writes a WAV file and surfaces its URL.
-    func startCaptureOnly(seconds: Double = 10) {
-        guard allowCommandWhilePermissionPromptPending("startCaptureOnly") else { return }
-        guard !isCapturing, let source = selectedSource else { return }
-        errorMessage = nil
-        statusText = "Starting capture…"
-        isCapturing = true
-        meter = StreamCaptureMeter()
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulse-stream-")
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("wav")
-        try? FileManager.default.createDirectory(
-            at: outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-
-        session.runSample(
-            source: source,
-            outputURL: outputURL,
-            seconds: seconds,
-            onMeter: { [weak self] m in
-                self?.meter = m
-            },
-            onStatus: { [weak self] s in
-                self?.statusText = s
-            },
-            onError: { [weak self] error in
-                self?.errorMessage = error.localizedDescription
-                self?.statusText = "Capture failed"
-            },
-            onFinish: { [weak self] in
-                guard let self else { return }
-                if errorMessage == nil {
-                    lastSampleURL = outputURL
-                    statusText = "Captured sample"
-                }
-                isCapturing = false
-            }
-        )
-    }
 
     private func runStreamingSession(source: StreamCaptureSource, isManual: Bool = false) {
         if isManual {
@@ -444,25 +355,15 @@ final class StreamCaptureStore: ObservableObject {
             updateAggregatePublisherState()
             return
         }
-        if let endpointID,
-           endpoints.contains(where: { $0.id == endpointID }) {
-            activeEndpointId = endpointID
-        }
         publisherStatusText = "Manual reconnect requested"
-        connectToActiveEndpoint(roomId: "stream:owner", deviceId: "owner")
         updateAggregatePublisherState()
     }
 
     func disconnectEndpoint(_ endpointID: String) {
         guard allowCommandWhilePermissionPromptPending("disconnectEndpoint") else { return }
-        guard activeEndpointId == endpointID else {
-            updateAggregatePublisherState()
-            return
-        }
         // stopCaptureSession 应该有 kotlin 侧进行控制
         // UI 只发送 event
         // worker.stopStream()
-        activeEndpointId = endpoints.first?.id
         publisherStatusText = endpoints.isEmpty ? "Configure a Stream endpoint in Settings" : "Publisher idle"
         updateAggregatePublisherState()
     }
@@ -482,26 +383,19 @@ final class StreamCaptureStore: ObservableObject {
 
     // MARK: - Private helpers
 
-    private func connectToActiveEndpoint(roomId: String, deviceId: String) {
-        guard let endpoint = endpoints.first(where: { $0.id == activeEndpointId }) ?? endpoints.first else { return }
-        activeEndpointId = endpoint.id
-    }
-
     private func pushMediaStateToBridge(captureRunning: Bool? = nil) {
 
     }
 
     private func updateAggregatePublisherState() {
-        let idleStats = PulseBarStreamStatsFactory.shared.idle()
         endpointPublisherStats = endpoints.map { endpoint in
-            let active = endpoint.id == activeEndpointId
             return StreamEndpointPublisherStatus(
                 id: endpoint.id,
                 name: endpoint.displayName,
                 endpointURL: endpoint.baseUrl,
                 workspaceId: endpoint.workspaceId,
-                statusText: active ? publisherStats.statusText : "Standby",
-                stats: active ? publisherStats : idleStats
+                statusText: publisherStats.statusText,
+                stats: publisherStats
             )
         }
         if endpoints.isEmpty {
@@ -523,7 +417,7 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     private func buildStatusInput() -> StreamStatusInput {
-        let activeConnected = publisherStats.connectionStateParsed == .CONNECTED && activeEndpointId != nil
+        let activeConnected = publisherStats.connectionStateParsed == .CONNECTED
         return Self.makeStatusInput(
             stats: publisherStats,
             isCapturing: isCapturing,

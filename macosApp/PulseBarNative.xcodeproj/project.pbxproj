@@ -12,7 +12,6 @@
 		0CF277EDCE17E7774D0FDA60 /* DashboardSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A884FB70CD387DF81602234D /* DashboardSection.swift */; };
 		0EBC85E3C0BA813F320CC1F5 /* MonitorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */; };
 		11048B44CEEB43E8D0F02A52 /* DetailSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A0822D1D7AF106B2D8DB46 /* DetailSection.swift */; };
-		192FEA1E542D96A43ADF805B /* StreamCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD5B67AB4B7DFF2E9E810599 /* StreamCaptureView.swift */; };
 		2067C4881AB5A0C82A91D825 /* StreamTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C591CC43DA0BCBFEA24C4DF /* StreamTypes.swift */; };
 		25416E4D68A7CF58F64F004F /* EndpointEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 756BABB2D8242410711EC698 /* EndpointEditorSheet.swift */; };
 		258746F6820E49F13BC373E2 /* Buttons.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA76178436F5D6D5686B5A92 /* Buttons.swift */; };
@@ -38,6 +37,7 @@
 		C01BCCD06941E996E157DFA0 /* StreamCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F58C80225868027B0DA7013 /* StreamCaptureService.swift */; };
 		D2F95141D1AE7FC5225D8E08 /* PulseBarShared+Media.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D81BAFA6F1CE20A92DE9D4 /* PulseBarShared+Media.swift */; };
 		D405762B9A292BAE32CC2CE6 /* PulseBarNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4171DEE7172AEDFB90C48624 /* PulseBarNativeApp.swift */; };
+		D699420DA67FEF274544F91A /* ConnectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D696E65BA12F9DF60EEC94CA /* ConnectionStore.swift */; };
 		E0C30918ED12E502A247F438 /* MediaSeekBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1D03DF85E491216051EE41 /* MediaSeekBar.swift */; };
 		E56A9276D03C051F021494F2 /* WindowHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CA333A2011BA8268CB2126 /* WindowHelpers.swift */; };
 		EB317BE953C9773EE9EA23DF /* StatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCAB5196BF7067C53F0CD93E /* StatusItemController.swift */; };
@@ -74,7 +74,7 @@
 		BCAB5196BF7067C53F0CD93E /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
 		C0FFA4AAAC50CF63CAA0BD47 /* MediaCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaCards.swift; sourceTree = "<group>"; };
 		D4B1513A5FFA66200BE050C9 /* MediaGlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGlassBackground.swift; sourceTree = "<group>"; };
-		DD5B67AB4B7DFF2E9E810599 /* StreamCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamCaptureView.swift; sourceTree = "<group>"; };
+		D696E65BA12F9DF60EEC94CA /* ConnectionStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConnectionStore.swift; sourceTree = "<group>"; };
 		DED5B1A3040DC72E1B9DDBCF /* MarqueeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarqueeText.swift; sourceTree = "<group>"; };
 		E04E0F792AF2CED97CB0D709 /* AppIconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconView.swift; sourceTree = "<group>"; };
 		F0D77DB5CC212B4742562DA9 /* PulseBarNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseBarNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -107,6 +107,7 @@
 				523C3F4CCF10585F30F9AD9D /* StreamCaptureStore.swift */,
 				1C591CC43DA0BCBFEA24C4DF /* StreamTypes.swift */,
 				FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */,
+				D696E65BA12F9DF60EEC94CA /* ConnectionStore.swift */,
 			);
 			path = State;
 			sourceTree = "<group>";
@@ -190,7 +191,6 @@
 		8ABB8A4649AEAE459F83AAD1 /* Stream */ = {
 			isa = PBXGroup;
 			children = (
-				DD5B67AB4B7DFF2E9E810599 /* StreamCaptureView.swift */,
 			);
 			path = Stream;
 			sourceTree = "<group>";
@@ -354,7 +354,6 @@
 				C01BCCD06941E996E157DFA0 /* StreamCaptureService.swift in Sources */,
 				683B1B0D47AD8DCA2B040E90 /* StreamCaptureSession.swift in Sources */,
 				B67D32D81A0ECC2F31D79967 /* StreamCaptureStore.swift in Sources */,
-				192FEA1E542D96A43ADF805B /* StreamCaptureView.swift in Sources */,
 				5DC94A1A9C8ABEA761AE074B /* StreamPermission.swift in Sources */,
 				2067C4881AB5A0C82A91D825 /* StreamTypes.swift in Sources */,
 				543ADD9DFBD72D9B70361F54 /* StreamWavWriter.swift in Sources */,
@@ -372,6 +371,7 @@
 				9CAD732601DA6F108E4B84BB /* ReportingPane.swift in Sources */,
 				EB317BE953C9773EE9EA23DF /* StatusItemController.swift in Sources */,
 				E56A9276D03C051F021494F2 /* WindowHelpers.swift in Sources */,
+				D699420DA67FEF274544F91A /* ConnectionStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -8,14 +8,16 @@ import io.github.kt.pulsebar.focus.DeviceV2Focus
 import io.github.kt.pulsebar.focus.DeviceV2PresenceState
 import io.github.kt.pulsebar.platform.getFrontmostApp
 import io.github.kt.pulsebar.platform.newPulseUuid
+import io.github.kt.pulsebar.utils.nowInIso8601
 import io.github.kt.pulsebar.ws.connection.CommonMessage
 import io.github.kt.pulsebar.ws.DEVICE_CONNECTION_PROTOCOL_V1
-import io.github.kt.pulsebar.ws.connection.MediaMessage
+import io.github.kt.pulsebar.ws.connection.CommonConnectionMessage
 import io.github.kt.pulsebar.ws.connection.WSPayload
 import kotlinx.serialization.Serializable
+import kotlin.time.Instant
 
 @Serializable
-@MediaMessage("common.hello")
+@CommonConnectionMessage("hello")
 internal data class DeviceV2CommonHelloPayload(
     val device: DeviceV2DeviceInfo,
     val capabilities: DeviceV2PresenceCapabilities,
@@ -28,8 +30,8 @@ internal data class DeviceV2CommonHelloPayload(
 internal data class DeviceV2PresencePayload(
     val eventId: String,
     val seq: Long,
-    val observedAt: String,
-    val sentAt: String,
+    val observedAt: String = nowInIso8601(),
+    val sentAt: String = nowInIso8601(),
     val state: DeviceV2PresenceState,
 ) : WSPayload
 
@@ -56,7 +58,7 @@ internal fun deviceV2Presence(seq: Long, now: String): DeviceV2PresencePayload {
         eventId = newPulseUuid(),
         seq = seq,
         observedAt = now,
-        sentAt = now,
+        sentAt = nowInIso8601(),
         state = DeviceV2PresenceState(
             availability = DeviceV2Availability(state = "active", idleSeconds = 0),
             focus = DeviceV2Focus(
@@ -65,6 +67,9 @@ internal fun deviceV2Presence(seq: Long, now: String): DeviceV2PresencePayload {
         ),
     )
 }
+
+internal fun epochMillisToIso8601(epochMillis: Long): String =
+    Instant.fromEpochMilliseconds(epochMillis).toString()
 
 
 internal sealed interface CommonWsEvent {

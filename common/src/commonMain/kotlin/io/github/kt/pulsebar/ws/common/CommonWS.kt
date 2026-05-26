@@ -54,7 +54,7 @@ internal class CommonWS(
         return deviceSessionId
     }
 
-    internal suspend fun connect(config: EndpointConfig, onReady: (suspend () -> Unit)? = null, timeout: Duration = 3.seconds): String {
+    internal suspend fun connect(config: EndpointConfig, onReady: (suspend () -> Unit)? = null, timeout: Duration = 10.seconds): String {
         transitionState(CommonRuntimeEvent.RuntimeReset("connect"))
         val deviceSessionId = wsManager.connect(
             WSConfig(

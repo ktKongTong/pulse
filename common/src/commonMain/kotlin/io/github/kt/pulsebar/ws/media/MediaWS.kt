@@ -67,7 +67,7 @@ internal class MediaWS(
             runtimeState = runtime,
         )
     }
-    internal suspend fun connect(deviceSessionId: String, config: PulseConfig, onReady: (suspend () -> Unit)? = null, timeout: Duration = 3.seconds) {
+    internal suspend fun connect(deviceSessionId: String, config: PulseConfig, onReady: (suspend () -> Unit)? = null, timeout: Duration = 10.seconds) {
         wsManager.connect(
             WSConfig(
                 config.endpoint.getMediaWSUrl(deviceSessionId),

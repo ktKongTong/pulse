@@ -26,7 +26,7 @@ struct ConnectionPane: View {
             Divider()
 
             if let endpoint = selectedEndpoint {
-                ConnectionDetailPane(
+                ConnectionDetailRoute(
                     endpoint: endpoint,
                     edit: { editingEndpointID = endpoint.id },
                     delete: { deleteCandidateID = endpoint.id }
@@ -61,7 +61,8 @@ struct ConnectionPane: View {
         ) {
             Button("Delete", role: .destructive) {
                 if let id = deleteCandidateID {
-                    monitor.removeEndpoint(id)
+                    monitor.connectionStore(endpointId: id).removeEndpoint()
+                    monitor.removeConnectionStore(endpointId: id)
                 }
                 deleteCandidateID = nil
             }
@@ -105,7 +106,7 @@ struct ConnectionPane: View {
     }
 
     private func addEndpoint() {
-        monitor.addEndpoint()
+        // monitor.addEndpoint()
         selectedEndpointID = monitor.settingsDraft.endpoints.last?.id
         editingEndpointID = selectedEndpointID
     }
@@ -117,23 +118,22 @@ struct ConnectionPane: View {
     }
 
     private func connectionStatus(_ endpoint: PulseBarEndpointDraft) -> ConnectionRuntimeStatus {
-        let manuallyDisconnected = monitor.manuallyDisconnectedEndpointIDs.contains(endpoint.id)
-        if !endpoint.enabled || manuallyDisconnected {
+        if !endpoint.enabled {
             return .Disconnected
         }
-        if let streamEndpoint = monitor.streamStore.endpointPublisherStats.first(where: { $0.id == endpoint.id }) {
-            return streamEndpoint.stats.connectionStateParsed.connectionRuntimeStatus
-        }
-        if !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return .Disconnected
-        }
-        return resolveConnectionStatus(
-            endpoint: endpoint,
-            sync: monitor.syncState?.endpoints.first { $0.id == endpoint.id },
-            manuallyDisconnected: manuallyDisconnected,
-            isConnecting: monitor.connectingEndpointIDs.contains(endpoint.id)
-        )
+        return monitor.connectionStatesByEndpointID[endpoint.id]?.connectionState.connectionRuntimeStatus ?? .Disconnected
+    }
+}
+
+private struct ConnectionDetailRoute: View {
+    @EnvironmentObject private var monitor: MonitorStore
+    let endpoint: PulseBarEndpointDraft
+    let edit: () -> Void
+    let delete: () -> Void
+
+    var body: some View {
+        ConnectionDetailPane(endpoint: endpoint, edit: edit, delete: delete)
+            .environmentObject(monitor.connectionStore(endpointId: endpoint.id))
     }
 }
 

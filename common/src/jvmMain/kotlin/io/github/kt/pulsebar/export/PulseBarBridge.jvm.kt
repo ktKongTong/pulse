@@ -49,31 +49,11 @@ actual class PulseBarBridge actual constructor() {
         get() = TODO("Not yet implemented")
     actual val todayStats: Flow<PulseBarTodayStats>
         get() = TODO("Not yet implemented")
+    actual val connectionStates: Flow<List<PulseBarConnectionState>>
+        get() = emptyFlow()
 
-    actual fun stopStream() {
-    }
+    actual fun connectionState(endpointId: String): Flow<PulseBarConnectionState> = emptyFlow()
 
-    actual fun emitStreamLocalStop() {
-    }
-
-    actual fun submitStreamPcmBase64(chunkBase64: String) {
-    }
-
-    actual fun updateStreamMediaState(permissionAllow: Boolean, playbackPlaying: Boolean, captureRunning: Boolean) {
-    }
-
-    actual fun updateStreamMedia(
-        providerId: String?,
-        trackId: String?,
-        title: String?,
-        artist: String?,
-        album: String?,
-        artworkUrl: String?,
-        progressSeconds: Double,
-        durationSeconds: Double,
-        isPlaying: Boolean
-    ) {
-    }
 
     actual fun connect(endpointId: String) {
     }

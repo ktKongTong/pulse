@@ -6,21 +6,19 @@ private typealias EndpointRuntimeInput = ExportedKotlinPackages.io.github.kt.pul
 
 struct ConnectionDetailPane: View {
     @EnvironmentObject private var monitor: MonitorStore
-
+    @EnvironmentObject private var connectionStore: ConnectionStore
     let endpoint: PulseBarEndpointDraft
     let edit: () -> Void
     let delete: () -> Void
 
-    private var sync: PulseBarEndpointSyncState? {
-        monitor.syncState?.endpoints.first { $0.id == endpoint.id }
+
+    private var connectionState: PulseBarConnectionState? {
+        connectionStore.state
     }
 
-    private var manuallyDisconnected: Bool {
-        monitor.manuallyDisconnectedEndpointIDs.contains(endpoint.id)
-    }
 
     private var streamEndpoint: StreamEndpointPublisherStatus? {
-        guard endpoint.enabled, !manuallyDisconnected else { return nil }
+        guard endpoint.enabled, !connectionStore.manuallyDisconnected else { return nil }
         return monitor.streamStore.endpointPublisherStats.first { $0.id == endpoint.id }
     }
 
@@ -33,8 +31,11 @@ struct ConnectionDetailPane: View {
     }
 
     private var status: ConnectionRuntimeStatus {
-        if !endpoint.enabled || manuallyDisconnected {
+        if !endpoint.enabled || connectionStore.manuallyDisconnected {
             return .Disconnected
+        }
+        if let connectionState {
+            return connectionState.connectionState.connectionRuntimeStatus
         }
         if let streamEndpoint {
             return streamEndpoint.stats.connectionStateParsed.connectionRuntimeStatus
@@ -44,14 +45,10 @@ struct ConnectionDetailPane: View {
         }
         return resolveConnectionStatus(
             endpoint: endpoint,
-            sync: sync,
-            manuallyDisconnected: manuallyDisconnected,
-            isConnecting: isConnecting
+            sync: nil,
+            manuallyDisconnected: connectionStore.manuallyDisconnected,
+            isConnecting: connectionStore.isConnecting
         )
-    }
-
-    private var isConnecting: Bool {
-        monitor.connectingEndpointIDs.contains(endpoint.id)
     }
 
     private var title: String {
@@ -138,16 +135,16 @@ struct ConnectionDetailPane: View {
                 HStack(spacing: 10) {
                     Button(connectionActionTitle) {
                         if status == .Connected {
-                            monitor.disconnectEndpoint(endpoint.id)
+                            connectionStore.disconnectEndpoint()
                         } else {
-                            monitor.connectEndpoint(endpoint.id)
+                            connectionStore.connectEndpoint()
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!endpoint.enabled || isConnecting)
+                    .disabled(!endpoint.enabled || connectionStore.isConnecting)
 
                     Button(endpoint.enabled ? "Disable" : "Enable") {
-                        monitor.setEndpointEnabled(endpoint.id, enabled: !endpoint.enabled)
+                        connectionStore.setEndpointEnabled(enabled: !endpoint.enabled)
                     }
                     .buttonStyle(.bordered)
 
@@ -169,8 +166,8 @@ struct ConnectionDetailPane: View {
     }
 
     private var disconnectedReason: String {
-        if let stats = streamStats {
-            return stats.lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "-"
+        if let message = connectionState?.lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return message
         }
         return EndpointPresentation.shared.disconnectedReason(input: buildRuntimeInput())
     }
@@ -180,8 +177,8 @@ struct ConnectionDetailPane: View {
     }
 
     private var deliveryDetail: String {
-        if let streamEndpoint {
-            return streamEndpoint.statusText
+        if let connectionState {
+            return connectionState.statusText
         }
         return EndpointPresentation.shared.deliveryDetail(input: buildRuntimeInput())
     }
@@ -192,35 +189,36 @@ struct ConnectionDetailPane: View {
     }
 
     private var lastProbeText: String {
-        if isStreamEndpoint { return "-" }
-        return wallClock(sync?.lastProbeAtIso8601)
+        "-"
     }
 
     private var lastSuccessText: String {
-        if let stats = streamStats {
-            return streamLastConnectedAge(stats: stats, nowMillis: nowMillis())
+        if let connectionState {
+            return ageText(connectionState.lastConnectedAtMillis)
         }
-        return wallClock(sync?.lastSuccessAtIso8601)
+        return "-"
     }
 
     private var lastFailureText: String {
-        if let stats = streamStats {
-            return streamLastDisconnectedAge(stats: stats, nowMillis: nowMillis())
+        if let connectionState {
+            return ageText(connectionState.lastDisconnectedAtMillis)
         }
-        return wallClock(sync?.lastFailureAtIso8601)
+        return "-"
     }
 
     private var pendingCountText: String {
-        if isStreamEndpoint { return "-" }
-        return "\(sync?.pendingCount ?? monitor.syncState?.pendingCount ?? 0)"
+        "-"
     }
 
     private var streamStatusText: String {
-        if manuallyDisconnected {
+        if connectionStore.manuallyDisconnected {
             return "Stopped manually"
         }
         if !endpoint.enabled {
             return "Endpoint disabled"
+        }
+        if let connectionState {
+            return connectionState.statusText
         }
 
         let model = monitor.streamStore
@@ -234,11 +232,14 @@ struct ConnectionDetailPane: View {
     }
 
     private var streamMessage: String? {
-        if manuallyDisconnected {
+        if connectionStore.manuallyDisconnected {
             return "Stream stopped manually for this connection."
         }
         if !endpoint.enabled {
             return "Endpoint disabled."
+        }
+        if let connectionState {
+            return connectionState.statusText
         }
         if let streamEndpoint {
             return streamEndpoint.statusText
@@ -250,25 +251,35 @@ struct ConnectionDetailPane: View {
     }
 
     private var streamMessageIsError: Bool {
-        guard endpoint.enabled, !manuallyDisconnected else { return false }
+        guard endpoint.enabled, !connectionStore.manuallyDisconnected else { return false }
         return streamEndpoint?.stats.connectionStateParsed == .FAILED
     }
 
     private func buildRuntimeInput() -> EndpointRuntimeInput {
         EndpointRuntimeInput(
             enabled: endpoint.enabled,
-            disconnected: manuallyDisconnected,
+            disconnected: connectionStore.manuallyDisconnected,
             endpointUrl: endpoint.endpointUrl,
-            isConnecting: isConnecting,
-            status: sync?.status,
-            lastStatus: sync?.lastStatus,
-            lastErrorMessage: sync?.lastErrorMessage,
-            pendingCount: Int32(sync?.pendingCount ?? 0)
+            isConnecting: connectionStore.isConnecting,
+            status: connectionState?.connectionStateName,
+            lastStatus: connectionState?.common.phaseName,
+            lastErrorMessage: connectionState?.lastErrorMessage,
+            pendingCount: 0
         )
     }
 
     private func nowMillis() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1000.0)
+    }
+
+    private func ageText(_ epochMillis: Int64) -> String {
+        guard epochMillis > 0 else { return "-" }
+        let delta = max(0, (nowMillis() - epochMillis) / 1000)
+        if delta < 2 { return "now" }
+        if delta < 60 { return "\(delta)s ago" }
+        if delta < 3600 { return "\(delta / 60)m ago" }
+        if delta < 86_400 { return "\(delta / 3600)h ago" }
+        return "\(delta / 86_400)d ago"
     }
 
     private func wallClock(_ iso8601: String?) -> String {

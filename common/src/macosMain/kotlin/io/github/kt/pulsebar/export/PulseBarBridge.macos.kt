@@ -12,23 +12,31 @@ import io.github.kt.pulsebar.core.stream.EndpointConfig
 import io.github.kt.pulsebar.core.stream.PulseConfig
 import io.github.kt.pulsebar.core.stream.StreamConfig
 import io.github.kt.pulsebar.evt.EventDispatcher
+import io.github.kt.pulsebar.evt.RuntimeState
 import io.github.kt.pulsebar.evt.Stream
 import io.github.kt.pulsebar.utils.nowInIso8601
 import io.github.kt.pulsebar.utils.nowInMillis
 import io.github.kt.pulsebar.ws.DeviceV2Client
+import io.github.kt.pulsebar.ws.connection.DeviceWsPhase
+import io.github.kt.pulsebar.ws.connection.DeviceWsState
+import io.github.kt.pulsebar.ws.connection.WsConnectionState
 import kotlin.String
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
-import kotlin.concurrent.Volatile
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 
@@ -41,7 +49,10 @@ private data class SessionState(
 
 
 actual class PulseBarBridge actual constructor() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, error ->
+        logger(PulseLogCategory.AppLifecycle).e(error) { "bridge.coroutine.failed" }
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + coroutineExceptionHandler)
     private val store = PulseBarPreferencesStore()
     private val configStore = PulseBarConfigStore(
         fileSystem = pulseBarConfigFileSystem(),
@@ -50,23 +61,39 @@ actual class PulseBarBridge actual constructor() {
     private var currentSession: SessionState? = null
     private var lastObservedAtMillis: Long? = null
     private var pendingElapsedMillis: Long = 0L
-    @Volatile private var latestMenuState: PulseBarMenuState = emptyMenuState()
 
-    private val menuStateFlow = MutableStateFlow(latestMenuState)
+    private val runtimeState: MutableStateFlow<RuntimeState> = MutableStateFlow(RuntimeState())
+
+    private val menuStateFlow = runtimeState.map {
+        PulseBarMenuState(
+            snapshot = it.focusSate?.let {
+                PulseBarSnapshot(
+                    it.name,
+                    it.id,
+                    null,
+                    nowInIso8601(),
+                    null
+                )
+            },
+            null,
+            null,
+            null,
+        )
+    }
+
+    actual val menuState: Flow<PulseBarMenuState> = menuStateFlow.distinctUntilChanged()
+
     private val syncStateFlow = MutableStateFlow<PulseBarSyncState?>(null)
 
-    /**
-     * Pure reader. Returns the most recent menu state that the bridge's tick
-     * loop has materialized. No I/O, no AppleScript, no network. Safe to call
-     * as often as the UI needs.
-     */
-    actual fun readMenuState(): PulseBarMenuState = latestMenuState
+    private val eventDispatcher = EventDispatcher(
+        scope = scope,
+        state = runtimeState,
+        configStore = configStore,
+        connectEndpoint = ::connectEndpointInternal,
+    )
 
-    actual val menuState: Flow<PulseBarMenuState> = menuStateFlow.asStateFlow()
-
+//    configs
     actual val config: Flow<PulseBarConfig> = configStore.configs.distinctUntilChanged().map { it.toExport() }
-
-
 
     private val endpointConfigs: MutableStateFlow<Map<String, StateFlow<PulseConfig>>> = MutableStateFlow(
         mapOf()
@@ -99,7 +126,7 @@ actual class PulseBarBridge actual constructor() {
                     val cfg = PulseConfig(
                         endpoint = EndpointConfig(
                             roomId = it.workspaceId,
-                            deviceId = it.siteId,
+                            deviceId = "owner",
                             baseUrl = it.endpointUrl,
                             workspaceId = it.workspaceId,
                             apiKey = it.apiKey,
@@ -121,7 +148,64 @@ actual class PulseBarBridge actual constructor() {
         }
     }
 
+
+    actual fun connect(endpointId: String) {
+        connectEndpointInternal(endpointId)
+    }
+
+    private fun connectEndpointInternal(endpointId: String) {
+        logger(PulseLogCategory.StreamSession).d { "connecting endpoint=$endpointId" }
+        endpointConfigs.value[endpointId]?.let { config ->
+            val scMap = eventDispatcher.streamClients.value
+            if(scMap[endpointId] == null) {
+                logger(PulseLogCategory.StreamSession).d { "null device client" }
+                val sc = DeviceV2Client(config, Stream.streamStateFlow)
+                eventDispatcher.streamClients.update {
+                    logger(PulseLogCategory.StreamSession).d { "add new client" }
+                    it + (endpointId to sc)
+                }
+            }
+            val s = eventDispatcher.streamClients.value[endpointId]
+            logger(PulseLogCategory.StreamSession).d { "start ${s.toString()}" }
+            s?.start()
+        }
+    }
+
+    actual fun emitNativeEvent(event: NativeDeviceEvent) {
+        eventDispatcher.emitNativeEvent(event)
+    }
+
+
+
+//    dead code
+
     actual val syncState: Flow<PulseBarSyncState> = syncStateFlow.asStateFlow().filterNotNull()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    actual val connectionStates: Flow<List<PulseBarConnectionState>> =
+        combine(config, eventDispatcher.streamClients) { config, clients ->
+            config.endpoints.map { endpoint ->
+                val client = clients[endpoint.id]
+                if (client == null) {
+                    flowOf(endpoint.toConnectionState(null))
+                } else {
+                    client.deviceWsState.map { deviceState ->
+                        endpoint.toConnectionState(deviceState)
+                    }
+                }
+            }
+        }.flatMapLatest { endpointStateFlows ->
+            if (endpointStateFlows.isEmpty()) {
+                flowOf(emptyList())
+            } else {
+                combine(endpointStateFlows) { it.toList() }
+            }
+        }.distinctUntilChanged()
+
+    actual fun connectionState(endpointId: String): Flow<PulseBarConnectionState> =
+        connectionStates.map { states ->
+            states.firstOrNull { it.endpointId == endpointId } ?: emptyConnectionState(endpointId)
+        }.distinctUntilChanged()
 
     actual val todayStats: Flow<PulseBarTodayStats> = flow {
         val todayIso = todayKey()
@@ -141,52 +225,7 @@ actual class PulseBarBridge actual constructor() {
             }
     }
 
-    actual fun connect(endpointId: String) {
-        endpointConfigs.value[endpointId]?.let { config ->
-            val scMap = EventDispatcher.streamClients.value
-            if(scMap[endpointId] == null) {
-                val sc = DeviceV2Client(scope = scope, config, Stream.streamStateFlow)
-                EventDispatcher.streamClients.update {
-                    it + (endpointId to sc)
-                }
-            }
-            EventDispatcher.streamClients.value[endpointId]?.start()
-        }
-    }
-
-    actual fun emitNativeEvent(event: NativeDeviceEvent) {
-        EventDispatcher.emitNativeEvent(event)
-    }
-
-    // 所有启动的，Command
-    actual fun stopStream() {
-    }
-
-    actual fun emitStreamLocalStop() {
-    }
-
-    actual fun updateStreamMediaState(
-        permissionAllow: Boolean,
-        playbackPlaying: Boolean,
-        captureRunning: Boolean,
-    ) {
-    }
-
-    actual fun updateStreamMedia(
-        providerId: String?,
-        trackId: String?,
-        title: String?,
-        artist: String?,
-        album: String?,
-        artworkUrl: String?,
-        progressSeconds: Double,
-        durationSeconds: Double,
-        isPlaying: Boolean,
-    ) {
-
-    }
-
-    actual fun readStats(dayIso: String, limit: Int): PulseBarStatsPage {
+     fun readStats(dayIso: String, limit: Int): PulseBarStatsPage {
         val rows = store.topRowsForDay(dayIso, limit)
         return PulseBarStatsPage(
             dayIso = dayIso,
@@ -195,7 +234,7 @@ actual class PulseBarBridge actual constructor() {
         )
     }
 
-    actual fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats =
+    fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats =
         PulseBarLocalStats(
             dayIso = dayIso,
             appFocusSeconds = store.totalSecondsForDay(dayIso, UsageSlice.APP),
@@ -221,13 +260,13 @@ actual class PulseBarBridge actual constructor() {
     actual fun readSyncState(): PulseBarSyncState = TODO()
 
 
-    actual fun mediaCommand(command: PulseBarPlaybackCommand): Boolean {
-        return Probe.mediaCommand(command)
-    }
-
-    actual fun seekMedia(progressSeconds: Double): Boolean {
-        return Probe.seekMedia(progressSeconds)
-    }
+//    actual fun mediaCommand(command: PulseBarPlaybackCommand): Boolean {
+//        return Probe.mediaCommand(command)
+//    }
+//
+//    actual fun seekMedia(progressSeconds: Double): Boolean {
+//        return Probe.seekMedia(progressSeconds)
+//    }
 
     private fun updateUsage(snapshot: PulseBarSnapshot) {
         val nowMillis = nowInMillis()
@@ -307,8 +346,6 @@ actual class PulseBarBridge actual constructor() {
     }
 
     private fun todayKey(): String = nowInIso8601().substring(0, 10)
-    actual fun submitStreamPcmBase64(chunkBase64: String) {
-    }
 
     actual fun retryEndpoint(): Boolean {
         TODO("Not yet implemented")
@@ -330,4 +367,100 @@ private fun parseSessionParts(session: SessionState): SessionParts {
         pageTitle = parts.getOrNull(1)?.takeIf { it.isNotBlank() },
         mediaKey = parts.getOrNull(2)?.takeIf { it.isNotBlank() }
     )
+}
+
+private fun PulseBarEndpointConfig.toConnectionState(device: DeviceWsState?): PulseBarConnectionState {
+    val phase = device?.phase ?: DeviceWsPhase.Idle
+    val connectionState = phase.toExportConnectionState()
+    val common = device?.common?.connection
+    val media = device?.media?.connection
+    val lastConnectedAtMillis = maxOf(
+        common?.lastConnectedAtMillis ?: 0L,
+        media?.lastConnectedAtMillis ?: 0L,
+    )
+    val lastDisconnectedAtMillis = maxOf(
+        common?.lastDisconnectedAtMillis ?: 0L,
+        media?.lastDisconnectedAtMillis ?: 0L,
+    )
+    val lastErrorMessage = device?.lastErrorMessage
+        ?: media?.lastErrorMessage
+        ?: common?.lastErrorMessage
+
+    return PulseBarConnectionState(
+        endpointId = id,
+        name = name.ifBlank { endpointUrl.ifBlank { id } },
+        enabled = enabled,
+        endpointUrl = endpointUrl,
+        workspaceId = workspaceId,
+        connectionState = connectionState,
+        connectionStateName = connectionState.name,
+        statusText = phase.statusText(lastErrorMessage),
+        isConnecting = phase == DeviceWsPhase.Connecting || phase == DeviceWsPhase.Reconnecting,
+        manuallyDisconnected = phase == DeviceWsPhase.Closed,
+        lastConnectedAtMillis = lastConnectedAtMillis,
+        lastDisconnectedAtMillis = lastDisconnectedAtMillis,
+        nextReconnectAtMillis = device?.nextReconnectAtMillis ?: common?.nextReconnectAtMillis ?: media?.nextReconnectAtMillis ?: 0L,
+        reconnectDelaySeconds = device?.reconnectDelaySeconds ?: common?.reconnectDelaySeconds ?: media?.reconnectDelaySeconds ?: 0.0,
+        reconnectAttempt = device?.reconnectAttempt ?: 0,
+        reconnectCount = device?.reconnectCount ?: 0L,
+        lastErrorMessage = lastErrorMessage,
+        common = (common ?: WsConnectionState()).toExport(),
+        media = (media ?: WsConnectionState()).toExport(),
+    )
+}
+
+private fun emptyConnectionState(endpointId: String): PulseBarConnectionState =
+    PulseBarConnectionState(
+        endpointId = endpointId,
+        name = endpointId,
+        enabled = false,
+        endpointUrl = "",
+        workspaceId = "",
+        connectionState = PulseBarStreamConnectionState.IDLE,
+        connectionStateName = PulseBarStreamConnectionState.IDLE.name,
+        statusText = "Connection not configured",
+        isConnecting = false,
+        manuallyDisconnected = false,
+        lastConnectedAtMillis = 0L,
+        lastDisconnectedAtMillis = 0L,
+        nextReconnectAtMillis = 0L,
+        reconnectDelaySeconds = 0.0,
+        reconnectAttempt = 0,
+        reconnectCount = 0L,
+        lastErrorMessage = null,
+        common = WsConnectionState().toExport(),
+        media = WsConnectionState().toExport(),
+    )
+
+private fun WsConnectionState.toExport(): PulseBarConnectionWsState =
+    PulseBarConnectionWsState(
+        phaseName = phase.name,
+        url = url,
+        lastConnectedAtMillis = lastConnectedAtMillis ?: 0L,
+        lastDisconnectedAtMillis = lastDisconnectedAtMillis ?: 0L,
+        lastSendAtMillis = lastSendAtMillis ?: 0L,
+        lastReceiveAtMillis = lastReceiveAtMillis ?: 0L,
+        messagesSent = messagesSent,
+        messagesReceived = messagesReceived,
+        lastErrorMessage = lastErrorMessage,
+    )
+
+private fun DeviceWsPhase.toExportConnectionState(): PulseBarStreamConnectionState = when (this) {
+    DeviceWsPhase.Idle -> PulseBarStreamConnectionState.IDLE
+    DeviceWsPhase.Connecting -> PulseBarStreamConnectionState.CONNECTING
+    DeviceWsPhase.Connected -> PulseBarStreamConnectionState.CONNECTED
+    DeviceWsPhase.Reconnecting -> PulseBarStreamConnectionState.RECONNECTING
+    DeviceWsPhase.Closing -> PulseBarStreamConnectionState.STOPPING
+    DeviceWsPhase.Closed -> PulseBarStreamConnectionState.STOPPED
+    DeviceWsPhase.Failed -> PulseBarStreamConnectionState.FAILED
+}
+
+private fun DeviceWsPhase.statusText(error: String?): String = when (this) {
+    DeviceWsPhase.Idle -> "Connection idle"
+    DeviceWsPhase.Connecting -> "Connecting"
+    DeviceWsPhase.Connected -> "Connected"
+    DeviceWsPhase.Reconnecting -> "Reconnecting"
+    DeviceWsPhase.Closing -> "Closing"
+    DeviceWsPhase.Closed -> "Disconnected"
+    DeviceWsPhase.Failed -> error?.let { "Failed: $it" } ?: "Connection failed"
 }
