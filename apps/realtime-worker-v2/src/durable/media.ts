@@ -116,6 +116,7 @@ export class MediaDO extends MediaBase {
     const attachment: DeviceAttachment = {
       kind: "device", connectionId: crypto.randomUUID(), deviceId: "owner", deviceSessionId,
     };
+    closeWith(this.deviceSocket, 4000, "connection_superseded");
     socket.serializeAttachment(attachment);
     this.deviceSocket = socket;
     this.state.device = {
@@ -171,8 +172,16 @@ export class MediaDO extends MediaBase {
   }
 
   private async handleDevice(socket: WebSocket, message: string | ArrayBuffer) {
+    const attachment = socketAttachment<Attachment>(socket);
+    if (!this.isActiveDeviceSocket(socket)) {
+      console.log("[media-do] stale_device_message", {
+        attachment,
+        message: typeof message === "string" ? message.slice(0, 300) : "binary",
+      });
+      return closeWith(socket, 4000, "connection_superseded");
+    }
     if (message instanceof ArrayBuffer) return this.acceptBinaryChunk(message);
-    console.log("[media-do] device_message", message.slice(0, 300));
+    console.log("[media-do] device_message", { attachment, message: message.slice(0, 300) });
     const frame = parseFrame(DeviceMediaClientFrameSchema, message);
     if (!frame) {
       console.log("[media-do] device_invalid_frame");

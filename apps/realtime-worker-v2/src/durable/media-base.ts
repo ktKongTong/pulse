@@ -93,11 +93,21 @@ export class MediaBase extends DurableObject<Env> {
   }
 
   protected async sendDeviceCommand(type: "stream.requested" | "stream.stop", streamId: string, generation: number) {
+    const attachment = this.deviceSocket ? socketAttachment<DeviceAttachment>(this.deviceSocket) : null;
+    console.log("[media-do] device_command.prepare", { type, streamId, generation, device: attachment });
     if (!this.deviceSocket) return false;
-    if (this.state.pendingCommand) return false;
+    if (this.state.pendingCommand) {
+      console.log("[media-do] device_command.blocked", { type, pending: this.state.pendingCommand, device: attachment });
+      return false;
+    }
     const commandId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + commandTimeoutMs(this.env)).toISOString();
-    if (!safeSend(this.deviceSocket, deviceCommandFrame({ commandId, type, streamId, generation, expiresAt }))) return false;
+    const frame = deviceCommandFrame({ commandId, type, streamId, generation, expiresAt });
+    console.log("[media-do] device_command.send", { commandId, type, streamId, generation, device: attachment });
+    if (!safeSend(this.deviceSocket, frame)) {
+      console.log("[media-do] device_command.send_failed", { commandId, type, device: attachment });
+      return false;
+    }
     this.state.pendingCommand = { commandId, type, streamId, generation, expiresAt };
     await this.persist();
     await this.ctx.storage.setAlarm(Date.parse(expiresAt));
@@ -117,7 +127,7 @@ export class MediaBase extends DurableObject<Env> {
     const attachment = socketAttachment<MediaAttachment>(socket);
     if (!attachment) return;
     if (attachment.kind === "pending-device") return;
-    if (attachment.kind === "device") return this.cleanupDevice();
+    if (attachment.kind === "device") return this.cleanupDevice(socket);
     const key = tabKey(attachment.sessionId, attachment.tabId);
     this.clients.delete(key);
     this.streamClients.delete(key);
@@ -141,7 +151,12 @@ export class MediaBase extends DurableObject<Env> {
     closeWith(socket, 4000, code);
   }
 
-  private async cleanupDevice() {
+  protected isActiveDeviceSocket(socket: WebSocket) {
+    return socket === this.deviceSocket;
+  }
+
+  private async cleanupDevice(socket: WebSocket) {
+    if (!this.isActiveDeviceSocket(socket)) return;
     this.deviceSocket = null;
     this.state.device = null;
     this.state.pendingCommand = null;

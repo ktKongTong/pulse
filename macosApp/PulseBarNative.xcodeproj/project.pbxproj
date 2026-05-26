@@ -324,11 +324,10 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(DERIVED_FILE_DIR)/embed-swift-export.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\ncd \"$SRCROOT/..\"\nexport JAVA_HOME=\"$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home\"\nexport PATH=\"$JAVA_HOME/bin:$PATH\"\nexport GRADLE_USER_HOME=\"$SRCROOT/../.gradle-xcode\"\nexport KONAN_DATA_DIR=\"${KONAN_DATA_DIR:-$HOME/.konan}\"\n./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode\ntouch \"$DERIVED_FILE_DIR/embed-swift-export.stamp\"\n";
+			shellScript = "set -e\ncd \"$SRCROOT/..\"\nexport JAVA_HOME=\"$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home\"\nexport PATH=\"$JAVA_HOME/bin:$PATH\"\nexport GRADLE_USER_HOME=\"$SRCROOT/../.gradle-xcode\"\nexport KONAN_DATA_DIR=\"${KONAN_DATA_DIR:-$HOME/.konan}\"\n./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

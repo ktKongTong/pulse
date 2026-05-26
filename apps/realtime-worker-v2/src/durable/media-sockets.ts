@@ -2,7 +2,7 @@ import { CLIENT_MEDIA_WS_PROTOCOL, DEVICE_MEDIA_PROTOCOL } from "@ktfun/pulse-pr
 import { mediaStateFrame } from "../state/media";
 import { tabKey } from "../state/keys";
 import { nowIso } from "../utils/time";
-import { safeSend, socketAttachment } from "../utils/ws";
+import { closeWith, safeSend, socketAttachment } from "../utils/ws";
 import type { MediaAttachment } from "./media-base";
 
 export function restoreMediaSockets(input: {
@@ -10,11 +10,14 @@ export function restoreMediaSockets(input: {
   clients: Map<string, WebSocket>;
   setDeviceSocket: (socket: WebSocket) => void;
 }) {
+  let activeDevice: WebSocket | null = null;
   for (const socket of input.sockets) {
     const attachment = socketAttachment<MediaAttachment>(socket);
     if (attachment?.kind === "client") {
       input.clients.set(tabKey(attachment.sessionId, attachment.tabId), socket);
     } else if (attachment?.kind === "device") {
+      if (activeDevice) closeWith(activeDevice, 4000, "connection_superseded");
+      activeDevice = socket;
       input.setDeviceSocket(socket);
     }
   }
