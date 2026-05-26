@@ -23,10 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.consumeAsFlow
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -77,14 +74,14 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
         }
         logger(PulseLogCategory.StreamSession).d { "connection opened" }
         session = newSession
-        incomingFlow = newSession.incoming.consumeAsFlow()
-            .onEach { transition(WsConnectionEvent.MessageReceived()) }
 
         transition(WsConnectionEvent.Opened)
         try {
             transition(WsConnectionEvent.HelloSent)
             logger(PulseLogCategory.StreamSession).d { "handshake" }
             val r = handshake(getHelloMsg, onHandshake, config.handShakeTimeout)
+            incomingFlow = newSession.incoming.consumeAsFlow()
+                .onEach { transition(WsConnectionEvent.MessageReceived()) }
             transition(WsConnectionEvent.HelloAccepted)
             return@withLock r
         } catch (t: Throwable) {
@@ -126,30 +123,29 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
         onHandshake: suspend (payload: JsonObject) -> T,timeout: Duration = 10.seconds
     ): T {
 
-        val payload = withTimeoutOrNull(timeout) {
+        val payload: JsonObject = withTimeoutOrNull(timeout) {
             logger(PulseLogCategory.StreamSession).d { "sending handshake frame" }
             send(getHelloMsg(session))
-            session.incoming
-                .receiveAsFlow()
-                .mapNotNull { frame ->
-                    logger(PulseLogCategory.StreamSession).d { "frame received" }
-                    when (frame) {
-                        is Frame.Text -> {
-                            frame.readText().toHelloAckPayloadOrNull()
-                        }
-
-                        is Frame.Close -> {
-                            val reason = frame.readReason()
-                            error(
-                                "device common closed before hello_ack: " +
-                                        "code=${reason?.code} message=${reason?.message}"
-                            )
-                        }
-
-                        else -> null
+            while (true) {
+                logger(PulseLogCategory.StreamSession).d { "frame received" }
+                when (val frame = session.incoming.receive()) {
+                    is Frame.Text -> {
+                        val ack = frame.readText().toHelloAckPayloadOrNull()
+                        if (ack != null) return@withTimeoutOrNull ack
                     }
+
+                    is Frame.Close -> {
+                        val reason = frame.readReason()
+                        error(
+                            "device common closed before hello_ack: " +
+                                "code=${reason?.code} message=${reason?.message}"
+                        )
+                    }
+
+                    else -> Unit
                 }
-                .firstOrNull()
+            }
+            error("unreachable")
         } ?: error("device hello_ack timeout after $timeout")
         val accepted = payload["accepted"]
             ?.jsonPrimitive
