@@ -277,7 +277,7 @@ Ack status 只描述 command 处理结果：
 字段规则：
 
 - `commandId` 必须等于被响应 command 的 `commandId`。
-- `commandType` 必须等于被响应 command 的 `command.type`。
+- `type` 必须等于被响应 command 的 `command.type`。
 - `stream.requested accepted` 必须返回 `streamId/generation/firstSeq/streamFormat`。
 - `stream.resume accepted` 必须返回 `streamId/generation/firstSeq`；如果切到新的 generation，必须返回当前 `streamFormat`。
 - `unavailableBeforeSeq` 只在接受 `stream.resume` 且 device 无法按 `fromSeq` 无缝继续时出现，表示 `seq < unavailableBeforeSeq` 的音频不可再由 device 补发。

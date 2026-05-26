@@ -1,0 +1,162 @@
+package io.github.kt.pulsebar.ws.connection
+
+import io.github.kt.pulsebar.utils.nowInMillis
+import io.github.kt.pulsebar.ws.common.CommonWSState
+import io.github.kt.pulsebar.ws.media.MediaWSState
+
+
+internal data class WsConnectionState(
+    val phase: WsPhase = WsPhase.Idle,
+    val url: String? = null,
+    val lastConnectedAtMillis: Long? = null,
+    val lastDisconnectedAtMillis: Long? = null,
+    val nextReconnectAtMillis: Long? = null,
+    val reconnectDelaySeconds: Double? = null,
+    val reconnectCount: Long = 0L,
+    val reconnectAttempt: Int = 0,
+    val lastSendAtMillis: Long? = null,
+    val lastReceiveAtMillis: Long? = null,
+    val messagesSent: Long = 0L,
+    val messagesReceived: Long = 0L,
+    val outboundDroppedMessages: Long = 0L,
+    val lastErrorMessage: String? = null,
+)
+
+internal enum class WsPhase {
+    Idle,
+    Connecting,
+    Open,
+    HelloAccepted,
+    Listening,
+    Reconnecting,
+    Closing,
+    Closed,
+    Failed,
+}
+
+internal sealed interface WsConnectionEvent {
+    data class Connecting(val url: String) : WsConnectionEvent
+    data object Opened : WsConnectionEvent
+    data object HelloSent : WsConnectionEvent
+    data object HelloAccepted : WsConnectionEvent
+    data object Listening : WsConnectionEvent
+    data class MessageReceived(val text: Boolean = true) : WsConnectionEvent
+    data class MessageSent(val binary: Boolean = false) : WsConnectionEvent
+    data class Closed(val reason: String?) : WsConnectionEvent
+    data class Failed(val message: String) : WsConnectionEvent
+}
+
+internal fun WsConnectionState.reduce(event: WsConnectionEvent): WsConnectionState =
+    when (event) {
+        is WsConnectionEvent.Connecting -> copy(
+            phase = WsPhase.Connecting,
+            url = event.url,
+            lastErrorMessage = null,
+        )
+
+        WsConnectionEvent.Opened -> copy(
+            phase = WsPhase.Open,
+        )
+
+        WsConnectionEvent.HelloSent -> copy(
+            messagesSent = messagesSent + 1,
+            lastSendAtMillis = nowInMillis(),
+        )
+
+        WsConnectionEvent.HelloAccepted -> copy(
+            phase = WsPhase.HelloAccepted,
+            lastConnectedAtMillis = nowInMillis(),
+            reconnectDelaySeconds = null,
+            nextReconnectAtMillis = null,
+            lastErrorMessage = null,
+        )
+
+        WsConnectionEvent.Listening -> copy(
+            phase = WsPhase.Listening,
+        )
+
+        is WsConnectionEvent.MessageReceived -> copy(
+            messagesReceived = messagesReceived + 1,
+            lastReceiveAtMillis = nowInMillis(),
+        )
+
+        is WsConnectionEvent.MessageSent -> copy(
+            messagesSent = messagesSent + 1,
+            lastSendAtMillis = nowInMillis(),
+        )
+
+        is WsConnectionEvent.Closed -> copy(
+            phase = WsPhase.Closed,
+            lastDisconnectedAtMillis = nowInMillis(),
+            lastErrorMessage = event.reason,
+        )
+
+        is WsConnectionEvent.Failed -> copy(
+            phase = WsPhase.Failed,
+            lastDisconnectedAtMillis = nowInMillis(),
+            lastErrorMessage = event.message,
+        )
+    }
+
+
+
+internal data class DeviceWsState(
+    val phase: DeviceWsPhase = DeviceWsPhase.Idle,
+    val common: CommonWSState = CommonWSState(),
+    val media: MediaWSState = MediaWSState(),
+    val deviceSessionId: String? = common.runtimeState.deviceSessionId,
+    val reconnectAttempt: Int = 0,
+    val reconnectCount: Long = 0L,
+    val nextReconnectAtMillis: Long? = null,
+    val reconnectDelaySeconds: Double? = null,
+    val lastErrorMessage: String? =
+        media.connection.lastErrorMessage ?: common.connection.lastErrorMessage,
+)
+
+internal enum class DeviceWsPhase {
+    Idle,
+    Connecting,
+    Connected,
+    Reconnecting,
+    Closing,
+    Closed,
+    Failed,
+}
+
+internal fun deriveDevicePhase(
+    common: CommonWSState,
+    media: MediaWSState,
+): DeviceWsPhase {
+    val commonPhase = common.connection.phase
+    val mediaPhase = media.connection.phase
+
+    return when {
+        commonPhase == WsPhase.Failed || mediaPhase == WsPhase.Failed ->
+            DeviceWsPhase.Failed
+
+        commonPhase == WsPhase.HelloAccepted &&
+                mediaPhase == WsPhase.HelloAccepted ->
+            DeviceWsPhase.Connected
+
+        commonPhase == WsPhase.Reconnecting ||
+                mediaPhase == WsPhase.Reconnecting ->
+            DeviceWsPhase.Reconnecting
+
+        commonPhase == WsPhase.Closing ||
+                mediaPhase == WsPhase.Closing ->
+            DeviceWsPhase.Closing
+
+        commonPhase == WsPhase.Closed &&
+                mediaPhase == WsPhase.Closed ->
+            DeviceWsPhase.Closed
+
+        commonPhase == WsPhase.Connecting ||
+                commonPhase == WsPhase.Open ||
+                mediaPhase == WsPhase.Connecting ||
+                mediaPhase == WsPhase.Open ->
+            DeviceWsPhase.Connecting
+
+        else ->
+            DeviceWsPhase.Idle
+    }
+}

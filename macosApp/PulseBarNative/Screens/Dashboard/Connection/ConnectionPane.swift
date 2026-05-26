@@ -117,7 +117,8 @@ struct ConnectionPane: View {
     }
 
     private func connectionStatus(_ endpoint: PulseBarEndpointDraft) -> ConnectionRuntimeStatus {
-        if !endpoint.enabled || endpoint.disconnected {
+        let manuallyDisconnected = monitor.manuallyDisconnectedEndpointIDs.contains(endpoint.id)
+        if !endpoint.enabled || manuallyDisconnected {
             return .Disconnected
         }
         if let streamEndpoint = monitor.streamStore.endpointPublisherStats.first(where: { $0.id == endpoint.id }) {
@@ -130,7 +131,7 @@ struct ConnectionPane: View {
         return resolveConnectionStatus(
             endpoint: endpoint,
             sync: monitor.syncState?.endpoints.first { $0.id == endpoint.id },
-            manuallyDisconnected: endpoint.disconnected,
+            manuallyDisconnected: manuallyDisconnected,
             isConnecting: monitor.connectingEndpointIDs.contains(endpoint.id)
         )
     }

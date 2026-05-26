@@ -30,6 +30,7 @@ final class MonitorStore: ObservableObject {
     @Published private(set) var interactionLastStatus: String?
     @Published private(set) var syncState: PulseBarSyncState?
     @Published private(set) var connectingEndpointIDs: Set<String> = []
+    @Published private(set) var manuallyDisconnectedEndpointIDs: Set<String> = []
     @Published private(set) var isMonitoring = false
     @Published var settingsDraft: PulseBarConfigDraft = PulseBarConfigDraft(
         endpoints: [PulseBarConfigFactory.shared.defaultPrimaryEndpoint()],
@@ -85,9 +86,14 @@ final class MonitorStore: ObservableObject {
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                return
+            }
+            let bundleId = app.bundleIdentifier ?? "unknown"
+            let name = app.localizedName ?? app.bundleIdentifier ?? "Unknown App"
             Task { @MainActor in
-                self?.refreshForFrontmostApplicationChange()
+                self?.handleFrontmostApplicationChange(bundleId: bundleId, name: name)
             }
         }
 
@@ -118,15 +124,6 @@ final class MonitorStore: ObservableObject {
         }
         observerTasks.append(syncTask)
 
-        let interactionTask: Task<Void, Never> = Task { @MainActor [weak self] in
-            do {
-                for try await state in bridge.interactionState.asAsyncSequence() {
-                    self?.applyInteractionStateUpdate(state)
-                }
-            } catch {}
-        }
-        observerTasks.append(interactionTask)
-
         let todayTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
                 for try await stats in bridge.todayStats.asAsyncSequence() {
@@ -148,26 +145,32 @@ final class MonitorStore: ObservableObject {
         guard userInteractionAllowed("togglePaused") else { return }
         if !isMonitoring { start(); return }
         isPaused.toggle()
-        if !isPaused { bridge.forceTick() }
+        if !isPaused {
+            
+        }
     }
 
     func resumeAndRefresh() {
         streamStore.refreshAudioCapturePermissionStatus()
         if !isMonitoring { start(); return }
         isPaused = false
-        bridge.forceTick()
+        // bridge.forceTick()
     }
 
     func refreshMenuBarContent() {
         streamStore.refreshAudioCapturePermissionStatus()
         if !isMonitoring { start(); return }
         isPaused = false
-        bridge.forceTick()
     }
 
-    private func refreshForFrontmostApplicationChange() {
+    private func handleFrontmostApplicationChange(bundleId: String, name: String) {
         guard isMonitoring, !isPaused else { return }
-        bridge.tick()
+        let event = NativeFrontmostAppChanged(
+            bundleId: bundleId,
+            name: name,
+            observedAtMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
+        )
+        bridge.emitNativeEvent(event: event)
     }
 
     // MARK: - Stream convenience
@@ -213,11 +216,11 @@ final class MonitorStore: ObservableObject {
     func saveConfig() {
         guard userInteractionAllowed("saveConfig") else { return }
         bridge.updateConfig(config: PulseBarConfigFactory.shared.fromDraft(draft: settingsDraft))
-        bridge.forceTick()
         streamStore.updateEndpoints(streamEndpoints)
     }
 
     func addEndpoint() {
+        // 更新 config 即可
         guard userInteractionAllowed("addEndpoint") else { return }
         var next = settingsDraft.endpoints
         if next.isEmpty {
@@ -229,79 +232,57 @@ final class MonitorStore: ObservableObject {
     }
 
     func removeEndpoint(_ endpointID: String) {
-        guard userInteractionAllowed("removeEndpoint") else { return }
-        settingsDraft.endpoints = settingsDraft.endpoints.filter { $0.id != endpointID }
-        saveConfig()
+        bridge.emitNativeEvent(event: RemoveEndpointCommand(
+            endpointId: endpointID
+        ))
     }
 
     func setEndpointEnabled(_ endpointID: String, enabled: Bool) {
-        guard userInteractionAllowed("setEndpointEnabled") else { return }
-        guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
-        endpoint.enabled = enabled
-        saveConfig()
+        bridge.emitNativeEvent(event: EnableEndpointCommand( endpointId: endpointID ))
     }
 
     func disconnectEndpoint(_ endpointID: String) {
-        guard userInteractionAllowed("disconnectEndpoint") else { return }
-        guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
-        endpoint.disconnected = true
-        connectingEndpointIDs.remove(endpointID)
-        saveConfig()
-        if isStreamEndpoint(endpoint) {
-            streamStore.updateEndpoints(streamEndpoints)
-            streamStore.disconnectEndpoint(endpointID)
-        }
+        bridge.emitNativeEvent(event: DisconnectEndpointCommand( endpointId: endpointID ))
+        // guard userInteractionAllowed("disconnectEndpoint") else { return }
+        // guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
+        // manuallyDisconnectedEndpointIDs.insert(endpointID)
+        // connectingEndpointIDs.remove(endpointID)
+        // if isStreamEndpoint(endpoint) {
+        //     streamStore.updateEndpoints(streamEndpoints)
+        //     streamStore.disconnectEndpoint(endpointID)
+        // }
     }
 
     func connectEndpoint(_ endpointID: String) {
+
         guard userInteractionAllowed("connectEndpoint") else { return }
         guard let endpoint = settingsDraft.endpoints.first(where: { $0.id == endpointID }) else { return }
-        endpoint.disconnected = false
-        saveConfig()
+        manuallyDisconnectedEndpointIDs.remove(endpointID)
+        connectingEndpointIDs.insert(endpointID)
+        // bridge.connect(endpointId: endpointID)
         if isStreamEndpoint(endpoint) {
             streamStore.updateEndpoints(streamEndpoints)
-            streamStore.reconnectServer(endpointID: endpointID)
+            connectingEndpointIDs.remove(endpointID)
             return
         }
-        connectingEndpointIDs.insert(endpointID)
         retryEndpoint(endpointID: endpointID)
     }
 
     // MARK: - Media / interaction commands
 
     func mediaCommand(_ command: PulseBarPlaybackCommand) {
-        guard userInteractionAllowed("mediaCommand") else { return }
-        _ = bridge.mediaCommand(command: command)
+
     }
 
     func seekMedia(to progressSeconds: Double) {
-        guard userInteractionAllowed("seekMedia") else { return }
-        if bridge.seekMedia(progressSeconds: progressSeconds) {
-            streamStore.publishMediaSeek(
-                progressSeconds: progressSeconds,
-                media: snapshot?.media
-            )
-        }
-    }
 
-    func acceptInteraction(_ requestId: String) {
-        guard userInteractionAllowed("acceptInteraction") else { return }
-        _ = bridge.acceptInteraction(requestId: requestId)
-        bridge.forceTick()
-    }
-
-    func dismissInteraction(_ requestId: String) {
-        guard userInteractionAllowed("dismissInteraction") else { return }
-        _ = bridge.dismissInteraction(requestId: requestId)
-        bridge.forceTick()
     }
 
     func retryEndpoint(endpointID: String? = nil) {
-        guard userInteractionAllowed("retryEndpoint") else { return }
         if let endpointID {
             connectingEndpointIDs.insert(endpointID)
         }
-        _ = bridge.retryEndpoint()
+        // _ = bridge.retryEndpoint()
         if let endpointID {
             connectingEndpointIDs.remove(endpointID)
         }

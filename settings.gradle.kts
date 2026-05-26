@@ -18,5 +18,6 @@ dependencyResolutionManagement {
 rootProject.name = "PulseBar"
 
 include(":common")
+include(":macosApp")
 
 project(":common").projectDir = file("common")

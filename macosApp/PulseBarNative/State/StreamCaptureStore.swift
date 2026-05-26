@@ -106,13 +106,13 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     private func subscribeStats() {
-        let stream = worker.streamStatsStream()
-        statsTask = Task { @MainActor [weak self] in
-            for await snapshot in stream {
-                guard let self else { return }
-                applyStatsSnapshot(snapshot)
-            }
-        }
+        // let stream = worker.streamStatsStream()
+        // statsTask = Task { @MainActor [weak self] in
+        //     for await snapshot in stream {
+        //         guard let self else { return }
+        //         applyStatsSnapshot(snapshot)
+        //     }
+        // }
     }
 
     private func applyStatsSnapshot(_ snapshot: PulseBarStreamStats) {
@@ -147,7 +147,8 @@ final class StreamCaptureStore: ObservableObject {
                 log("stopping capture because no live listen endpoints remain")
                 stopCapture()
             } else {
-                worker.stopStream()
+                // emitStopStreamEvent()
+                // worker.stopStream()
             }
             activeEndpointId = nil
             publisherStatusText = "Configure a Stream endpoint in Settings"
@@ -232,29 +233,22 @@ final class StreamCaptureStore: ObservableObject {
         pushMediaStateToBridge()
 
         if let media, media.isPlaying {
-            worker.updateStreamMedia(
-                providerId: media.providerId,
-                trackId: media.trackId,
-                title: media.title,
-                artist: media.artist,
-                album: media.album,
-                artworkUrl: media.artworkUrl,
-                progressSeconds: media.progressSeconds,
-                durationSeconds: Double(media.durationSeconds),
-                isPlaying: media.isPlaying
-            )
+            // 1. emit event
+            // 2. receive and update state
+            // 3. flow receive
+
+            // worker.updateStreamMedia(
+            //     providerId: media.providerId,
+            //     trackId: media.trackId,
+            //     title: media.title,
+            //     artist: media.artist,
+            //     album: media.album,
+            //     artworkUrl: media.artworkUrl,
+            //     progressSeconds: media.progressSeconds,
+            //     durationSeconds: Double(media.durationSeconds),
+            //     isPlaying: media.isPlaying
+            // )
         } else {
-            worker.updateStreamMedia(
-                providerId: nil,
-                trackId: nil,
-                title: nil,
-                artist: nil,
-                album: nil,
-                artworkUrl: nil,
-                progressSeconds: 0,
-                durationSeconds: 0,
-                isPlaying: false
-            )
         }
 
         if isCapturing && (mediaStreamPermission != .allow || media?.isPlaying != true) {
@@ -263,22 +257,6 @@ final class StreamCaptureStore: ObservableObject {
             stopCapture()
             statusText = mediaStreamPermission == .allow ? "Media stopped" : "Media stream disabled"
         }
-    }
-
-    func publishMediaSeek(progressSeconds: Double, media: PulseBarMedia?) {
-        guard let media, media.isPlaying else { return }
-        let normalizedProgress = max(0, progressSeconds)
-        worker.updateStreamMedia(
-            providerId: media.providerId,
-            trackId: media.trackId,
-            title: media.title,
-            artist: media.artist,
-            album: media.album,
-            artworkUrl: media.artworkUrl,
-            progressSeconds: normalizedProgress,
-            durationSeconds: Double(media.durationSeconds),
-            isPlaying: media.isPlaying
-        )
     }
 
     func setMediaStreamAllowed(_ allowed: Bool) {
@@ -421,7 +399,6 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     private func runStreamingSession(source: StreamCaptureSource, isManual: Bool = false) {
-        let worker = self.worker
         if isManual {
             log("audio permission preflight begin")
         }
@@ -429,8 +406,9 @@ final class StreamCaptureStore: ObservableObject {
             source: source,
             preflightPermission: true,
             pcmHandler: { data in
-                let encoded = data.base64EncodedString()
-                worker.submitStreamPcmBase64(chunkBase64: encoded)
+                // emit stream item
+                // let encoded = data.base64EncodedString()
+                // worker.submitStreamPcmBase64(chunkBase64: encoded)
             },
             onMeter: { [weak self] m in
                 guard let self else { return }
@@ -449,7 +427,9 @@ final class StreamCaptureStore: ObservableObject {
             },
             onFinish: { [weak self] in
                 guard let self else { return }
-                if isManual { worker.emitStreamLocalStop() }
+                if isManual {
+                    // emit stop
+                }
                 pushMediaStateToBridge(captureRunning: false)
                 isCapturing = false
                 updateAggregatePublisherState()
@@ -479,8 +459,9 @@ final class StreamCaptureStore: ObservableObject {
             updateAggregatePublisherState()
             return
         }
-        stopCaptureSession()
-        worker.stopStream()
+        // stopCaptureSession 应该有 kotlin 侧进行控制
+        // UI 只发送 event
+        // worker.stopStream()
         activeEndpointId = endpoints.first?.id
         publisherStatusText = endpoints.isEmpty ? "Configure a Stream endpoint in Settings" : "Publisher idle"
         updateAggregatePublisherState()
@@ -488,7 +469,7 @@ final class StreamCaptureStore: ObservableObject {
 
     func stopCapture() {
         stopCaptureSession()
-        worker.emitStreamLocalStop()
+        // worker.emitStreamLocalStop()
     }
 
     private func stopCaptureSession() {
@@ -502,29 +483,12 @@ final class StreamCaptureStore: ObservableObject {
     // MARK: - Private helpers
 
     private func connectToActiveEndpoint(roomId: String, deviceId: String) {
-        guard allowCommandWhilePermissionPromptPending("connectToActiveEndpoint") else { return }
         guard let endpoint = endpoints.first(where: { $0.id == activeEndpointId }) ?? endpoints.first else { return }
         activeEndpointId = endpoint.id
-        let sampleRate = service.streamSampleRate(for: selectedSource)
-        worker.startStream(
-            roomId: roomId,
-            deviceId: deviceId,
-            baseUrl: endpoint.baseUrl,
-            workspaceId: endpoint.workspaceId,
-            apiKey: endpoint.apiKey,
-            sampleRate: Int32(sampleRate),
-            channels: 2,
-            chunkDurationMs: 1_000
-        )
     }
 
     private func pushMediaStateToBridge(captureRunning: Bool? = nil) {
-        let running = captureRunning ?? isCapturing
-        worker.updateStreamMediaState(
-            permissionAllow: mediaStreamPermission == .allow,
-            playbackPlaying: mediaPlaybackStatus == .playing,
-            captureRunning: running
-        )
+
     }
 
     private func updateAggregatePublisherState() {

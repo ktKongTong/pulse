@@ -1,5 +1,6 @@
 package io.github.kt.pulsebar.core.devicev2
 
+import io.github.kt.pulsebar.core.stream.StreamBlockedReason
 import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
 import io.github.kt.pulsebar.core.stream.StreamMedia
 import io.github.kt.pulsebar.core.stream.StreamMediaPermission
@@ -85,13 +86,12 @@ internal fun StreamMedia.toDeviceV2MediaItem(): DeviceV2MediaItem =
         playbackState = if (playbackState == StreamPlaybackWire.PLAYING) "playing" else "paused",
     )
 
-private fun io.github.kt.pulsebar.core.stream.StreamBlockedReason.serialName(): String = when (this) {
-    io.github.kt.pulsebar.core.stream.StreamBlockedReason.NO_PLAYABLE_MEDIA -> "no_playable_media"
-    io.github.kt.pulsebar.core.stream.StreamBlockedReason.CAPTURE_PERMISSION_MISSING -> "capture_permission_missing"
-    io.github.kt.pulsebar.core.stream.StreamBlockedReason.CAPTURE_PERMISSION_REVOKED -> "capture_permission_revoked"
-    io.github.kt.pulsebar.core.stream.StreamBlockedReason.CAPTURE_SOURCE_UNAVAILABLE -> "capture_source_unavailable"
-    io.github.kt.pulsebar.core.stream.StreamBlockedReason.CAPTURE_SOURCE_LOST -> "capture_source_lost"
-    io.github.kt.pulsebar.core.stream.StreamBlockedReason.UNSUPPORTED_APP -> "unsupported_app"
-    io.github.kt.pulsebar.core.stream.StreamBlockedReason.NATIVE_ERROR -> "native_error"
+private fun StreamBlockedReason.serialName(): String = when (this) {
+    StreamBlockedReason.CAPTURE_PERMISSION_MISSING -> "capture_permission_missing"
+    StreamBlockedReason.CAPTURE_PERMISSION_REVOKED -> "capture_permission_revoked"
+    StreamBlockedReason.CAPTURE_SOURCE_UNAVAILABLE -> "capture_source_unavailable"
+    StreamBlockedReason.CAPTURE_SOURCE_LOST -> "capture_source_lost"
+    StreamBlockedReason.UNSUPPORTED_APP -> "unsupported_app"
+    StreamBlockedReason.NATIVE_ERROR -> "native_error"
     else -> null
 } ?: "native_error"

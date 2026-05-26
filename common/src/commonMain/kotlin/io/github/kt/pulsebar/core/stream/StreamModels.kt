@@ -71,9 +71,9 @@ internal data class StreamMedia(
 
 @Serializable
 internal data class StreamNativeMediaState(
-    val permission: StreamMediaPermission,
-    val playback: StreamPlaybackWire,
-    val capture: StreamCaptureRuntime,
+    val permission: StreamMediaPermission = StreamMediaPermission.ALLOW,
+    val playback: StreamPlaybackWire = StreamPlaybackWire.PAUSED,
+    val capture: StreamCaptureRuntime = StreamCaptureRuntime.NO_CAPTURE,
     val reason: StreamBlockedReason? = null,
     val message: String? = null,
     val media: StreamMedia? = null,

@@ -1,5 +1,8 @@
 package io.github.kt.pulsebar.export
 
+import io.github.kt.pulsebar.platform.newPulseUuid
+import io.github.kt.pulsebar.platform.normalizePulseBaseUrl
+
 /**
  * Primitive-typed view of [PulseBarConfig] + [PulseBarEndpointConfig] that
  * Swift edits directly. Building the Kotlin-side [PulseBarConfig] from a
@@ -15,8 +18,6 @@ class PulseBarEndpointDraft(
     var id: String,
     var name: String,
     var enabled: Boolean,
-    var disconnected: Boolean,
-    var transportName: String,
     var endpointUrl: String,
     var workspaceId: String,
     var siteId: String,
@@ -65,8 +66,6 @@ object PulseBarConfigFactory {
                 id = endpoint.id,
                 name = endpoint.name,
                 enabled = endpoint.enabled,
-                disconnected = endpoint.disconnected,
-                transportName = endpoint.transportName,
                 endpointUrl = endpoint.endpointUrl,
                 workspaceId = endpoint.workspaceId,
                 siteId = endpoint.siteId,
@@ -91,9 +90,6 @@ object PulseBarConfigFactory {
                 id = endpoint.id,
                 name = endpoint.name,
                 enabled = endpoint.enabled,
-                disconnected = endpoint.disconnected,
-                transport = transportByName(endpoint.transportName),
-                transportName = endpoint.transportName,
                 endpointUrl = endpoint.endpointUrl,
                 workspaceId = endpoint.workspaceId,
                 siteId = endpoint.siteId,
@@ -116,7 +112,7 @@ object PulseBarConfigFactory {
 
     /** Used by the Stream presentation code — connectable endpoints need a URL + workspace. API key is optional. */
     fun streamCandidateEndpoints(draft: PulseBarConfigDraft): List<PulseBarEndpointDraft> {
-        return draft.endpoints.filter { it.enabled && !it.disconnected && hasStreamCredentials(it) }
+        return draft.endpoints.filter { it.enabled && hasStreamCredentials(it) }
     }
 
     /**
@@ -132,7 +128,7 @@ object PulseBarConfigFactory {
             val workspaceId = candidate.workspaceId.trim()
             val apiKey = candidate.apiKey
             if (workspaceId.isEmpty()) return@mapNotNull null
-            val baseUrl = io.github.kt.pulsebar.core.platform.normalizePulseBaseUrl(candidate.endpointUrl)
+            val baseUrl = normalizePulseBaseUrl(candidate.endpointUrl)
                 ?: return@mapNotNull null
             StreamEndpointResolved(
                 id = candidate.id,
@@ -160,11 +156,6 @@ object PulseBarConfigFactory {
     private fun hasStreamCredentials(endpoint: PulseBarEndpointDraft): Boolean =
         endpoint.workspaceId.trim().isNotEmpty() && endpoint.endpointUrl.trim().isNotEmpty()
 
-    fun transportByName(raw: String): PulseBarTransport = when (raw) {
-        "WEBHOOK" -> PulseBarTransport.WEBHOOK
-        "HTTP_BATCH" -> PulseBarTransport.HTTP_BATCH
-        else -> PulseBarTransport.WEBSOCKET
-    }
 
     fun interactionExecutionModeByName(raw: String): PulseBarInteractionExecutionMode = when (raw) {
         "AUTO_ENQUEUE" -> PulseBarInteractionExecutionMode.AUTO_ENQUEUE
@@ -178,11 +169,9 @@ object PulseBarConfigFactory {
 
     /** Shared defaults for a fresh endpoint row. */
     fun defaultEndpoint(index: Int): PulseBarEndpointDraft = PulseBarEndpointDraft(
-        id = io.github.kt.pulsebar.core.platform.newPulseUuid(),
+        id = newPulseUuid(),
         name = "Endpoint ${index + 1}",
         enabled = false,
-        disconnected = false,
-        transportName = PulseBarTransport.WEBSOCKET.name,
         endpointUrl = "",
         workspaceId = "",
         siteId = "",
@@ -196,8 +185,6 @@ object PulseBarConfigFactory {
                 id = it.id,
                 name = "Primary endpoint",
                 enabled = it.enabled,
-                disconnected = it.disconnected,
-                transportName = it.transportName,
                 endpointUrl = it.endpointUrl,
                 workspaceId = it.workspaceId,
                 siteId = it.siteId,

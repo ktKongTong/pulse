@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.export
 
+import io.github.kt.pulsebar.platform.formatWallClockTime
+import io.github.kt.pulsebar.platform.parseIso8601ToMillis
 import kotlinx.coroutines.flow.Flow
 
 class PulseBarUsageRow(
@@ -8,12 +10,6 @@ class PulseBarUsageRow(
     val bundleId: String,
     val totalSeconds: Int
 )
-
-enum class PulseBarTransport {
-    WEBSOCKET,
-    WEBHOOK,
-    HTTP_BATCH
-}
 
 enum class PulseBarInteractionExecutionMode {
     CONFIRM,
@@ -35,9 +31,6 @@ class PulseBarEndpointConfig(
     val id: String,
     val name: String,
     val enabled: Boolean,
-    val disconnected: Boolean,
-    val transport: PulseBarTransport,
-    val transportName: String,
     val endpointUrl: String,
     val workspaceId: String,
     val siteId: String,
@@ -97,7 +90,7 @@ class PulseBarSnapshot(
 /** Kotlin-side epoch-millis projection of the ISO8601 field, so Swift
  *  (and any future shell) doesn't need its own parser. */
 fun snapshotObservedAtEpochMillis(snapshot: PulseBarSnapshot): Long? =
-    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(snapshot.observedAtIso8601)
+    parseIso8601ToMillis(snapshot.observedAtIso8601)
 
 class PulseBarMenuState(
     val snapshot: PulseBarSnapshot?,
@@ -105,6 +98,13 @@ class PulseBarMenuState(
     val secondUsage: PulseBarUsageRow?,
     val thirdUsage: PulseBarUsageRow?
 )
+fun emptyMenuState(): PulseBarMenuState =
+    PulseBarMenuState(
+        snapshot = null,
+        firstUsage = null,
+        secondUsage = null,
+        thirdUsage = null,
+    )
 
 class PulseBarStatsPage(
     val dayIso: String,
@@ -156,10 +156,10 @@ class PulseBarInteractionItem(
 )
 
 fun interactionIssuedAtEpochMillis(item: PulseBarInteractionItem): Long? =
-    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(item.issuedAtIso8601)
+    parseIso8601ToMillis(item.issuedAtIso8601)
 
 fun interactionUpdatedAtEpochMillis(item: PulseBarInteractionItem): Long? =
-    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(item.updatedAtIso8601)
+    parseIso8601ToMillis(item.updatedAtIso8601)
 
 class PulseBarInteractionState(
     val pendingCount: Int,
@@ -171,7 +171,6 @@ class PulseBarEndpointSyncState(
     val id: String,
     val name: String,
     val enabled: Boolean,
-    val transportName: String,
     val endpointUrl: String,
     val status: String,
     val lastStatus: String?,
@@ -188,28 +187,28 @@ class PulseBarEndpointSyncState(
 )
 
 fun endpointLastAttemptAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
-    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.lastAttemptAtIso8601)
+    parseIso8601ToMillis(state.lastAttemptAtIso8601)
 
 fun endpointLastProbeAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
-    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.lastProbeAtIso8601)
+    parseIso8601ToMillis(state.lastProbeAtIso8601)
 
 fun endpointLastSuccessAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
-    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.lastSuccessAtIso8601)
+    parseIso8601ToMillis(state.lastSuccessAtIso8601)
 
 fun endpointLastFailureAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
-    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.lastFailureAtIso8601)
+    parseIso8601ToMillis(state.lastFailureAtIso8601)
 
 fun endpointAcknowledgedAtEpochMillis(state: PulseBarEndpointSyncState): Long? =
-    io.github.kt.pulsebar.core.platform.parseIso8601ToMillis(state.acknowledgedAtIso8601)
+    parseIso8601ToMillis(state.acknowledgedAtIso8601)
 
 fun endpointLastProbeWallClock(state: PulseBarEndpointSyncState): String =
-    io.github.kt.pulsebar.core.platform.formatWallClockTime(endpointLastProbeAtEpochMillis(state))
+    formatWallClockTime(endpointLastProbeAtEpochMillis(state))
 
 fun endpointLastSuccessWallClock(state: PulseBarEndpointSyncState): String =
-    io.github.kt.pulsebar.core.platform.formatWallClockTime(endpointLastSuccessAtEpochMillis(state))
+    formatWallClockTime(endpointLastSuccessAtEpochMillis(state))
 
 fun endpointLastFailureWallClock(state: PulseBarEndpointSyncState): String =
-    io.github.kt.pulsebar.core.platform.formatWallClockTime(endpointLastFailureAtEpochMillis(state))
+    formatWallClockTime(endpointLastFailureAtEpochMillis(state))
 
 class PulseBarSyncState(
     val enabled: Boolean,
@@ -350,30 +349,14 @@ expect class PulseBarBridge() {
     fun updateConfig(config: PulseBarConfig)
     fun readStats(dayIso: String, limit: Int): PulseBarStatsPage
     fun readLocalStats(dayIso: String, limit: Int): PulseBarLocalStats
-    fun readInteractionState(): PulseBarInteractionState
+//    fun readInteractionState(): PulseBarInteractionState
     fun readSyncState(): PulseBarSyncState
     fun retryEndpoint(): Boolean
-    fun acceptInteraction(requestId: String): Boolean
-    fun dismissInteraction(requestId: String): Boolean
+//    fun acceptInteraction(requestId: String): Boolean
+//    fun dismissInteraction(requestId: String): Boolean
     fun mediaCommand(command: PulseBarPlaybackCommand): Boolean
     fun seekMedia(progressSeconds: Double): Boolean
 
-    /**
-     * Advance the bridge one orchestration step: probe the frontmost app +
-     * media, update usage counters, hand the resulting snapshot to the
-     * reporter, opportunistically drain pending replays.
-     *
-     * Intended for external platform events such as frontmost-app activation.
-     * Do not call this from a timer; use explicit system/user events.
-     */
-    fun tick()
-
-    /**
-     * Like [tick] but forces a snapshot publish and a replay attempt. Use
-     * for user-triggered actions (menubar opened, Retry pressed, settings
-     * saved).
-     */
-    fun forceTick()
 
     /**
      * Menu-state stream. Consumed from Swift via `asAsyncSequence()` — the
@@ -398,7 +381,7 @@ expect class PulseBarBridge() {
     val syncState: Flow<PulseBarSyncState>
 
     /** Interaction-state stream. */
-    val interactionState: Flow<PulseBarInteractionState>
+//    val interactionState: Flow<PulseBarInteractionState>
 
     /**
      * Today's usage stats stream. Emits on startup, when Room's usage
@@ -420,20 +403,26 @@ expect class PulseBarBridge() {
      * @param channels captured PCM channel count (hint for WAV framing; defaults to 2)
      * @param chunkDurationMs audio chunk duration in milliseconds
      */
-    fun startStream(
-        roomId: String,
-        deviceId: String,
-        baseUrl: String,
-        workspaceId: String,
-        apiKey: String,
-        sampleRate: Int,
-        channels: Int,
-        chunkDurationMs: Int,
-    )
+//    fun startStream(
+//        roomId: String,
+//        deviceId: String,
+//        baseUrl: String,
+//        workspaceId: String,
+//        apiKey: String,
+//        sampleRate: Int,
+//        channels: Int,
+//        chunkDurationMs: Int,
+//    )
+
+    fun connect(endpointId: String)
 
     /** Stop the Stream session. Cancels reconnects and closes the socket. */
     fun stopStream()
 
+
+    fun emitNativeEvent(event: NativeDeviceEvent)
+
+    
     /** Stop the active media stream without closing the Stream WebSocket. */
     fun emitStreamLocalStop()
 
@@ -482,5 +471,5 @@ expect class PulseBarBridge() {
      * bitrate, errors). Emits the current snapshot on subscribe and every
      * time something changes.
      */
-    val streamStats: Flow<PulseBarStreamStats>
+//    val streamStats: Flow<PulseBarStreamStats>
 }

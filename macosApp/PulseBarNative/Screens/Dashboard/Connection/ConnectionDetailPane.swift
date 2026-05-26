@@ -15,8 +15,12 @@ struct ConnectionDetailPane: View {
         monitor.syncState?.endpoints.first { $0.id == endpoint.id }
     }
 
+    private var manuallyDisconnected: Bool {
+        monitor.manuallyDisconnectedEndpointIDs.contains(endpoint.id)
+    }
+
     private var streamEndpoint: StreamEndpointPublisherStatus? {
-        guard endpoint.enabled, !endpoint.disconnected else { return nil }
+        guard endpoint.enabled, !manuallyDisconnected else { return nil }
         return monitor.streamStore.endpointPublisherStats.first { $0.id == endpoint.id }
     }
 
@@ -29,7 +33,7 @@ struct ConnectionDetailPane: View {
     }
 
     private var status: ConnectionRuntimeStatus {
-        if !endpoint.enabled || endpoint.disconnected {
+        if !endpoint.enabled || manuallyDisconnected {
             return .Disconnected
         }
         if let streamEndpoint {
@@ -41,7 +45,7 @@ struct ConnectionDetailPane: View {
         return resolveConnectionStatus(
             endpoint: endpoint,
             sync: sync,
-            manuallyDisconnected: endpoint.disconnected,
+            manuallyDisconnected: manuallyDisconnected,
             isConnecting: isConnecting
         )
     }
@@ -189,21 +193,21 @@ struct ConnectionDetailPane: View {
 
     private var lastProbeText: String {
         if isStreamEndpoint { return "-" }
-        return sync.map(endpointLastProbeWallClock) ?? "-"
+        return wallClock(sync?.lastProbeAtIso8601)
     }
 
     private var lastSuccessText: String {
         if let stats = streamStats {
             return streamLastConnectedAge(stats: stats, nowMillis: nowMillis())
         }
-        return sync.map(endpointLastSuccessWallClock) ?? "-"
+        return wallClock(sync?.lastSuccessAtIso8601)
     }
 
     private var lastFailureText: String {
         if let stats = streamStats {
             return streamLastDisconnectedAge(stats: stats, nowMillis: nowMillis())
         }
-        return sync.map(endpointLastFailureWallClock) ?? "-"
+        return wallClock(sync?.lastFailureAtIso8601)
     }
 
     private var pendingCountText: String {
@@ -212,7 +216,7 @@ struct ConnectionDetailPane: View {
     }
 
     private var streamStatusText: String {
-        if endpoint.disconnected {
+        if manuallyDisconnected {
             return "Stopped manually"
         }
         if !endpoint.enabled {
@@ -230,7 +234,7 @@ struct ConnectionDetailPane: View {
     }
 
     private var streamMessage: String? {
-        if endpoint.disconnected {
+        if manuallyDisconnected {
             return "Stream stopped manually for this connection."
         }
         if !endpoint.enabled {
@@ -246,14 +250,14 @@ struct ConnectionDetailPane: View {
     }
 
     private var streamMessageIsError: Bool {
-        guard endpoint.enabled, !endpoint.disconnected else { return false }
+        guard endpoint.enabled, !manuallyDisconnected else { return false }
         return streamEndpoint?.stats.connectionStateParsed == .FAILED
     }
 
     private func buildRuntimeInput() -> EndpointRuntimeInput {
         EndpointRuntimeInput(
             enabled: endpoint.enabled,
-            disconnected: endpoint.disconnected,
+            disconnected: manuallyDisconnected,
             endpointUrl: endpoint.endpointUrl,
             isConnecting: isConnecting,
             status: sync?.status,
@@ -265,6 +269,11 @@ struct ConnectionDetailPane: View {
 
     private func nowMillis() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1000.0)
+    }
+
+    private func wallClock(_ iso8601: String?) -> String {
+        let epochMillis = ExportedKotlinPackages.io.github.kt.pulsebar.platform.parseIso8601ToMillis(value: iso8601)
+        return ExportedKotlinPackages.io.github.kt.pulsebar.platform.formatWallClockTime(epochMillis: epochMillis)
     }
 }
 

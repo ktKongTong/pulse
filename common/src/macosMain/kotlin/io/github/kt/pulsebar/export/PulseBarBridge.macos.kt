@@ -5,71 +5,32 @@ import io.github.kt.pulsebar.core.config.pulseBarConfigFileSystem
 import io.github.kt.pulsebar.core.config.pulseBarConfigPath
 import io.github.kt.pulsebar.core.config.toExport
 import io.github.kt.pulsebar.core.config.toProto
-import io.github.kt.pulsebar.core.devicev2.DeviceV2Client
-import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
-import io.github.kt.pulsebar.core.stream.StreamConnectionConfig
-import io.github.kt.pulsebar.core.stream.StreamMedia
-import io.github.kt.pulsebar.core.stream.StreamMediaPermission
-import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
-import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
-import io.github.kt.pulsebar.core.stream.StreamStats
-import io.github.kt.pulsebar.core.stream.StreamStopReason
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
-import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.darwin.Darwin
-import io.ktor.client.plugins.websocket.WebSockets
-import io.ktor.client.plugins.websocket.webSocket
-import io.ktor.client.request.header
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.request.url
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import io.ktor.http.content.TextContent
+import io.github.kt.pulsebar.core.stream.CommonConfig
+import io.github.kt.pulsebar.core.stream.EndpointConfig
+import io.github.kt.pulsebar.core.stream.PulseConfig
+import io.github.kt.pulsebar.core.stream.StreamConfig
+import io.github.kt.pulsebar.evt.EventDispatcher
+import io.github.kt.pulsebar.evt.Stream
+import io.github.kt.pulsebar.utils.nowInIso8601
+import io.github.kt.pulsebar.utils.nowInMillis
+import io.github.kt.pulsebar.ws.DeviceV2Client
+import kotlin.String
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
-import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
-import platform.AppKit.NSWorkspace
-import platform.Foundation.NSAppleScript
-import platform.Foundation.NSBundle
-import platform.Foundation.NSDate
-import platform.Foundation.NSDateFormatter
-import platform.Foundation.NSFileManager
-import platform.Foundation.NSHomeDirectory
-import platform.Foundation.NSJSONReadingMutableContainers
-import platform.Foundation.NSJSONSerialization
-import platform.Foundation.NSNumber
-import platform.Foundation.NSUserDefaults
-import platform.Foundation.NSUserName
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 
 private data class SessionState(
     val signature: String,
@@ -78,26 +39,7 @@ private data class SessionState(
     val startedAtMillis: Long
 )
 
-private data class FrontApp(
-    val appName: String,
-    val bundleId: String
-)
 
-private data class MediaProbeSpec(
-    val providerId: String,
-    val sourceLabel: String,
-    val bundleIds: List<String>,
-    val parser: (List<String>) -> PulseBarMedia?
-)
-
-private fun emptyInteractionState() =
-    PulseBarInteractionState(
-        pendingCount = 0,
-        items = emptyList(),
-        lastStatus = "disabled",
-    )
-
-@OptIn(ExperimentalForeignApi::class)
 actual class PulseBarBridge actual constructor() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val store = PulseBarPreferencesStore()
@@ -105,78 +47,13 @@ actual class PulseBarBridge actual constructor() {
         fileSystem = pulseBarConfigFileSystem(),
         path = pulseBarConfigPath(),
     )
-    private val reporter = PulseBarEndpointReporter()
-    private val mediaProbes by lazy {
-        listOf(
-            MediaProbeSpec(
-                providerId = "spotify",
-                sourceLabel = "Spotify",
-                bundleIds = listOf("com.spotify.client"),
-                parser = ::parseSpotifyMedia
-            ),
-            MediaProbeSpec(
-                providerId = "apple-music",
-                sourceLabel = "Music",
-                bundleIds = listOf("com.apple.Music"),
-                parser = ::parseITunesStyleMedia
-            ),
-            MediaProbeSpec(
-                providerId = "netease-music",
-                sourceLabel = "Netease Music",
-                bundleIds = listOf("com.netease.163music", "com.netease.music"),
-                parser = ::parseITunesStyleMedia
-            ),
-            MediaProbeSpec(
-                providerId = "qq-music",
-                sourceLabel = "QQ Music",
-                bundleIds = listOf("com.tencent.qqmusic", "com.tencent.qqmusic.mac"),
-                parser = ::parseITunesStyleMedia
-            )
-        )
-    }
     private var currentSession: SessionState? = null
     private var lastObservedAtMillis: Long? = null
-    private var lastVisibleApp: FrontApp? = null
-    private var lastSelectedMediaProviderId: String? = null
     private var pendingElapsedMillis: Long = 0L
-
     @Volatile private var latestMenuState: PulseBarMenuState = emptyMenuState()
+
     private val menuStateFlow = MutableStateFlow(latestMenuState)
     private val syncStateFlow = MutableStateFlow<PulseBarSyncState?>(null)
-    private val interactionStateFlow = MutableStateFlow(emptyInteractionState())
-    private val streamClient = DeviceV2Client(scope = scope)
-    private val tickMutex = Mutex()
-
-    init {
-        val initial = currentConfig()
-        reporter.updateConfig(initial)
-        logger(PulseLogCategory.AppLifecycle).i {
-            "bridge.initialized endpoints=${initial.endpoints.size} enabled=${initial.endpoints.count { it.enabled }}"
-        }
-        scope.launch {
-            configStore.configs.collect { proto ->
-                val export = proto.toExport()
-                reporter.updateConfig(export)
-                reporter.resetIfDisabled(export)
-                logger(PulseLogCategory.ConfigStore).d {
-                    "config.observed endpoints=${export.endpoints.size}" +
-                        " enabled=${export.endpoints.count { it.enabled }}" +
-                        " disconnected=${export.endpoints.count { it.disconnected }}" +
-                        " eventDriven=true"
-                }
-                runCatching { runTick(forcePublish = true, forceReplay = false) }
-                    .onFailure { error ->
-                        logger(PulseLogCategory.StatsRefresh).w(error) { "config.tick.failed" }
-                    }
-            }
-        }
-        scope.launch {
-            runCatching { runTick(forcePublish = true, forceReplay = false) }
-                .onFailure { error ->
-                    logger(PulseLogCategory.StatsRefresh).w(error) { "initial.tick.failed" }
-                }
-        }
-    }
 
     /**
      * Pure reader. Returns the most recent menu state that the bridge's tick
@@ -185,64 +62,66 @@ actual class PulseBarBridge actual constructor() {
      */
     actual fun readMenuState(): PulseBarMenuState = latestMenuState
 
-    actual fun tick() {
-        scope.launch {
-            runTick(forcePublish = false, forceReplay = false)
-            streamClient.publishPresence()
-        }
-    }
-
-    actual fun forceTick() {
-        scope.launch {
-            runTick(forcePublish = true, forceReplay = true)
-            streamClient.publishPresence()
-        }
-    }
-
-    private suspend fun runTick(forcePublish: Boolean, forceReplay: Boolean) {
-        tickMutex.withLock {
-            val config = currentConfig()
-            val snapshot = readSnapshot()
-            updateUsage(snapshot)
-            reporter.capture(snapshot, config)
-            if (forceReplay) {
-                reporter.sync(config, forceReplay = true)
-            } else {
-                reporter.sync(config)
-            }
-            if (forcePublish) {
-                // capture() is a no-op when nothing changed; force a push anyway.
-                reporter.forceSync(snapshot, config)
-            }
-            val rows = store.topRowsForDay(todayKey(), 3)
-            publishMenuState(
-                PulseBarMenuState(
-                    snapshot = snapshot,
-                    firstUsage = rows.getOrNull(0),
-                    secondUsage = rows.getOrNull(1),
-                    thirdUsage = rows.getOrNull(2),
-                ),
-            )
-        }
-    }
-
-    private fun publishMenuState(next: PulseBarMenuState) {
-        latestMenuState = next
-        menuStateFlow.value = next
-        syncStateFlow.value = reporter.readSyncState(currentConfig())
-        interactionStateFlow.value = emptyInteractionState()
-    }
-
     actual val menuState: Flow<PulseBarMenuState> = menuStateFlow.asStateFlow()
 
-    actual val config: Flow<PulseBarConfig> =
-        configStore.configs.distinctUntilChanged().map { it.toExport() }
+    actual val config: Flow<PulseBarConfig> = configStore.configs.distinctUntilChanged().map { it.toExport() }
 
-    actual val syncState: Flow<PulseBarSyncState> =
-        syncStateFlow.asStateFlow().filterNotNull()
 
-    actual val interactionState: Flow<PulseBarInteractionState> =
-        interactionStateFlow.asStateFlow()
+
+    private val endpointConfigs: MutableStateFlow<Map<String, StateFlow<PulseConfig>>> = MutableStateFlow(
+        mapOf()
+    )
+    // 缓存，当 endpoint 被移除时，其 flow 仍然存在。
+    // 另外一种问题，endpoint config 变化时，要考虑是否自动重连
+    private val endpointConfigStateflowMap: MutableMap<String, MutableStateFlow<PulseConfig>> = mutableMapOf()
+
+    init {
+        val initial = readConfig()
+
+        logger(PulseLogCategory.AppLifecycle).i {
+            "bridge.initialized endpoints=${initial.endpoints.size} enabled=${initial.endpoints.count { it.enabled }}"
+        }
+
+        scope.launch {
+            configStore.configs.collect { proto ->
+                val export = proto.toExport()
+                logger(PulseLogCategory.ConfigStore).d {
+                    "config.observed endpoints=${export.endpoints.size}" +
+                        " enabled=${export.endpoints.count { it.enabled }}" +
+                        " eventDriven=true"
+                }
+            }
+        }
+
+        scope.launch {
+            config.collect { config ->
+                val configMap = config.endpoints.associate {
+                    val cfg = PulseConfig(
+                        endpoint = EndpointConfig(
+                            roomId = it.workspaceId,
+                            deviceId = it.siteId,
+                            baseUrl = it.endpointUrl,
+                            workspaceId = it.workspaceId,
+                            apiKey = it.apiKey,
+                        ),
+                        stream = StreamConfig(),
+                        commonConfig = CommonConfig()
+                    )
+                    // 难点在于当 endpoint 发生变化时，
+                    // 比如 disabled(写入配置），新增/移除 endpoint，默认 disabled
+                    val flow = endpointConfigStateflowMap.getOrElse(it.id){ MutableStateFlow(cfg) }
+                    endpointConfigStateflowMap[it.id] = flow
+                    flow.update { cfg }
+                    it.id to flow
+                }
+                // 对于移除 endpoint，会体现在 config 上，
+                // endpointConfig 可能直接消失，对应的 streamClient 还并未处理
+                endpointConfigs.update { configMap }
+            }
+        }
+    }
+
+    actual val syncState: Flow<PulseBarSyncState> = syncStateFlow.asStateFlow().filterNotNull()
 
     actual val todayStats: Flow<PulseBarTodayStats> = flow {
         val todayIso = todayKey()
@@ -262,41 +141,28 @@ actual class PulseBarBridge actual constructor() {
             }
     }
 
-    actual fun startStream(
-        roomId: String,
-        deviceId: String,
-        baseUrl: String,
-        workspaceId: String,
-        apiKey: String,
-        sampleRate: Int,
-        channels: Int,
-        chunkDurationMs: Int,
-    ) {
-        streamClient.start(
-            StreamConnectionConfig(
-                roomId = roomId,
-                deviceId = deviceId,
-                baseUrl = baseUrl,
-                workspaceId = workspaceId,
-                apiKey = apiKey,
-                sampleRate = sampleRate.coerceAtLeast(8_000),
-                channels = channels.coerceAtLeast(1),
-                chunkDurationMs = chunkDurationMs.coerceIn(50, 5_000),
-            ),
-        )
+    actual fun connect(endpointId: String) {
+        endpointConfigs.value[endpointId]?.let { config ->
+            val scMap = EventDispatcher.streamClients.value
+            if(scMap[endpointId] == null) {
+                val sc = DeviceV2Client(scope = scope, config, Stream.streamStateFlow)
+                EventDispatcher.streamClients.update {
+                    it + (endpointId to sc)
+                }
+            }
+            EventDispatcher.streamClients.value[endpointId]?.start()
+        }
     }
 
+    actual fun emitNativeEvent(event: NativeDeviceEvent) {
+        EventDispatcher.emitNativeEvent(event)
+    }
+
+    // 所有启动的，Command
     actual fun stopStream() {
-        streamClient.stop()
     }
 
     actual fun emitStreamLocalStop() {
-        streamClient.emitLocalStop(StreamStopReason.MANUAL_STOP)
-    }
-
-    actual fun submitStreamPcmBase64(chunkBase64: String) {
-        val decoded = decodeBase64OrNull(chunkBase64) ?: return
-        streamClient.submitPcm(decoded)
     }
 
     actual fun updateStreamMediaState(
@@ -304,16 +170,6 @@ actual class PulseBarBridge actual constructor() {
         playbackPlaying: Boolean,
         captureRunning: Boolean,
     ) {
-        streamClient.updateMediaState(
-            StreamNativeMediaState(
-                permission = if (permissionAllow) StreamMediaPermission.ALLOW
-                else StreamMediaPermission.DISALLOW,
-                playback = if (playbackPlaying) StreamPlaybackWire.PLAYING
-                else StreamPlaybackWire.PAUSED,
-                capture = if (captureRunning) StreamCaptureRuntime.CAPTURING
-                else StreamCaptureRuntime.NO_CAPTURE,
-            ),
-        )
     }
 
     actual fun updateStreamMedia(
@@ -327,30 +183,8 @@ actual class PulseBarBridge actual constructor() {
         durationSeconds: Double,
         isPlaying: Boolean,
     ) {
-        val hasAnyField = sequenceOf(providerId, trackId, title, artist, album, artworkUrl)
-            .any { !it.isNullOrBlank() } || durationSeconds > 0.0
-        if (!hasAnyField) {
-            streamClient.updateMedia(null)
-            return
-        }
-        streamClient.updateMedia(
-            StreamMedia(
-                providerId = providerId?.ifBlank { null },
-                trackId = trackId?.ifBlank { null },
-                title = title?.ifBlank { null },
-                artist = artist?.ifBlank { null },
-                album = album?.ifBlank { null },
-                artworkUrl = artworkUrl?.ifBlank { null },
-                progressSeconds = progressSeconds.coerceAtLeast(0.0),
-                durationSeconds = durationSeconds.takeIf { it > 0.0 },
-                playbackState = if (isPlaying) StreamPlaybackWire.PLAYING
-                else StreamPlaybackWire.PAUSED,
-            ),
-        )
-    }
 
-    actual val streamStats: Flow<PulseBarStreamStats> =
-        streamClient.stats.map { it.toExport() }
+    }
 
     actual fun readStats(dayIso: String, limit: Int): PulseBarStatsPage {
         val rows = store.topRowsForDay(dayIso, limit)
@@ -378,139 +212,25 @@ actual class PulseBarBridge actual constructor() {
             topMedia = store.rowsForDay(dayIso, UsageSlice.MEDIA, limit)
         )
 
-    actual fun readConfig(): PulseBarConfig = currentConfig()
+    actual fun readConfig(): PulseBarConfig = configStore.snapshot().toExport()
 
     actual fun updateConfig(config: PulseBarConfig) {
         configStore.replace(config.toProto())
     }
 
-    actual fun readInteractionState(): PulseBarInteractionState =
-        emptyInteractionState()
+    actual fun readSyncState(): PulseBarSyncState = TODO()
 
-    actual fun readSyncState(): PulseBarSyncState =
-        reporter.readSyncState(currentConfig())
-
-    actual fun retryEndpoint(): Boolean {
-        forceTick()
-        return true
-    }
-
-    actual fun acceptInteraction(requestId: String): Boolean = false
-
-    actual fun dismissInteraction(requestId: String): Boolean = false
 
     actual fun mediaCommand(command: PulseBarPlaybackCommand): Boolean {
-        val appleScriptVerb = when (command) {
-            PulseBarPlaybackCommand.PREVIOUS -> "previous track"
-            PulseBarPlaybackCommand.TOGGLE_PLAY_PAUSE -> "playpause"
-            PulseBarPlaybackCommand.NEXT -> "next track"
-        }
-        val spotifyScript = """
-            tell application "Spotify"
-                if it is running then
-                    $appleScriptVerb
-                    return "ok"
-                end if
-            end tell
-        """.trimIndent()
-        if (runAppleScript(spotifyScript) == "ok") {
-            forceTick()
-            return true
-        }
-
-        val musicScript = """
-            tell application "Music"
-                if it is running then
-                    $appleScriptVerb
-                    return "ok"
-                end if
-            end tell
-        """.trimIndent()
-        val success = runAppleScript(musicScript) == "ok"
-        if (success) forceTick()
-        return success
+        return Probe.mediaCommand(command)
     }
 
     actual fun seekMedia(progressSeconds: Double): Boolean {
-        val normalized = progressSeconds.toString()
-        val spotifyScript = """
-            tell application "Spotify"
-                if it is running then
-                    set player position to $normalized
-                    return "ok"
-                end if
-            end tell
-        """.trimIndent()
-        if (runAppleScript(spotifyScript) == "ok") {
-            forceTick()
-            return true
-        }
-
-        val musicScript = """
-            tell application "Music"
-                if it is running then
-                    set player position to $normalized
-                    return "ok"
-                end if
-            end tell
-        """.trimIndent()
-        val success = runAppleScript(musicScript) == "ok"
-        if (success) forceTick()
-        return success
-    }
-
-    private fun readSnapshot(): PulseBarSnapshot {
-        val frontApp = resolvedFrontmostApplication()
-        val effectiveApp = if (frontApp.bundleId in excludedStatsBundleIds || frontApp.appName == "Unknown App") {
-            lastVisibleApp ?: frontApp
-        } else {
-            frontApp.also { lastVisibleApp = it }
-        }
-        val pageTitle = browserPageTitle(effectiveApp.bundleId)
-        val media = mediaContext(effectiveApp.bundleId)
-        return PulseBarSnapshot(
-            appName = effectiveApp.appName,
-            bundleId = effectiveApp.bundleId,
-            pageTitle = pageTitle,
-            observedAtIso8601 = iso8601Now(),
-            media = media
-        )
-    }
-
-    private fun resolvedFrontmostApplication(): FrontApp {
-        val app = NSWorkspace.sharedWorkspace.frontmostApplication
-        val bundleId = app?.bundleIdentifier ?: "unknown"
-        val name = resolvedApplicationName(
-            bundleId = bundleId,
-            fallbackName = app?.localizedName
-        )
-        if (bundleId !in excludedStatsBundleIds && name != "PulseBarNative") {
-            return FrontApp(name, bundleId)
-        }
-
-        val script = """
-            tell application "System Events"
-                tell first application process whose frontmost is true
-                    return name & linefeed & bundle identifier
-                end tell
-            end tell
-        """.trimIndent()
-        val resolved = runAppleScript(script)?.lines().orEmpty()
-        return FrontApp(
-            appName = resolved.getOrNull(0)?.ifBlank { name } ?: name,
-            bundleId = resolved.getOrNull(1)?.ifBlank { bundleId } ?: bundleId
-        )
-    }
-
-    private fun resolvedApplicationName(bundleId: String, fallbackName: String?): String {
-        val resolved = io.github.kt.pulsebar.core.platform.resolveAppDisplayName(bundleId)
-        return resolved
-            ?: fallbackName?.takeIf { it.isNotBlank() }
-            ?: "Unknown App"
+        return Probe.seekMedia(progressSeconds)
     }
 
     private fun updateUsage(snapshot: PulseBarSnapshot) {
-        val nowMillis = currentTimeMillis()
+        val nowMillis = nowInMillis()
         val day = todayKey()
         val label = buildString {
             append(snapshot.appName)
@@ -586,230 +306,16 @@ actual class PulseBarBridge actual constructor() {
         lastObservedAtMillis = nowMillis
     }
 
-    private fun browserPageTitle(bundleId: String): String? {
-        val script = when (bundleId) {
-            "com.apple.Safari" -> """
-                tell application "Safari"
-                    if it is running and (count of documents) > 0 then
-                        return name of front document
-                    end if
-                end tell
-            """.trimIndent()
-
-            "com.google.Chrome" -> """
-                tell application "Google Chrome"
-                    if it is running and (count of windows) > 0 then
-                        return title of active tab of front window
-                    end if
-                end tell
-            """.trimIndent()
-
-            else -> return null
-        }
-        return runAppleScript(script)?.takeIf { it.isNotBlank() }
+    private fun todayKey(): String = nowInIso8601().substring(0, 10)
+    actual fun submitStreamPcmBase64(chunkBase64: String) {
     }
 
-    private fun mediaContext(frontBundleId: String): PulseBarMedia? {
-        val candidates = mediaProbes.mapNotNull { probe ->
-            val media = probe.bundleIds.firstNotNullOfOrNull { bundleId ->
-                val raw = runAppleScript(buildMediaProbeScript(bundleId, probe.providerId, probe.sourceLabel))
-                raw?.lines()?.let(probe.parser)
-            }
-            media?.let { probe to it }
-        }
-        if (candidates.isEmpty()) return null
-
-        candidates.firstOrNull { (probe, media) ->
-            frontBundleId in probe.bundleIds && media.isPlaying
-        }?.let {
-            lastSelectedMediaProviderId = it.first.providerId
-            return it.second
-        }
-
-        candidates.firstOrNull { (_, media) ->
-            media.isPlaying
-        }?.let {
-            lastSelectedMediaProviderId = it.first.providerId
-            return it.second
-        }
-
-        candidates.firstOrNull { (probe, _) ->
-            probe.providerId == lastSelectedMediaProviderId
-        }?.let { return it.second }
-
-        candidates.firstOrNull { (probe, _) ->
-            frontBundleId in probe.bundleIds
-        }?.let {
-            lastSelectedMediaProviderId = it.first.providerId
-            return it.second
-        }
-
-        return candidates.firstOrNull()?.also {
-            lastSelectedMediaProviderId = it.first.providerId
-        }?.second
+    actual fun retryEndpoint(): Boolean {
+        TODO("Not yet implemented")
     }
-
-    private fun buildMediaProbeScript(bundleId: String, providerId: String, sourceLabel: String): String =
-        when (providerId) {
-            "spotify" -> """
-                tell application id "$bundleId"
-                    if it is running then
-                        if player state is playing or player state is paused then
-                            return "$providerId" & linefeed & "$sourceLabel" & linefeed & "track" & linefeed & (player state as text) & linefeed & (player position as text) & linefeed & (id of current track) & linefeed & (spotify url of current track) & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (album artist of current track) & linefeed & (duration of current track as text) & linefeed & (track number of current track as text) & linefeed & (disc number of current track as text) & linefeed & (artwork url of current track)
-                        end if
-                    end if
-                end tell
-            """.trimIndent()
-
-            "apple-music" -> """
-                tell application id "$bundleId"
-                    if it is running then
-                        if player state is playing or player state is paused then
-                            set trackId to ""
-                            set artworkLink to ""
-                            set playlistId to ""
-                            set playlistName to ""
-                            try
-                                set trackId to (persistent ID of current track)
-                            end try
-                            try
-                                set artworkLink to (artwork url of current track)
-                            end try
-                            try
-                                set playlistId to (persistent ID of current playlist)
-                                set playlistName to (name of current playlist)
-                            end try
-                            return "$providerId" & linefeed & "$sourceLabel" & linefeed & (class of current track as text) & linefeed & (player state as text) & linefeed & (player position as text) & linefeed & trackId & linefeed & "" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (album artist of current track) & linefeed & (duration of current track as text) & linefeed & (track number of current track as text) & linefeed & (disc number of current track as text) & linefeed & artworkLink & linefeed & playlistId & linefeed & playlistName
-                        end if
-                    end if
-                end tell
-            """.trimIndent()
-
-            else -> """
-                tell application id "$bundleId"
-                    if it is running then
-                        if player state is playing or player state is paused then
-                            set trackId to ""
-                            set artworkLink to ""
-                            set playlistId to ""
-                            set playlistName to ""
-                            try
-                                set trackId to (persistent ID of current track)
-                            end try
-                            try
-                                set artworkLink to (artwork url of current track)
-                            end try
-                            try
-                                set playlistId to (persistent ID of current playlist)
-                                set playlistName to (name of current playlist)
-                            end try
-                            return "$providerId" & linefeed & "$sourceLabel" & linefeed & "track" & linefeed & (player state as text) & linefeed & (player position as text) & linefeed & trackId & linefeed & "" & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (album artist of current track) & linefeed & (duration of current track as text) & linefeed & (track number of current track as text) & linefeed & (disc number of current track as text) & linefeed & artworkLink & linefeed & playlistId & linefeed & playlistName
-                        end if
-                    end if
-                end tell
-            """.trimIndent()
-
-        }
-
-    private fun parseSpotifyMedia(lines: List<String>): PulseBarMedia? {
-        val values = lines.map { it.trim() }
-        if (values.size < 8) return null
-        val padded = values + List((15 - values.size).coerceAtLeast(0)) { "" }
-        val rawDuration = padded[11].toIntOrNull() ?: 0
-        val durationSeconds = if (rawDuration > 10_000) rawDuration / 1000 else rawDuration
-        return PulseBarMedia(
-            providerId = padded[0],
-            source = padded[1],
-            itemType = normalizeItemType(padded[2]),
-            title = padded[7],
-            artist = padded[8],
-            album = padded[9].ifBlank { null },
-            albumArtist = padded[10].ifBlank { null },
-            artworkUrl = padded[14].ifBlank { null },
-            progressSeconds = padded[4].replace(',', '.').toDoubleOrNull() ?: 0.0,
-            durationSeconds = durationSeconds,
-            linkUrl = padded[6].ifBlank { null },
-            trackId = padded[5].ifBlank { null },
-            isPlaying = padded[3] == "playing",
-            trackNumber = padded[12].toIntOrNull(),
-            discNumber = padded[13].toIntOrNull(),
-            collectionId = null,
-            collectionTitle = null,
-            collectionLinkUrl = null
-        )
-    }
-
-    private fun parseITunesStyleMedia(lines: List<String>): PulseBarMedia? {
-        val values = lines.map { it.trim() }
-        if (values.size < 17) return null
-        val durationSeconds = values[11].replace(',', '.').toDoubleOrNull()?.toInt() ?: 0
-        val playlistId = values.getOrNull(15)?.ifBlank { null }
-        val playlistTitle = values.getOrNull(16)?.ifBlank { null }
-        return PulseBarMedia(
-            providerId = values[0],
-            source = values[1],
-            itemType = normalizeItemType(values[2]),
-            title = values[7],
-            artist = values[8],
-            album = values[9].ifBlank { null },
-            albumArtist = values[10].ifBlank { null },
-            artworkUrl = values[14].ifBlank { null },
-            progressSeconds = values[4].replace(',', '.').toDoubleOrNull() ?: 0.0,
-            durationSeconds = durationSeconds,
-            linkUrl = null,
-            trackId = values[5].ifBlank { null },
-            isPlaying = values[3] == "playing",
-            trackNumber = values[12].toIntOrNull(),
-            discNumber = values[13].toIntOrNull(),
-            collectionId = playlistId,
-            collectionTitle = playlistTitle,
-            collectionLinkUrl = playlistId?.let { "music://playlist/$it" }
-        )
-    }
-
-    private fun normalizeItemType(raw: String?): String {
-        val value = raw?.trim()?.lowercase().orEmpty()
-        return when {
-            value.contains("track") || value.contains("song") || value.contains("file") -> "track"
-            value.contains("album") -> "album"
-            value.contains("playlist") -> "playlist"
-            value.contains("episode") || value.contains("podcast") -> "episode"
-            value.contains("stream") || value.contains("radio") -> "stream"
-            else -> "unknown"
-        }
-    }
-
-    private fun runAppleScript(script: String): String? {
-        val appleScript = NSAppleScript(source = script)
-        val result = appleScript.executeAndReturnError(null)
-        if (result.stringValue == null) {
-            logger(PulseLogCategory.PlatformAdapter).d { "applescript.empty_result" }
-        }
-        return result.stringValue?.trim()
-    }
-
-    private fun currentConfig(): PulseBarConfig = configStore.snapshot().toExport()
-
-    private fun emptyMenuState(): PulseBarMenuState =
-        PulseBarMenuState(
-            snapshot = null,
-            firstUsage = null,
-            secondUsage = null,
-            thirdUsage = null,
-        )
-
-    private fun currentTimeMillis(): Long =
-        (NSDate().timeIntervalSinceReferenceDate * 1000.0).toLong()
-
-    private fun iso8601Now(): String {
-        val formatter = NSDateFormatter().apply {
-            dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX"
-        }
-        return formatter.stringFromDate(NSDate())
-    }
-
-    private fun todayKey(): String = iso8601Now().substring(0, 10)
 }
+
+
 
 private data class SessionParts(
     val bundleId: String,
@@ -825,51 +331,3 @@ private fun parseSessionParts(session: SessionState): SessionParts {
         mediaKey = parts.getOrNull(2)?.takeIf { it.isNotBlank() }
     )
 }
-
-private fun StreamStats.toExport(): PulseBarStreamStats =
-    PulseBarStreamStats(
-        connectionState = connectionState.toExport(),
-        connectionStateName = connectionState.toExport().name,
-        webSocketUrl = webSocketUrl,
-        lastConnectedAtMillis = lastConnectedAtMillis ?: 0L,
-        lastDisconnectedAtMillis = lastDisconnectedAtMillis ?: 0L,
-        nextReconnectAtMillis = nextReconnectAtMillis ?: 0L,
-        reconnectDelaySeconds = reconnectDelaySeconds ?: 0.0,
-        lastSendAtMillis = lastSendAtMillis ?: 0L,
-        lastErrorMessage = lastErrorMessage,
-        acceptedFrames = acceptedFrames,
-        acceptedBytes = acceptedBytes,
-        droppedFrames = droppedFrames,
-        droppedChunks = droppedChunks,
-        lastSequence = lastSequence,
-        bufferedFrames = bufferedFrames,
-        queuedChunks = queuedChunks,
-        queuedBytes = queuedBytes,
-        queuedFirstSequence = queuedFirstSequence ?: -1L,
-        queuedLastSequence = queuedLastSequence ?: -1L,
-        isSending = isSending,
-        maxQueuedChunks = maxQueuedChunks,
-        reconnectCount = reconnectCount,
-        reconnectAttempt = reconnectAttempt,
-        chunksSent = chunksSent,
-        bytesSent = bytesSent,
-        sendBitrateKbps = sendBitrateKbps ?: 0.0,
-        lastChunkBytes = lastChunkBytes,
-        chunkDurationMs = chunkDurationMs,
-        statusText = statusText,
-        captureRequested = captureRequested,
-    )
-
-private fun StreamStats.ConnectionState.toExport(): PulseBarStreamConnectionState = when (this) {
-    StreamStats.ConnectionState.Idle -> PulseBarStreamConnectionState.IDLE
-    StreamStats.ConnectionState.Connecting -> PulseBarStreamConnectionState.CONNECTING
-    StreamStats.ConnectionState.Connected -> PulseBarStreamConnectionState.CONNECTED
-    StreamStats.ConnectionState.Reconnecting -> PulseBarStreamConnectionState.RECONNECTING
-    StreamStats.ConnectionState.Stopping -> PulseBarStreamConnectionState.STOPPING
-    StreamStats.ConnectionState.Stopped -> PulseBarStreamConnectionState.STOPPED
-    StreamStats.ConnectionState.Failed -> PulseBarStreamConnectionState.FAILED
-}
-
-@OptIn(ExperimentalEncodingApi::class)
-private fun decodeBase64OrNull(raw: String): ByteArray? =
-    runCatching { Base64.Default.decode(raw) }.getOrNull()

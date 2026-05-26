@@ -4,7 +4,6 @@ import io.github.kt.pulsebar.export.PulseBarConfig
 import io.github.kt.pulsebar.export.PulseBarEndpointConfig
 import io.github.kt.pulsebar.export.PulseBarInteractionExecutionMode
 import io.github.kt.pulsebar.export.PulseBarInteractionPlaybackMode
-import io.github.kt.pulsebar.export.PulseBarTransport
 
 internal fun PulseBarConfigProto.toExport(): PulseBarConfig =
     PulseBarConfig(
@@ -27,9 +26,6 @@ internal fun EndpointProto.toExport(): PulseBarEndpointConfig =
         id = id,
         name = name,
         enabled = enabled,
-        disconnected = disconnected,
-        transport = transport.toExport(),
-        transportName = transport.name,
         endpointUrl = endpointUrl,
         workspaceId = workspaceId,
         siteId = siteId,
@@ -37,12 +33,6 @@ internal fun EndpointProto.toExport(): PulseBarEndpointConfig =
         batchWindowSeconds = batchWindowSeconds,
     )
 
-internal fun TransportProto.toExport(): PulseBarTransport =
-    when (this) {
-        TransportProto.WEBSOCKET -> PulseBarTransport.WEBSOCKET
-        TransportProto.WEBHOOK -> PulseBarTransport.WEBHOOK
-        TransportProto.HTTP_BATCH -> PulseBarTransport.HTTP_BATCH
-    }
 
 internal fun InteractionExecutionModeProto.toExport(): PulseBarInteractionExecutionMode =
     when (this) {
@@ -66,8 +56,6 @@ internal fun PulseBarConfig.toProto(): PulseBarConfigProto =
         pagePollingMillis = pagePollingMillis,
         mediaPollingMillis = mediaPollingMillis,
         allowWebInteractions = allowWebInteractions,
-        interactionExecutionMode = interactionExecutionMode.toProto(),
-        interactionPlaybackMode = interactionPlaybackMode.toProto(),
     )
 
 internal fun PulseBarEndpointConfig.toProto(): EndpointProto =
@@ -75,21 +63,12 @@ internal fun PulseBarEndpointConfig.toProto(): EndpointProto =
         id = id.ifBlank { endpointUrl.ifBlank { EndpointProto.DEFAULT_ID } },
         name = name.ifBlank { EndpointProto.DEFAULT_NAME },
         enabled = enabled,
-        disconnected = disconnected,
-        transport = transport.toProto(),
         endpointUrl = endpointUrl,
         workspaceId = workspaceId,
         siteId = siteId,
         apiKey = apiKey,
         batchWindowSeconds = batchWindowSeconds.coerceAtLeast(1),
     )
-
-internal fun PulseBarTransport.toProto(): TransportProto =
-    when (this) {
-        PulseBarTransport.WEBSOCKET -> TransportProto.WEBSOCKET
-        PulseBarTransport.WEBHOOK -> TransportProto.WEBHOOK
-        PulseBarTransport.HTTP_BATCH -> TransportProto.HTTP_BATCH
-    }
 
 internal fun PulseBarInteractionExecutionMode.toProto(): InteractionExecutionModeProto =
     when (this) {

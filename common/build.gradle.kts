@@ -16,7 +16,11 @@ kotlin {
         moduleName = "PulseBarShared"
         flattenPackage = "io.github.kt.pulsebar.export"
         configure {
-            freeCompilerArgs.add("-Xexpect-actual-classes")
+            freeCompilerArgs.addAll(
+                "-Xexpect-actual-classes",
+                "-opt-in=kotlin.time.ExperimentalTime",
+                "-opt-in=kotlinx.coroutines.InternalCoroutinesApi",
+            )
         }
     }
 
@@ -27,6 +31,7 @@ kotlin {
                 implementation(libs.androidx.sqlite.bundled)
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.serialization.json)
+                implementation(libs.kotlinx.datetime)
                 implementation(libs.ktor.client.core)
                 implementation(libs.ktor.client.websockets)
                 implementation(libs.androidx.datastore.core)
@@ -48,12 +53,11 @@ kotlin {
         }
 
         val macosMain by creating {
-            dependsOn(commonMain)
             dependencies {
                 implementation(libs.ktor.client.darwin)
             }
         }
-        val macosArm64Main by getting { dependsOn(macosMain) }
+        val macosArm64Main by getting { }
     }
 }
 

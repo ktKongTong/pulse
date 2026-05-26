@@ -35,8 +35,6 @@ internal data class EndpointProto(
     val id: String,
     val name: String,
     val enabled: Boolean = false,
-    val disconnected: Boolean = false,
-    val transport: TransportProto = TransportProto.WEBSOCKET,
     val endpointUrl: String = "",
     val workspaceId: String = "",
     val siteId: String = "",
@@ -46,16 +44,8 @@ internal data class EndpointProto(
     companion object {
         const val DEFAULT_ID: String = "default-endpoint"
         const val DEFAULT_NAME: String = "Primary endpoint"
-
         fun default(): EndpointProto = EndpointProto(id = DEFAULT_ID, name = DEFAULT_NAME)
     }
-}
-
-@Serializable
-internal enum class TransportProto {
-    WEBSOCKET,
-    WEBHOOK,
-    HTTP_BATCH,
 }
 
 @Serializable

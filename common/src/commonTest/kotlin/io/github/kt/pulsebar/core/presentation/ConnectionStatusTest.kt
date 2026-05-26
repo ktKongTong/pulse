@@ -2,7 +2,6 @@ package io.github.kt.pulsebar.core.presentation
 
 import io.github.kt.pulsebar.export.PulseBarEndpointConfig
 import io.github.kt.pulsebar.export.PulseBarEndpointSyncState
-import io.github.kt.pulsebar.export.PulseBarTransport
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -114,9 +113,6 @@ class ConnectionStatusTest {
         id = "default-endpoint",
         name = "Primary",
         enabled = enabled,
-        disconnected = false,
-        transport = PulseBarTransport.WEBSOCKET,
-        transportName = PulseBarTransport.WEBSOCKET.name,
         endpointUrl = endpointUrl,
         workspaceId = "ws",
         siteId = "site",
@@ -131,7 +127,6 @@ class ConnectionStatusTest {
         id = "default-endpoint",
         name = "Primary",
         enabled = true,
-        transportName = PulseBarTransport.WEBSOCKET.name,
         endpointUrl = "https://ingest.example",
         status = status,
         lastStatus = lastStatus,

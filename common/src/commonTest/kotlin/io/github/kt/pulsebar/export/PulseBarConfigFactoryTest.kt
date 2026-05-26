@@ -12,9 +12,6 @@ class PulseBarConfigFactoryTest {
                 id = "e-1",
                 name = "Primary",
                 enabled = true,
-                disconnected = false,
-                transport = PulseBarTransport.WEBSOCKET,
-                transportName = "WEBSOCKET",
                 endpointUrl = "https://pulse.example.com",
                 workspaceId = "ws",
                 siteId = "site",
@@ -25,9 +22,6 @@ class PulseBarConfigFactoryTest {
                 id = "e-2",
                 name = "Secondary",
                 enabled = false,
-                disconnected = true,
-                transport = PulseBarTransport.WEBHOOK,
-                transportName = "WEBHOOK",
                 endpointUrl = "",
                 workspaceId = "",
                 siteId = "",
@@ -52,7 +46,6 @@ class PulseBarConfigFactoryTest {
         val draft = PulseBarConfigFactory.toDraft(sampleConfig())
         assertEquals(2, draft.endpoints.size)
         assertEquals("e-1", draft.endpoints[0].id)
-        assertEquals("WEBSOCKET", draft.endpoints[0].transportName)
         assertEquals("ws", draft.endpoints[0].workspaceId)
         assertEquals(300, draft.idleThresholdSeconds)
         assertEquals("CONFIRM", draft.interactionExecutionModeName)
@@ -63,16 +56,10 @@ class PulseBarConfigFactoryTest {
         val rebuilt = PulseBarConfigFactory.fromDraft(PulseBarConfigFactory.toDraft(original))
         assertEquals(original.endpoints.size, rebuilt.endpoints.size)
         assertEquals(original.endpoints[0].id, rebuilt.endpoints[0].id)
-        assertEquals(original.endpoints[0].transport, rebuilt.endpoints[0].transport)
         assertEquals(original.interactionExecutionMode, rebuilt.interactionExecutionMode)
         assertEquals(original.interactionPlaybackModeName, rebuilt.interactionPlaybackModeName)
     }
 
-    @Test fun transportByName_default() {
-        assertEquals(PulseBarTransport.WEBSOCKET, PulseBarConfigFactory.transportByName("anything"))
-        assertEquals(PulseBarTransport.WEBHOOK, PulseBarConfigFactory.transportByName("WEBHOOK"))
-        assertEquals(PulseBarTransport.HTTP_BATCH, PulseBarConfigFactory.transportByName("HTTP_BATCH"))
-    }
 
     @Test fun streamCandidates_prefersEnabledAndCredentialed() {
         val draft = PulseBarConfigFactory.toDraft(sampleConfig())
@@ -84,7 +71,7 @@ class PulseBarConfigFactoryTest {
     @Test fun streamCandidates_excludesDisconnectedEndpoints() {
         val draft = PulseBarConfigFactory.toDraft(sampleConfig()).let {
             PulseBarConfigDraft(
-                endpoints = listOf(it.endpoints[0].copy(enabled = false, disconnected = true)),
+                endpoints = listOf(it.endpoints[0].copy(enabled = false)),
                 idleThresholdSeconds = it.idleThresholdSeconds,
                 changeStabilityMillis = it.changeStabilityMillis,
                 heartbeatSeconds = it.heartbeatSeconds,
@@ -124,7 +111,6 @@ class PulseBarConfigFactoryTest {
         val d = PulseBarConfigFactory.defaultEndpoint(2)
         assertEquals("Endpoint 3", d.name)
         assertEquals(false, d.enabled)
-        assertEquals("WEBSOCKET", d.transportName)
         assertEquals(15, d.batchWindowSeconds)
         // id is a platform-generated UUID — just check it's non-empty.
         assertTrue(d.id.isNotEmpty())
@@ -136,11 +122,9 @@ private fun PulseBarEndpointDraft.copy(
     id: String = this.id,
     name: String = this.name,
     enabled: Boolean = this.enabled,
-    disconnected: Boolean = this.disconnected,
-    transportName: String = this.transportName,
     endpointUrl: String = this.endpointUrl,
     workspaceId: String = this.workspaceId,
     siteId: String = this.siteId,
     apiKey: String = this.apiKey,
     batchWindowSeconds: Int = this.batchWindowSeconds,
-) = PulseBarEndpointDraft(id, name, enabled, disconnected, transportName, endpointUrl, workspaceId, siteId, apiKey, batchWindowSeconds)
+) = PulseBarEndpointDraft(id, name, enabled, endpointUrl, workspaceId, siteId, apiKey, batchWindowSeconds)

@@ -11,6 +11,7 @@ enum class PulseLogCategory(val tag: String) {
     SyncEndpoint("sync.endpoint"),
     StreamSession("stream.session"),
     PlatformAdapter("platform.adapter"),
+    NativeEvent("native.event")
 }
 
 enum class PulseLogLevel { Debug, Info, Warn, Error }

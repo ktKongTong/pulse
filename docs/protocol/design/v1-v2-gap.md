@@ -45,7 +45,7 @@ v2 的目标主路径是：
 
 v2 native 仍复用下列概念，但它们不再代表 v1 wire protocol，也不再使用 `LiveListen*` 命名：
 
-- `StreamConnectionConfig`
+- `ConnectionConfig`
 - `StreamStats`
 - `StreamMedia`
 - `StreamNativeMediaState`
