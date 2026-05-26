@@ -1,6 +1,7 @@
 package io.github.kt.pulsebar.core.presentation
 
 import io.github.kt.pulsebar.export.PulseBarMedia
+import io.github.kt.pulsebar.export.PulseBarStreamConnectionState
 
 /**
  * Primitive view of the Stream publisher stats. Mirrors the subset
@@ -8,7 +9,7 @@ import io.github.kt.pulsebar.export.PulseBarMedia
  * helpers in this file are free of dependencies on macosMain code.
  */
 data class StreamStatusInput(
-    val connectionStateName: String, // "IDLE" | "CONNECTING" | "CONNECTED" | "RECONNECTING" | "STOPPING" | "STOPPED" | "FAILED"
+    val connectionState: PulseBarStreamConnectionState,
     val isSending: Boolean,
     val isCapturing: Boolean,
     val capturedFrames: Long,
@@ -20,13 +21,13 @@ data class StreamStatusInput(
 object StreamPresentation {
 
     /** Swift's `streamStatusText`. */
-    fun streamStatusText(sourceName: String, input: StreamStatusInput): String = when (input.connectionStateName) {
-        "CONNECTING" -> "Connecting Stream server…"
-        "CONNECTED" -> if (input.isSending) "Sending $sourceName audio…" else "Capturing $sourceName…"
-        "RECONNECTING" -> "Reconnecting Stream server…"
-        "FAILED" -> "Stream connection failed"
-        "STOPPING" -> "Stopping stream…"
-        "STOPPED" -> "Stream stopped"
+    fun streamStatusText(sourceName: String, input: StreamStatusInput): String = when (input.connectionState) {
+        PulseBarStreamConnectionState.CONNECTING -> "Connecting Stream server…"
+        PulseBarStreamConnectionState.CONNECTED -> if (input.isSending) "Sending $sourceName audio…" else "Capturing $sourceName…"
+        PulseBarStreamConnectionState.RECONNECTING -> "Reconnecting Stream server…"
+        PulseBarStreamConnectionState.FAILED -> "Stream connection failed"
+        PulseBarStreamConnectionState.STOPPING -> "Stopping stream…"
+        PulseBarStreamConnectionState.STOPPED -> "Stream stopped"
         else -> "Preparing stream…"
     }
 

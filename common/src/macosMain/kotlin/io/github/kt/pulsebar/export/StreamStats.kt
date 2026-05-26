@@ -7,7 +7,6 @@ import io.github.kt.pulsebar.core.stream.StreamStats
 private fun StreamStats.toExport(): PulseBarStreamStats =
     PulseBarStreamStats(
         connectionState = connectionState.toExport(),
-        connectionStateName = connectionState.toExport().name,
         webSocketUrl = webSocketUrl,
         lastConnectedAtMillis = lastConnectedAtMillis ?: 0L,
         lastDisconnectedAtMillis = lastDisconnectedAtMillis ?: 0L,

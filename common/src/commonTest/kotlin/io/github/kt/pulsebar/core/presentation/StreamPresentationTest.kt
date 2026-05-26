@@ -1,12 +1,13 @@
 package io.github.kt.pulsebar.core.presentation
 
+import io.github.kt.pulsebar.export.PulseBarStreamConnectionState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class StreamPresentationTest {
 
     private fun input(
-        state: String = "IDLE",
+        state: PulseBarStreamConnectionState = PulseBarStreamConnectionState.IDLE,
         sending: Boolean = false,
         capturing: Boolean = false,
         capturedFrames: Long = 0L,
@@ -14,7 +15,7 @@ class StreamPresentationTest {
         endpointCount: Int = 1,
         connectedEndpointCount: Int = 0,
     ) = StreamStatusInput(
-        connectionStateName = state,
+        connectionState = state,
         isSending = sending,
         isCapturing = capturing,
         capturedFrames = capturedFrames,
@@ -26,26 +27,26 @@ class StreamPresentationTest {
     @Test fun streamStatusText_connecting() {
         assertEquals(
             "Connecting Stream server…",
-            StreamPresentation.streamStatusText("Spotify", input(state = "CONNECTING")),
+            StreamPresentation.streamStatusText("Spotify", input(state = PulseBarStreamConnectionState.CONNECTING)),
         )
     }
 
     @Test fun streamStatusText_connectedSending() {
         assertEquals(
             "Sending Spotify audio…",
-            StreamPresentation.streamStatusText("Spotify", input(state = "CONNECTED", sending = true)),
+            StreamPresentation.streamStatusText("Spotify", input(state = PulseBarStreamConnectionState.CONNECTED, sending = true)),
         )
     }
 
     @Test fun streamStatusText_connectedIdle() {
         assertEquals(
             "Capturing Spotify…",
-            StreamPresentation.streamStatusText("Spotify", input(state = "CONNECTED")),
+            StreamPresentation.streamStatusText("Spotify", input(state = PulseBarStreamConnectionState.CONNECTED)),
         )
     }
 
     @Test fun streamStatusText_unknown_isPreparing() {
-        assertEquals("Preparing stream…", StreamPresentation.streamStatusText("x", input(state = "IDLE")))
+        assertEquals("Preparing stream…", StreamPresentation.streamStatusText("x", input(state = PulseBarStreamConnectionState.IDLE)))
     }
 
     @Test fun captureActivityText() {

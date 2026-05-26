@@ -250,7 +250,6 @@ class PulseBarConnectionState(
     val endpointUrl: String,
     val workspaceId: String,
     val connectionState: PulseBarStreamConnectionState,
-    val connectionStateName: String,
     val statusText: String,
     val isConnecting: Boolean,
     val manuallyDisconnected: Boolean,
@@ -272,7 +271,6 @@ class PulseBarConnectionState(
  */
 class PulseBarStreamStats(
     val connectionState: PulseBarStreamConnectionState,
-    val connectionStateName: String,
     val webSocketUrl: String?,
     val lastConnectedAtMillis: Long,        // 0 == never
     val lastDisconnectedAtMillis: Long,     // 0 == never
@@ -345,7 +343,6 @@ fun streamSendBitrateDisplay(stats: PulseBarStreamStats): String =
 object PulseBarStreamStatsFactory {
     fun idle(): PulseBarStreamStats = PulseBarStreamStats(
         connectionState = PulseBarStreamConnectionState.IDLE,
-        connectionStateName = PulseBarStreamConnectionState.IDLE.name,
         webSocketUrl = null,
         lastConnectedAtMillis = 0L,
         lastDisconnectedAtMillis = 0L,

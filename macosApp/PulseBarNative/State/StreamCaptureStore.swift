@@ -171,7 +171,7 @@ final class StreamCaptureStore: ObservableObject {
             log("server requested capture stop")
             stopCaptureSession()
         }
-        if isCapturing && snapshot.connectionStateParsed == .FAILED {
+        if isCapturing && snapshot.connectionState == .FAILED {
             log("live listen failed during capture")
             stopCaptureSession()
             statusText = "Stream connection failed"
@@ -544,7 +544,7 @@ final class StreamCaptureStore: ObservableObject {
         if endpoints.isEmpty {
             publisherStatusText = "Configure a Stream endpoint in Settings"
         } else {
-            let activeActive = publisherStats.connectionStateParsed == .CONNECTED ? 1 : 0
+            let activeActive = publisherStats.connectionState == .CONNECTED ? 1 : 0
             publisherStatusText = "Stream device sessions connected \(activeActive)/\(endpoints.count)"
         }
     }
@@ -560,7 +560,7 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     private func buildStatusInput() -> StreamStatusInput {
-        let activeConnected = publisherStats.connectionStateParsed == .CONNECTED
+        let activeConnected = publisherStats.connectionState == .CONNECTED
         return Self.makeStatusInput(
             stats: publisherStats,
             isCapturing: isCapturing,
@@ -581,7 +581,7 @@ final class StreamCaptureStore: ObservableObject {
         // Kotlin uses `0L` as the "no scheduled reconnect" sentinel.
         let nextReconnectMillis: Int64? = stats.nextReconnectAtMillis > 0 ? stats.nextReconnectAtMillis : nil
         return StreamStatusInput(
-            connectionStateName: stats.connectionStateName,
+            connectionState: stats.connectionState,
             isSending: stats.isSending,
             isCapturing: isCapturing,
             capturedFrames: capturedFrames,

@@ -95,7 +95,7 @@ Swift 侧负责：
 - `readMenuState()` 保持纯读，只返回当前 `latestMenuState`。
 - `tick()` 是周期性副作用入口；retry、media、interaction 等用户动作通过显式 command。
 - Swift bridge adapter 不直接持久化 config / usage / raw journal。
-- enum return 继续遵守 KT-83730 string-name workaround，直到上游修复并完成 clean rebuild 验证。
+- enum return 已随 Kotlin `2.4.0-RC` 移除 KT-83730 string-name workaround；后续 enum bridge 改动仍需要 clean rebuild 和实际启动验证。
 
 ### 5. Live Listen 跨域检查
 

@@ -183,6 +183,6 @@ desktop app 当前的主数据流可以概括成：
 
 ## 9. 当前注意点
 
-- Swift Export enum return 仍有 KT-83730 workaround，见 [Swift Export enum-return crash](./reference/swift-export-enum-bug.md)。
+- Swift Export enum return 已随 Kotlin `2.4.0-RC` 回到直接 enum 桥接；历史背景见 [Swift Export enum-return crash](./reference/swift-export-enum-bug.md)。
 - Live Listen 同时跨 `common/core/livelisten`、`common/macosMain/LiveListenClient`、`macosApp/Services/LiveListen` 和 protocol 文档；改动时必须按 protocol 验证门槛检查。
 - 目标产品结构、导航调整和 PRD 不属于当前架构事实，见 `docs/desktop-app/design/`。

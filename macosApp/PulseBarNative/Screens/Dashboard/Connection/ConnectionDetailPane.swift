@@ -38,7 +38,7 @@ struct ConnectionDetailPane: View {
             return connectionState.connectionState.connectionRuntimeStatus
         }
         if let streamEndpoint {
-            return streamEndpoint.stats.connectionStateParsed.connectionRuntimeStatus
+            return streamEndpoint.stats.connectionState.connectionRuntimeStatus
         }
         if hasStreamConnectionFields {
             return .Disconnected
@@ -223,7 +223,7 @@ struct ConnectionDetailPane: View {
 
         let model = monitor.streamStore
         if let streamEndpoint {
-            if streamEndpoint.stats.connectionStateParsed == .CONNECTED, model.isCapturing {
+            if streamEndpoint.stats.connectionState == .CONNECTED, model.isCapturing {
                 return streamEndpoint.stats.isSending ? "Sending audio packets" : model.statusText
             }
             return streamEndpoint.statusText
@@ -252,7 +252,7 @@ struct ConnectionDetailPane: View {
 
     private var streamMessageIsError: Bool {
         guard endpoint.enabled, !connectionStore.manuallyDisconnected else { return false }
-        return streamEndpoint?.stats.connectionStateParsed == .FAILED
+        return streamEndpoint?.stats.connectionState == .FAILED
     }
 
     private func buildRuntimeInput() -> EndpointRuntimeInput {
@@ -261,7 +261,7 @@ struct ConnectionDetailPane: View {
             disconnected: connectionStore.manuallyDisconnected,
             endpointUrl: endpoint.endpointUrl,
             isConnecting: connectionStore.isConnecting,
-            status: connectionState?.connectionStateName,
+            status: nil,
             lastStatus: connectionState?.common.phaseName,
             lastErrorMessage: connectionState?.lastErrorMessage,
             pendingCount: 0
