@@ -3,7 +3,7 @@ import SwiftUI
 
 struct ConnectionListItem: View {
     let endpoint: PulseBarEndpointDraft
-    let status: ConnectionRuntimeStatus
+    let status: PulseBarStreamConnectionState
 
     private var displayName: String {
         endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,5 +1,6 @@
 package io.github.kt.pulsebar.core.presentation
 
+import io.github.kt.pulsebar.export.PulseBarStreamConnectionState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -71,16 +72,20 @@ class EndpointPresentationTest {
             "Connecting…",
             EndpointPresentation.connectionActionTitle(
                 input(isConnecting = true),
-                ConnectionRuntimeStatus.Disconnected,
+                PulseBarStreamConnectionState.IDLE,
             ),
         )
     }
 
     @Test fun connectionActionTitle_perStatus() {
         val base = input()
-        assertEquals("Disconnect", EndpointPresentation.connectionActionTitle(base, ConnectionRuntimeStatus.Connected))
-        assertEquals("Reconnect", EndpointPresentation.connectionActionTitle(base, ConnectionRuntimeStatus.Reconnecting))
-        assertEquals("Connect", EndpointPresentation.connectionActionTitle(base, ConnectionRuntimeStatus.Disconnected))
+        assertEquals("Disconnect", EndpointPresentation.connectionActionTitle(base, PulseBarStreamConnectionState.CONNECTED))
+        assertEquals("Connecting…", EndpointPresentation.connectionActionTitle(base, PulseBarStreamConnectionState.CONNECTING))
+        assertEquals("Reconnect", EndpointPresentation.connectionActionTitle(base, PulseBarStreamConnectionState.RECONNECTING))
+        assertEquals("Stopping…", EndpointPresentation.connectionActionTitle(base, PulseBarStreamConnectionState.STOPPING))
+        assertEquals("Reconnect", EndpointPresentation.connectionActionTitle(base, PulseBarStreamConnectionState.FAILED))
+        assertEquals("Connect", EndpointPresentation.connectionActionTitle(base, PulseBarStreamConnectionState.IDLE))
+        assertEquals("Connect", EndpointPresentation.connectionActionTitle(base, PulseBarStreamConnectionState.STOPPED))
     }
 
     @Test fun deliveryDetail_healthy_noPending() {

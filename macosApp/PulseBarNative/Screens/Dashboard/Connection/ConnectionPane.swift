@@ -117,11 +117,11 @@ struct ConnectionPane: View {
         }
     }
 
-    private func connectionStatus(_ endpoint: PulseBarEndpointDraft) -> ConnectionRuntimeStatus {
+    private func connectionStatus(_ endpoint: PulseBarEndpointDraft) -> PulseBarStreamConnectionState {
         if !endpoint.enabled {
-            return .Disconnected
+            return .STOPPED
         }
-        return monitor.connectionStatesByEndpointID[endpoint.id]?.connectionState.connectionRuntimeStatus ?? .Disconnected
+        return monitor.connectionStatesByEndpointID[endpoint.id]?.connectionState ?? .IDLE
     }
 }
 

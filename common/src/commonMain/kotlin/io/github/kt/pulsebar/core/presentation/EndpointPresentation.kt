@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.core.presentation
 
+import io.github.kt.pulsebar.export.PulseBarStreamConnectionState
+
 /**
  * Inputs needed to derive the endpoint-row text the dashboard shows. This
  * is a platform-neutral shape — Swift maps `EndpointSyncStatusInfo` to
@@ -22,12 +24,16 @@ data class EndpointRuntimeInput(
 object EndpointPresentation {
 
     /** Swift's `connectionActionTitle`. */
-    fun connectionActionTitle(input: EndpointRuntimeInput, status: ConnectionRuntimeStatus): String {
+    fun connectionActionTitle(input: EndpointRuntimeInput, status: PulseBarStreamConnectionState): String {
         if (input.isConnecting) return "Connecting…"
         return when (status) {
-            ConnectionRuntimeStatus.Connected -> "Disconnect"
-            ConnectionRuntimeStatus.Reconnecting -> "Reconnect"
-            ConnectionRuntimeStatus.Disconnected -> "Connect"
+            PulseBarStreamConnectionState.CONNECTED -> "Disconnect"
+            PulseBarStreamConnectionState.CONNECTING -> "Connecting…"
+            PulseBarStreamConnectionState.RECONNECTING -> "Reconnect"
+            PulseBarStreamConnectionState.STOPPING -> "Stopping…"
+            PulseBarStreamConnectionState.FAILED -> "Reconnect"
+            PulseBarStreamConnectionState.IDLE,
+            PulseBarStreamConnectionState.STOPPED -> "Connect"
         }
     }
 

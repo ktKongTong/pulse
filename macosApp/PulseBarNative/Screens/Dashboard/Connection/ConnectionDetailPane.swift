@@ -30,25 +30,20 @@ struct ConnectionDetailPane: View {
         streamEndpoint?.stats
     }
 
-    private var status: ConnectionRuntimeStatus {
+    private var status: PulseBarStreamConnectionState {
         if !endpoint.enabled || connectionStore.manuallyDisconnected {
-            return .Disconnected
+            return .STOPPED
         }
         if let connectionState {
-            return connectionState.connectionState.connectionRuntimeStatus
+            return connectionState.connectionState
         }
         if let streamEndpoint {
-            return streamEndpoint.stats.connectionState.connectionRuntimeStatus
+            return streamEndpoint.stats.connectionState
         }
         if hasStreamConnectionFields {
-            return .Disconnected
+            return .IDLE
         }
-        return resolveConnectionStatus(
-            endpoint: endpoint,
-            sync: nil,
-            manuallyDisconnected: connectionStore.manuallyDisconnected,
-            isConnecting: connectionStore.isConnecting
-        )
+        return connectionStore.isConnecting ? .CONNECTING : .IDLE
     }
 
     private var title: String {
@@ -134,7 +129,7 @@ struct ConnectionDetailPane: View {
 
                 HStack(spacing: 10) {
                     Button(connectionActionTitle) {
-                        if status == .Connected {
+                        if status.isConnected {
                             connectionStore.disconnectEndpoint()
                         } else {
                             connectionStore.connectEndpoint()

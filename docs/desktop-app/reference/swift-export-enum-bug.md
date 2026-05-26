@@ -27,24 +27,22 @@ PulseBarShared/PulseBarShared.swift:2882: Fatal error
 
 Swift Export 生成的 enum initializer 会把 Kotlin 返回的 C pointer 和每个 enum case helper 返回的 pointer 做匹配。如果 Kotlin 返回的 pointer 没有匹配任何 case helper，Swift 就会落入 `fatalError()`。
 
-这类生成代码大致如下：
+这类生成代码大致如下，示例里的 enum 名称来自历史实现：
 
 ```swift
 public init(__externalRCRefUnsafe: UnsafeMutableRawPointer!, ...) {
     switch __externalRCRefUnsafe {
-    case io_github_kt_pulsebar_core_presentation_ConnectionRuntimeStatus_Connected():
-        self = .Connected
-    case io_github_kt_pulsebar_core_presentation_ConnectionRuntimeStatus_Disconnected():
-        self = .Disconnected
-    case io_github_kt_pulsebar_core_presentation_ConnectionRuntimeStatus_Reconnecting():
-        self = .Reconnecting
+    case exported_enum_case_one():
+        self = .one
+    case exported_enum_case_two():
+        self = .two
     default:
         fatalError()
     }
 }
 ```
 
-风险不只存在于 `ConnectionRuntimeStatus`，所有从 Kotlin 返回给 Swift 的 exported enum 都有类似风险。
+风险不只存在于单个 enum，所有从 Kotlin 返回给 Swift 的 exported enum 都有类似风险。
 
 ## 历史 workaround
 
