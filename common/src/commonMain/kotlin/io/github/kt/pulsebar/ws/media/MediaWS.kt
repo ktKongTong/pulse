@@ -5,6 +5,8 @@ import io.github.kt.pulsebar.core.devicev2.DeviceV2RejectedReason
 import io.github.kt.pulsebar.core.devicev2.DeviceV2StreamFormat
 import io.github.kt.pulsebar.core.devicev2.toDeviceV2MediaItem
 import io.github.kt.pulsebar.core.devicev2.toDeviceV2StreamState
+import io.github.kt.pulsebar.core.log.PulseLogCategory
+import io.github.kt.pulsebar.core.log.logger
 import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
 import io.github.kt.pulsebar.core.stream.ConnectionConfig
 import io.github.kt.pulsebar.core.stream.EndpointConfig
@@ -66,6 +68,7 @@ internal class MediaWS(
     internal val mediaOutbound = Channel<WSPayload>(capacity = 64)
     internal var activeStream: DeviceV2ActiveStream? = null
     internal var wsManager: WSManager = WSManager(http, scope)
+    private val log = logger(PulseLogCategory.StreamSession)
     private val _state = MutableStateFlow(MediaRuntimeState())
     private val runtimeState: StateFlow<MediaRuntimeState> = _state.asStateFlow()
     internal val state = combine(wsManager.state, runtimeState) { connection, runtime ->
@@ -85,6 +88,7 @@ internal class MediaWS(
             deviceV2MediaHello(config.stream.chunkDurationMs)
         }
         onReady?.invoke()
+        sendCurrentStateSnapshot()
         wsManager.listen { listen() }
     }
 
@@ -98,6 +102,7 @@ internal class MediaWS(
 
     internal fun updateNativeMediaState(next: StreamNativeMediaState) {
         transitionState(MediaRuntimeEvent.MediaStateChanged(next))
+        log.d { "media.state.enqueue endpointId=$endpointId playback=${next.playback} capture=${next.capture} media=${next.media?.title ?: "nil"}" }
         mediaOutbound.trySend(
             DeviceV2StreamStatePayload(
                 sentAt = nowInIso8601(),
@@ -109,8 +114,15 @@ internal class MediaWS(
     internal fun updateNowPlaying(next: StreamMedia?) {
         transitionState(MediaRuntimeEvent.PlayingChanged(next))
         if (next != null) {
+            log.d { "media.updated.enqueue endpointId=$endpointId title=${next.title ?: "nil"} playback=${next.playbackState}" }
             mediaOutbound.trySend(DeviceV2MediaUpdatePayload(next.toDeviceV2MediaItem()))
         }
+    }
+
+    private fun sendCurrentStateSnapshot() {
+        val state = streamStateFlow.value
+        updateNativeMediaState(state.mediaState)
+        updateNowPlaying(state.mediaState.media ?: state.mediaFlow.value)
     }
 
     internal fun stopStream(reason: StreamStopReason) {

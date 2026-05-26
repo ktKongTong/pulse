@@ -98,8 +98,9 @@ internal class EventDispatcher(
     }
 
     private fun handleNowPlayingChanged(media: NativeMediaSnapshot?) {
-        Stream.mediaStateFlow.value = media?.toStreamMedia()
-        streamClients.value.values.forEach { it.updateMedia(media?.toStreamMedia()) }
+        val next = media?.toStreamMedia()
+        Stream.updateMedia(next)
+        streamClients.value.values.forEach { it.updateMedia(next) }
     }
 
     private fun handleMediaStateChanged(event: NativeMediaStateChanged) {
@@ -111,7 +112,7 @@ internal class EventDispatcher(
             media = media,
             message = event.message,
         )
-        Stream.mediaStateFlow.value = media
+        Stream.updateMediaState(next)
         streamClients.value.values.forEach {
             it.updateMediaState(next)
             it.updateMedia(media)

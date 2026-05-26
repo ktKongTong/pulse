@@ -81,7 +81,7 @@ final class StreamCaptureStore: ObservableObject {
     private lazy var session = StreamCaptureSession(service: service)
     private var startupPermissionTask: Task<Void, Never>?
     private var lastPublishedMediaSignature: String?
-    private var currentMedia: PulseBarMedia?
+    private var currentMedia: NativeMediaSnapshot?
     private let worker: StreamBridge
     private var statsTask: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
@@ -224,14 +224,16 @@ final class StreamCaptureStore: ObservableObject {
         }
     }
 
-    func updateCurrentMedia(_ media: PulseBarMedia?) {
-        let signature = StreamPresentation.shared.mediaSignature(media: media)
+    func updateCurrentMedia(_ media: NativeMediaSnapshot?) {
+        let signature = mediaSignature(media)
         guard signature != lastPublishedMediaSignature else { return }
         lastPublishedMediaSignature = signature
         currentMedia = media
         mediaPlaybackStatus = media?.isPlaying == true ? .playing : .paused
         if let media {
-            currentMediaLabel = media.artist.isEmpty ? media.title : "\(media.title) - \(media.artist)"
+            let title = media.title ?? "-"
+            let artist = media.artist ?? ""
+            currentMediaLabel = artist.isEmpty ? title : "\(title) - \(artist)"
             mediaPlaybackReason = media.isPlaying ? "playing" : "paused"
         } else {
             currentMediaLabel = "-"
@@ -416,26 +418,24 @@ final class StreamCaptureStore: ObservableObject {
                 captureRunning: capture,
                 reason: nil,
                 message: nil,
-                media: currentMedia.map { media in
-                    NativeMediaSnapshot(
-                        providerId: media.providerId,
-                        itemType: media.itemType,
-                        trackId: media.trackId,
-                        uri: nil,
-                        linkUrl: media.linkUrl,
-                        title: media.title,
-                        artist: media.artist,
-                        album: media.album,
-                        artworkUrl: media.artworkUrl,
-                        progressSeconds: media.progressSeconds,
-                        durationSeconds: Double(media.durationSeconds),
-                        isPlaying: media.isPlaying
-                    )
-                },
+                media: currentMedia,
                 observedAtMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
             )
         )
 
+    }
+
+    private func mediaSignature(_ media: NativeMediaSnapshot?) -> String {
+        guard let media else { return "none" }
+        return [
+            media.providerId ?? "",
+            media.trackId ?? "",
+            media.title ?? "",
+            media.artist ?? "",
+            media.album ?? "",
+            String(media.durationSeconds ?? 0),
+            media.isPlaying ? "playing" : "paused"
+        ].joined(separator: "|")
     }
 
     private func updateAggregatePublisherState() {
