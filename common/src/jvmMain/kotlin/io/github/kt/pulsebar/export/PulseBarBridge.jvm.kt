@@ -54,10 +54,16 @@ actual class PulseBarBridge actual constructor() {
 
     actual fun connectionState(endpointId: String): Flow<PulseBarConnectionState> = emptyFlow()
 
+    actual val hostCommands: Flow<NativeHostCommand>
+        get() = emptyFlow()
+
 
     actual fun connect(endpointId: String) {
     }
 
     actual fun emitNativeEvent(event: NativeDeviceEvent) {
+    }
+
+    actual fun submitStreamPcmBase64(chunkBase64: String) {
     }
 }

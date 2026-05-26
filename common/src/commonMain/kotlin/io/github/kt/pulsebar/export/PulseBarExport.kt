@@ -426,6 +426,8 @@ expect class PulseBarBridge() {
 
     fun connectionState(endpointId: String): Flow<PulseBarConnectionState>
 
+    val hostCommands: Flow<NativeHostCommand>
+
     /**
      * Start (or restart) the Stream device session against the given
      * endpoint. Safe to call repeatedly: if a session is already running
@@ -458,6 +460,8 @@ expect class PulseBarBridge() {
 
 
     fun emitNativeEvent(event: NativeDeviceEvent)
+
+    fun submitStreamPcmBase64(chunkBase64: String)
 
     
     /** Stop the active media stream without closing the Stream WebSocket. */

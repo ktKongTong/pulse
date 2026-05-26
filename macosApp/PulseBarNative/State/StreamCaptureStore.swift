@@ -84,6 +84,7 @@ final class StreamCaptureStore: ObservableObject {
     private var currentMedia: PulseBarMedia?
     private let worker: StreamBridge
     private var statsTask: Task<Void, Never>?
+    private var commandTask: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
@@ -100,11 +101,34 @@ final class StreamCaptureStore: ObservableObject {
 
     deinit {
         statsTask?.cancel()
+        commandTask?.cancel()
         startupPermissionTask?.cancel()
     }
 
     private func subscribeStats() {
         // stream stats
+        let worker = self.worker
+        commandTask = Task { @MainActor [weak self] in
+            do {
+                for try await command in worker.hostCommands.asAsyncSequence() {
+                    self?.handleHostCommand(command)
+                }
+            } catch {
+                self?.log("host command stream ended error=\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func handleHostCommand(_ command: NativeHostCommand) {
+        if let command = command as? NativeStreamRequestedCommand {
+            log("server requested capture start endpoint=\(command.endpointId) stream=\(command.streamId) generation=\(command.generation)")
+            startServerDrivenCapture()
+        } else if let command = command as? NativeStreamStoppedCommand {
+            log("server requested capture stop endpoint=\(command.endpointId) stream=\(command.streamId ?? "nil") reason=\(command.reason)")
+            stopCaptureSession()
+        } else {
+            log("ignored host command type=\(type(of: command))")
+        }
     }
 
     // map stats to ui state
@@ -313,13 +337,13 @@ final class StreamCaptureStore: ObservableObject {
         if isManual {
             log("audio permission preflight begin")
         }
+        let worker = self.worker
         session.runStreaming(
             source: source,
             preflightPermission: true,
             pcmHandler: { data in
-                // emit stream item
-                // let encoded = data.base64EncodedString()
-                // worker.submitStreamPcmBase64(chunkBase64: encoded)
+                let encoded = data.base64EncodedString()
+                worker.submitStreamPcmBase64(chunkBase64: encoded)
             },
             onMeter: { [weak self] m in
                 guard let self else { return }
@@ -384,6 +408,33 @@ final class StreamCaptureStore: ObservableObject {
     // MARK: - Private helpers
 
     private func pushMediaStateToBridge(captureRunning: Bool? = nil) {
+        let capture = captureRunning ?? isCapturing
+        worker.emitNativeEvent(
+            event: NativeMediaStateChanged(
+                permissionAllow: mediaStreamPermission == .allow,
+                playbackPlaying: mediaPlaybackStatus == .playing,
+                captureRunning: capture,
+                reason: nil,
+                message: nil,
+                media: currentMedia.map { media in
+                    NativeMediaSnapshot(
+                        providerId: media.providerId,
+                        itemType: media.itemType,
+                        trackId: media.trackId,
+                        uri: nil,
+                        linkUrl: media.linkUrl,
+                        title: media.title,
+                        artist: media.artist,
+                        album: media.album,
+                        artworkUrl: media.artworkUrl,
+                        progressSeconds: media.progressSeconds,
+                        durationSeconds: Double(media.durationSeconds),
+                        isPlaying: media.isPlaying
+                    )
+                },
+                observedAtMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
+            )
+        )
 
     }
 

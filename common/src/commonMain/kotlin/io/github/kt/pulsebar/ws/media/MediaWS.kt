@@ -3,6 +3,8 @@ package io.github.kt.pulsebar.ws.media
 import io.github.kt.pulsebar.core.devicev2.DeviceV2CaptureInfo
 import io.github.kt.pulsebar.core.devicev2.DeviceV2RejectedReason
 import io.github.kt.pulsebar.core.devicev2.DeviceV2StreamFormat
+import io.github.kt.pulsebar.core.devicev2.toDeviceV2MediaItem
+import io.github.kt.pulsebar.core.devicev2.toDeviceV2StreamState
 import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
 import io.github.kt.pulsebar.core.stream.ConnectionConfig
 import io.github.kt.pulsebar.core.stream.EndpointConfig
@@ -14,6 +16,9 @@ import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
 import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
 import io.github.kt.pulsebar.core.stream.StreamStopReason
 import io.github.kt.pulsebar.core.stream.getMediaWSUrl
+import io.github.kt.pulsebar.export.NativeHostCommand
+import io.github.kt.pulsebar.export.NativeStreamRequestedCommand
+import io.github.kt.pulsebar.export.NativeStreamStoppedCommand
 import io.github.kt.pulsebar.media.StreamState
 import io.github.kt.pulsebar.media.deviceV2BytesPerFrame
 import io.github.kt.pulsebar.media.deviceV2ChunkBytesFor
@@ -54,6 +59,8 @@ internal class MediaWS(
     http: HttpClient,
     scope: CoroutineScope,
     val streamStateFlow: StateFlow<StreamState>,
+    private val endpointId: String,
+    private val hostCommandSink: (NativeHostCommand) -> Unit,
 ) {
     internal var pcmBuffer = ByteArray(0)
     internal val mediaOutbound = Channel<WSPayload>(capacity = 64)
@@ -87,6 +94,23 @@ internal class MediaWS(
 
     internal fun transitionState(event: MediaRuntimeEvent) {
         _state.update { it.reduce(event) }
+    }
+
+    internal fun updateNativeMediaState(next: StreamNativeMediaState) {
+        transitionState(MediaRuntimeEvent.MediaStateChanged(next))
+        mediaOutbound.trySend(
+            DeviceV2StreamStatePayload(
+                sentAt = nowInIso8601(),
+                state = next.toDeviceV2StreamState(streamStateFlow.value.streamFormat),
+            )
+        )
+    }
+
+    internal fun updateNowPlaying(next: StreamMedia?) {
+        transitionState(MediaRuntimeEvent.PlayingChanged(next))
+        if (next != null) {
+            mediaOutbound.trySend(DeviceV2MediaUpdatePayload(next.toDeviceV2MediaItem()))
+        }
     }
 
     internal fun stopStream(reason: StreamStopReason) {
@@ -229,6 +253,14 @@ internal class MediaWS(
             )
         )
         transitionState(MediaRuntimeEvent.StreamRequested(streamId, generation))
+        hostCommandSink(
+            NativeStreamRequestedCommand(
+                endpointId = endpointId,
+                commandId = commandId,
+                streamId = streamId,
+                generation = generation,
+            )
+        )
     }
 
     fun rejectionReason(): DeviceV2RejectedReason? = when {
@@ -250,6 +282,15 @@ internal class MediaWS(
             )
         )
         transitionState(MediaRuntimeEvent.StreamStopped("server_stream_stopped"))
+        hostCommandSink(
+            NativeStreamStoppedCommand(
+                endpointId = endpointId,
+                commandId = commandId,
+                streamId = stream.streamId,
+                generation = stream.generation,
+                reason = "server_stream_stopped",
+            )
+        )
     }
 }
 

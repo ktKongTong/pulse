@@ -10,13 +10,23 @@ import io.github.kt.pulsebar.export.DisconnectEndpointCommand
 import io.github.kt.pulsebar.export.EnableEndpointCommand
 import io.github.kt.pulsebar.export.NativeDeviceEvent
 import io.github.kt.pulsebar.export.NativeFrontmostAppChanged
+import io.github.kt.pulsebar.export.NativeMediaSnapshot
+import io.github.kt.pulsebar.export.NativeMediaStateChanged
+import io.github.kt.pulsebar.export.NativeNowPlayingChanged
 import io.github.kt.pulsebar.export.RemoveEndpointCommand
+import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
+import io.github.kt.pulsebar.core.stream.StreamMedia
+import io.github.kt.pulsebar.core.stream.StreamMediaPermission
+import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
+import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
 import io.github.kt.pulsebar.focus.DeviceV2Availability
 import io.github.kt.pulsebar.focus.DeviceV2Focus
 import io.github.kt.pulsebar.focus.DeviceV2PresenceState
 import io.github.kt.pulsebar.platform.App
 import io.github.kt.pulsebar.platform.newPulseUuid
 import io.github.kt.pulsebar.ws.DeviceV2Client
+import io.github.kt.pulsebar.ws.updateMedia
+import io.github.kt.pulsebar.ws.updateMediaState
 import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
 import io.github.kt.pulsebar.ws.common.epochMillisToIso8601
 import io.github.kt.pulsebar.ws.connection.DeviceWsPhase
@@ -58,6 +68,12 @@ internal class EventDispatcher(
             is NativeFrontmostAppChanged ->
                 handleFrontmostAppChanged(event)
 
+            is NativeNowPlayingChanged ->
+                handleNowPlayingChanged(event.media)
+
+            is NativeMediaStateChanged ->
+                handleMediaStateChanged(event)
+
             is ConnectEndpointCommand ->
                 connectEndpoint(event.endpointId)
 
@@ -78,6 +94,27 @@ internal class EventDispatcher(
                     current.copy(endpoints = current.endpoints.filterNot { it.id == event.endpointId })
                 }
             }
+        }
+    }
+
+    private fun handleNowPlayingChanged(media: NativeMediaSnapshot?) {
+        Stream.mediaStateFlow.value = media?.toStreamMedia()
+        streamClients.value.values.forEach { it.updateMedia(media?.toStreamMedia()) }
+    }
+
+    private fun handleMediaStateChanged(event: NativeMediaStateChanged) {
+        val media = event.media?.toStreamMedia()
+        val next = StreamNativeMediaState(
+            permission = if (event.permissionAllow) StreamMediaPermission.ALLOW else StreamMediaPermission.DISALLOW,
+            playback = if (event.playbackPlaying) StreamPlaybackWire.PLAYING else StreamPlaybackWire.PAUSED,
+            capture = if (event.captureRunning) StreamCaptureRuntime.CAPTURING else StreamCaptureRuntime.NO_CAPTURE,
+            media = media,
+            message = event.message,
+        )
+        Stream.mediaStateFlow.value = media
+        streamClients.value.values.forEach {
+            it.updateMediaState(next)
+            it.updateMedia(media)
         }
     }
 
@@ -128,3 +165,19 @@ internal class EventDispatcher(
         }
     }
 }
+
+private fun NativeMediaSnapshot.toStreamMedia(): StreamMedia =
+    StreamMedia(
+        providerId = providerId,
+        itemType = itemType,
+        trackId = trackId,
+        uri = uri,
+        linkUrl = linkUrl,
+        title = title,
+        artist = artist,
+        album = album,
+        artworkUrl = artworkUrl,
+        progressSeconds = progressSeconds,
+        durationSeconds = durationSeconds,
+        playbackState = if (isPlaying) StreamPlaybackWire.PLAYING else StreamPlaybackWire.PAUSED,
+    )

@@ -5,6 +5,7 @@ import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
 import io.github.kt.pulsebar.core.log.PulseLogCategory
 import io.github.kt.pulsebar.core.log.logger
 import io.github.kt.pulsebar.core.stream.PulseConfig
+import io.github.kt.pulsebar.export.NativeHostCommand
 import io.github.kt.pulsebar.media.StreamState
 import io.github.kt.pulsebar.platform.getHttpClient
 import io.github.kt.pulsebar.ws.common.CommonWS
@@ -35,6 +36,8 @@ import kotlinx.coroutines.sync.withLock
 internal class DeviceV2Client(
     private val configFlow: StateFlow<PulseConfig>,
     streamFlow: StateFlow<StreamState>,
+    private val endpointId: String,
+    private val hostCommandSink: (NativeHostCommand) -> Unit,
 ) {
     internal val log = logger(PulseLogCategory.StreamSession)
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, error ->
@@ -46,7 +49,7 @@ internal class DeviceV2Client(
     private var connectionJob: Job? = null
     private var stopRequested = false
 //    private var currentConfig: PulseConfig? = null
-    var connectedMediaWS: MediaWS = MediaWS(http, scope, streamFlow)
+    var connectedMediaWS: MediaWS = MediaWS(http, scope, streamFlow, endpointId, hostCommandSink)
     var connectedCommonWS: CommonWS = CommonWS(http, scope)
     var reconnectAttempts = 0
 
@@ -178,11 +181,11 @@ internal fun DeviceV2Client.submitPcm(bytes: ByteArray) {
 }
 
 internal fun DeviceV2Client.updateMediaState(next: StreamNativeMediaState) {
-//        connectedMediaWS?.mediaOutbound?.trySend(currentStreamStateFrame())
+    connectedMediaWS.updateNativeMediaState(next)
 }
 
 internal fun DeviceV2Client.updateMedia(next: StreamMedia?) {
-//        if (next != null) connectedMediaWS.mediaOutbound.trySend(DeviceV2MediaUpdatePayload(next))
+    connectedMediaWS.updateNowPlaying(next)
 }
 
 // updateStats { it.copy(statusText = "Device common connected, connecting stream") }

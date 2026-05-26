@@ -30,3 +30,22 @@ data class RemoveEndpointCommand(
     val endpointId: String,
     val sentAt: Long = nowInMillis(),
 ) : NativeDeviceEvent
+
+interface NativeHostCommand
+
+data class NativeStreamRequestedCommand(
+    val endpointId: String,
+    val commandId: String,
+    val streamId: String,
+    val generation: Int,
+    val sentAt: Long = nowInMillis(),
+) : NativeHostCommand
+
+data class NativeStreamStoppedCommand(
+    val endpointId: String,
+    val commandId: String,
+    val streamId: String?,
+    val generation: Int,
+    val reason: String,
+    val sentAt: Long = nowInMillis(),
+) : NativeHostCommand

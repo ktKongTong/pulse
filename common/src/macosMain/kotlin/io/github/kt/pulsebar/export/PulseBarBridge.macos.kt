@@ -28,7 +28,9 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -39,6 +41,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 private data class SessionState(
     val signature: String,
@@ -84,6 +88,9 @@ actual class PulseBarBridge actual constructor() {
     actual val menuState: Flow<PulseBarMenuState> = menuStateFlow.distinctUntilChanged()
 
     private val syncStateFlow = MutableStateFlow<PulseBarSyncState?>(null)
+    private val hostCommandFlow = MutableSharedFlow<NativeHostCommand>(
+        extraBufferCapacity = 64,
+    )
 
     private val eventDispatcher = EventDispatcher(
         scope = scope,
@@ -159,7 +166,14 @@ actual class PulseBarBridge actual constructor() {
             val scMap = eventDispatcher.streamClients.value
             if(scMap[endpointId] == null) {
                 logger(PulseLogCategory.StreamSession).d { "null device client" }
-                val sc = DeviceV2Client(config, Stream.streamStateFlow)
+                val sc = DeviceV2Client(
+                    configFlow = config,
+                    streamFlow = Stream.streamStateFlow,
+                    endpointId = endpointId,
+                    hostCommandSink = { command ->
+                        hostCommandFlow.tryEmit(command)
+                    },
+                )
                 eventDispatcher.streamClients.update {
                     logger(PulseLogCategory.StreamSession).d { "add new client" }
                     it + (endpointId to sc)
@@ -173,6 +187,17 @@ actual class PulseBarBridge actual constructor() {
 
     actual fun emitNativeEvent(event: NativeDeviceEvent) {
         eventDispatcher.emitNativeEvent(event)
+    }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    actual fun submitStreamPcmBase64(chunkBase64: String) {
+        val bytes = runCatching { Base64.decode(chunkBase64) }
+            .onFailure { error ->
+                logger(PulseLogCategory.StreamSession).w(error) { "pcm.decode.failed" }
+            }
+            .getOrNull()
+            ?: return
+        Stream.audioChannel.trySend(bytes)
     }
 
 
@@ -206,6 +231,8 @@ actual class PulseBarBridge actual constructor() {
         connectionStates.map { states ->
             states.firstOrNull { it.endpointId == endpointId } ?: emptyConnectionState(endpointId)
         }.distinctUntilChanged()
+
+    actual val hostCommands: Flow<NativeHostCommand> = hostCommandFlow.asSharedFlow()
 
     actual val todayStats: Flow<PulseBarTodayStats> = flow {
         val todayIso = todayKey()
