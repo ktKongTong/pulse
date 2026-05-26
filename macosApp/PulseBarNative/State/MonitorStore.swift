@@ -58,6 +58,7 @@ final class MonitorStore: ObservableObject {
     private var connectionStores: [String: ConnectionStore] = [:]
     private let nowPlayingEventSource = NowPlayingEventSource()
     private var connectedMediaEndpointIDs: Set<String> = []
+    private var progressRefreshTask: Task<Void, Never>?
 
     init() {
         self.bridge = PulseBarBridge()
@@ -72,6 +73,7 @@ final class MonitorStore: ObservableObject {
             }
         }
         nowPlayingEventSource.stop()
+        progressRefreshTask?.cancel()
     }
 
     // MARK: - Lifecycle
@@ -106,6 +108,7 @@ final class MonitorStore: ObservableObject {
                 self?.handleNowPlayingChange(snapshot?.toNativeMediaSnapshot())
             }
         }
+        startProgressRefreshLoop()
 
         let menuTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
@@ -297,6 +300,17 @@ final class MonitorStore: ObservableObject {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             self?.nowPlayingEventSource.refresh()
+        }
+    }
+
+    private func startProgressRefreshLoop() {
+        guard progressRefreshTask == nil else { return }
+        progressRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, isMonitoring, !isPaused else { continue }
+                nowPlayingEventSource.refresh()
+            }
         }
     }
 

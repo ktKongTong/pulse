@@ -164,7 +164,7 @@ internal class MediaWS(
                     .takeWhile { frame ->
                         if (frame is Frame.Close) {
                             val reason = frame.readReason()
-                            // log.w { "device.v2.media.close code=${reason?.code} message=${reason?.message}" }
+                            log.w { "media.inbound.close endpointId=$endpointId code=${reason?.code} message=${reason?.message}" }
                             false
                         } else {
                             true
@@ -174,7 +174,17 @@ internal class MediaWS(
                     .mapNotNull { frame ->
                         val text = frame.readText()
                         log.d { "media.inbound.raw endpointId=$endpointId text=$text" }
-                        text.toDeviceV2IncomingCommand()
+                        when (val parsed = text.toDeviceV2IncomingCommand()) {
+                            is MediaCommandParseResult.Command -> parsed.command
+                            is MediaCommandParseResult.Ignored -> {
+                                log.d { "media.inbound.ignored endpointId=$endpointId reason=${parsed.reason}" }
+                                null
+                            }
+                            is MediaCommandParseResult.Invalid -> {
+                                log.w { "media.inbound.invalid endpointId=$endpointId reason=${parsed.reason} text=$text" }
+                                null
+                            }
+                        }
                     }
                     .collect { message ->
                         log.d { "media.inbound.command endpointId=$endpointId commandId=${message.commandId} type=${message.type.cmd} payload=${message.command}" }
@@ -343,25 +353,31 @@ enum class ServerCommandType(val cmd: String) {
     }
 }
 
-private fun String.toDeviceV2IncomingCommand(): ServerStreamCommand? {
+private sealed interface MediaCommandParseResult {
+    data class Command(val command: ServerStreamCommand) : MediaCommandParseResult
+    data class Ignored(val reason: String) : MediaCommandParseResult
+    data class Invalid(val reason: String) : MediaCommandParseResult
+}
+
+private fun String.toDeviceV2IncomingCommand(): MediaCommandParseResult {
     val obj = runCatching {
         deviceV2Json.parseToJsonElement(this).jsonObject
-    }.getOrNull() ?: return null
+    }.getOrNull() ?: return MediaCommandParseResult.Invalid("json_parse_failed")
 
     when (obj.string("type")) {
-        "hello_ack" -> return null
+        "hello_ack" -> return MediaCommandParseResult.Ignored("hello_ack")
         "command" -> Unit
-        else -> return null
+        else -> return MediaCommandParseResult.Invalid("unexpected_type:${obj.string("type")}")
     }
 
-    val payload = obj["payload"]?.jsonObject ?: return null
-    val commandId = payload.string("commandId") ?: return null
-    val command = payload["command"]?.jsonObject ?: return null
-    val commandType = command.string("type") ?: return null
+    val payload = obj["payload"]?.jsonObject ?: return MediaCommandParseResult.Invalid("missing_payload")
+    val commandId = payload.string("commandId") ?: return MediaCommandParseResult.Invalid("missing_command_id")
+    val command = payload["command"]?.jsonObject ?: return MediaCommandParseResult.Invalid("missing_command")
+    val commandType = command.string("type") ?: return MediaCommandParseResult.Invalid("missing_command_type")
 
-    return ServerStreamCommand(
+    return MediaCommandParseResult.Command(ServerStreamCommand(
         commandId = commandId,
-        type = ServerCommandType.from(commandType) ?: return null,
+        type = ServerCommandType.from(commandType) ?: return MediaCommandParseResult.Invalid("unknown_command_type:$commandType"),
         command = command,
-    )
+    ))
 }

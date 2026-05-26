@@ -81,6 +81,8 @@ final class StreamCaptureStore: ObservableObject {
     private lazy var session = StreamCaptureSession(service: service)
     private var startupPermissionTask: Task<Void, Never>?
     private var lastPublishedMediaSignature: String?
+    private var lastPublishedProgressSeconds: Double?
+    private var lastPublishedMediaObservedAtMillis: Int64?
     private var currentMedia: NativeMediaSnapshot?
     private let worker: StreamBridge
     private var statsTask: Task<Void, Never>?
@@ -226,8 +228,10 @@ final class StreamCaptureStore: ObservableObject {
 
     func updateCurrentMedia(_ media: NativeMediaSnapshot?) {
         let signature = mediaSignature(media)
-        guard signature != lastPublishedMediaSignature else { return }
+        guard shouldPublishMediaUpdate(signature: signature, media: media) else { return }
         lastPublishedMediaSignature = signature
+        lastPublishedProgressSeconds = media?.progressSeconds
+        lastPublishedMediaObservedAtMillis = nowMillis()
         currentMedia = media
         mediaPlaybackStatus = media?.isPlaying == true ? .playing : .paused
         if let media {
@@ -433,10 +437,25 @@ final class StreamCaptureStore: ObservableObject {
             media.title ?? "",
             media.artist ?? "",
             media.album ?? "",
-            String(media.progressSeconds),
             String(media.durationSeconds ?? 0),
             media.isPlaying ? "playing" : "paused"
         ].joined(separator: "|")
+    }
+
+    private func shouldPublishMediaUpdate(signature: String, media: NativeMediaSnapshot?) -> Bool {
+        guard signature == lastPublishedMediaSignature else { return true }
+        guard let media, media.isPlaying else { return false }
+        guard let lastProgress = lastPublishedProgressSeconds,
+              let lastObservedAt = lastPublishedMediaObservedAtMillis else {
+            return true
+        }
+        let elapsedSeconds = Double(nowMillis() - lastObservedAt) / 1000.0
+        let expectedProgress = lastProgress + elapsedSeconds
+        return abs(media.progressSeconds - expectedProgress) > 2.0
+    }
+
+    private func nowMillis() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000.0)
     }
 
     private func updateAggregatePublisherState() {
