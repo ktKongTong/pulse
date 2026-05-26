@@ -44,7 +44,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -68,6 +67,8 @@ internal class MediaWS(
     internal val mediaOutbound = Channel<WSPayload>(capacity = 64)
     internal var activeStream: DeviceV2ActiveStream? = null
     internal var wsManager: WSManager = WSManager(http, scope)
+    private var pcmAcceptedCount: Long = 0L
+    private var pcmAcceptedBytes: Long = 0L
     private val log = logger(PulseLogCategory.StreamSession)
     private val _state = MutableStateFlow(MediaRuntimeState())
     private val runtimeState: StateFlow<MediaRuntimeState> = _state.asStateFlow()
@@ -139,17 +140,23 @@ internal class MediaWS(
 
     internal fun stopStream(reason: StreamStopReason) {
         val stream = activeStream ?: return
-//        transitionState(MediaRuntimeEvent.StreamStopped("server_stop"))
+        activeStream = null
+        pcmBuffer = ByteArray(0)
         updateState { it.copy(captureRequested = false) }
-            mediaOutbound.trySend(
-                DeviceV2StreamStoppedPayload(
-                    streamId = stream.streamId,
-                    generation = stream.generation,
-                    reason = "manual_stop",
-                    sentAt = nowInIso8601(),
-                )
+        val wireReason = reason.wireName()
+        log.i {
+            "media.stream.stopped.local endpointId=$endpointId streamId=${stream.streamId} " +
+                "generation=${stream.generation} reason=$wireReason"
+        }
+        mediaOutbound.trySend(
+            DeviceV2StreamStoppedPayload(
+                streamId = stream.streamId,
+                generation = stream.generation,
+                reason = wireReason,
+                sentAt = nowInIso8601(),
             )
-//        log.i { "local.stop reason=$reason streamId=${stream.streamId}" }
+        )
+        transitionState(MediaRuntimeEvent.StreamStopped(wireReason))
     }
 
     internal suspend fun sendFirstFrame(frame: Frame) {
@@ -194,13 +201,21 @@ internal class MediaWS(
             }
             val pcm = launch {
                 val streamState = streamStateFlow.value
-                streamState.pcmChannel.consumeAsFlow().collect { pcm ->
+                streamState.pcmChannel.receiveAsFlow().collect { pcm ->
+                    pcmAcceptedCount += 1L
+                    pcmAcceptedBytes += pcm.size
+                    if (pcmAcceptedCount <= 3L || pcmAcceptedCount % 20L == 0L) {
+                        log.i {
+                            "media.pcm.accepted endpointId=$endpointId count=$pcmAcceptedCount " +
+                                "bytes=$pcmAcceptedBytes lastBytes=${pcm.size}"
+                        }
+                    }
                     transitionState(MediaRuntimeEvent.PcmAccepted(
                         pcm.size,
                         (pcm.size / deviceV2BytesPerFrame(streamState.channels)),
                     ))
                     val chunkBytes = deviceV2ChunkBytesFor(
-                    streamState.chunkDuration.inWholeMilliseconds.toInt(),
+                        streamState.chunkDuration.inWholeMilliseconds.toInt(),
                         streamState.sampleRate,
                         streamState.channels,
                     )
@@ -227,21 +242,27 @@ internal class MediaWS(
         }
     }
 
-   suspend fun sendChunk(bytes: ByteArray) {
+    suspend fun sendChunk(bytes: ByteArray) {
         val stream = activeStream ?: return
         val seq = stream.nextSeq
         activeStream = stream.copy(nextSeq = seq + 1)
-       wsManager.send(
-           DeviceV2AudioChunkPayload(
-               streamId = stream.streamId,
-               generation = stream.generation,
-               seq = seq,
-               durationMs = streamStateFlow.value.chunkDuration.inWholeMilliseconds.toInt(),
-               byteLength = bytes.size,
-           )
-       )
-       wsManager.send(bytes)
-       transitionState(MediaRuntimeEvent.ChunkSent(seq = seq, bytes=bytes.size))
+        wsManager.send(
+            DeviceV2AudioChunkPayload(
+                streamId = stream.streamId,
+                generation = stream.generation,
+                seq = seq,
+                durationMs = streamStateFlow.value.chunkDuration.inWholeMilliseconds.toInt(),
+                byteLength = bytes.size,
+            )
+        )
+        wsManager.send(bytes)
+        if (seq < 3L || seq % 20L == 0L) {
+            log.i {
+                "media.audio.chunk.sent endpointId=$endpointId streamId=${stream.streamId} " +
+                    "generation=${stream.generation} seq=$seq bytes=${bytes.size}"
+            }
+        }
+        transitionState(MediaRuntimeEvent.ChunkSent(seq = seq, bytes=bytes.size))
     }
 
     internal suspend fun handleServerStreamCommand(message: ServerStreamCommand) {
@@ -357,6 +378,19 @@ internal class MediaWS(
 
 private fun JsonObject.string(name: String): String? =
     this[name]?.jsonPrimitive?.contentOrNull
+
+private fun StreamStopReason.wireName(): String = when (this) {
+    StreamStopReason.LAST_LISTENER_DISCONNECTED -> "last_listener_disconnected"
+    StreamStopReason.STREAM_DISABLED -> "stream_disabled"
+    StreamStopReason.CAPTURE_PERMISSION_REVOKED -> "capture_permission_revoked"
+    StreamStopReason.CAPTURE_SOURCE_LOST -> "capture_source_lost"
+    StreamStopReason.NATIVE_SHUTDOWN -> "native_shutdown"
+    StreamStopReason.MANUAL_STOP -> "manual_stop"
+    StreamStopReason.NO_PLAYABLE_MEDIA -> "no_playable_media"
+    StreamStopReason.CAPTURE_PERMISSION_MISSING -> "capture_permission_missing"
+    StreamStopReason.CAPTURE_SOURCE_UNAVAILABLE -> "capture_source_unavailable"
+    StreamStopReason.UNSUPPORTED_APP -> "unsupported_app"
+}
 
 internal data class ServerStreamCommand(val commandId: String, val command: JsonObject, val type: ServerCommandType)
 

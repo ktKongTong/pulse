@@ -6,6 +6,31 @@ import SwiftUI
 private typealias StreamStatusInput = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.StreamStatusInput
 private typealias StreamPresentation = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.StreamPresentation
 
+private final class StreamPcmForwarder: @unchecked Sendable {
+    private let worker: StreamBridge
+    private let queue = DispatchQueue(label: "io.github.kt.pulsebar.native.stream-pcm-forward")
+    private var chunks = 0
+    private var bytes = 0
+
+    init(worker: StreamBridge) {
+        self.worker = worker
+    }
+
+    func enqueue(_ data: Data) {
+        queue.async { [worker] in
+            self.chunks += 1
+            self.bytes += data.count
+            worker.submitStreamPcmBase64(chunkBase64: data.base64EncodedString())
+            if self.chunks <= 3 || self.chunks % 20 == 0 {
+                PulseNativeLog.debug(
+                    .streamSession,
+                    "capture pcm.forward chunks=\(self.chunks) bytes=\(self.bytes) lastBytes=\(data.count)"
+                )
+            }
+        }
+    }
+}
+
 /// `@MainActor ObservableObject` store for the Stream screen.
 ///
 /// Layer: **State/**. Only holds `@Published` state + command methods.
@@ -21,7 +46,6 @@ private typealias StreamPresentation = ExportedKotlinPackages.io.github.kt.pulse
 @MainActor
 final class StreamCaptureStore: ObservableObject {
     private static let mediaStreamAllowedKey = "PulseBarNative.stream.mediaStreamAllowed"
-    private static let audioCapturePermissionStartupRequestedKey = "PulseBarNative.stream.audioCapturePermissionStartupRequested"
 
     // MARK: - Exposed to SwiftUI
 
@@ -87,6 +111,7 @@ final class StreamCaptureStore: ObservableObject {
     private let worker: StreamBridge
     private var statsTask: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
+    private var pcmForwarder: StreamPcmForwarder?
 
     // MARK: - Lifecycle
 
@@ -105,6 +130,7 @@ final class StreamCaptureStore: ObservableObject {
         statsTask?.cancel()
         commandTask?.cancel()
         startupPermissionTask?.cancel()
+        pcmForwarder = nil
     }
 
     private func subscribeStats() {
@@ -124,7 +150,7 @@ final class StreamCaptureStore: ObservableObject {
     private func handleHostCommand(_ command: NativeHostCommand) {
         if let command = command as? NativeStreamRequestedCommand {
             log("server requested capture start endpoint=\(command.endpointId) stream=\(command.streamId) generation=\(command.generation)")
-            startServerDrivenCapture()
+            startServerDrivenCapture(endpointId: command.endpointId)
         } else if let command = command as? NativeStreamStoppedCommand {
             log("server requested capture stop endpoint=\(command.endpointId) stream=\(command.streamId ?? "nil") reason=\(command.reason)")
             stopCaptureSession()
@@ -140,7 +166,7 @@ final class StreamCaptureStore: ObservableObject {
         updateAggregatePublisherState()
         if snapshot.captureRequested && !previouslyRequested {
             log("server requested capture start")
-            startServerDrivenCapture()
+            startServerDrivenCapture(endpointId: endpoints.first?.id ?? "")
         } else if !snapshot.captureRequested && previouslyRequested && isCapturing {
             log("server requested capture stop")
             stopCaptureSession()
@@ -182,17 +208,15 @@ final class StreamCaptureStore: ObservableObject {
 
     func requestAudioCapturePermissionAtStartup() {
         guard startupPermissionTask == nil else { return }
-        let initialStatus = service.audioCapturePermissionStatus()
-        audioCapturePermissionStatus = initialStatus
-        log("startup audio permission preflight status=\(initialStatus.rawValue)")
-        guard initialStatus == .unknown else { return }
-        guard !UserDefaults.standard.bool(forKey: Self.audioCapturePermissionStartupRequestedKey) else { return }
-        UserDefaults.standard.set(true, forKey: Self.audioCapturePermissionStartupRequestedKey)
-        audioCapturePermissionRequestPending = true
-        publisherStatusText = "Waiting for audio capture permission"
         startupPermissionTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            let initialStatus = service.audioCapturePermissionStatus()
+            audioCapturePermissionStatus = initialStatus
             log("startup audio permission begin status=\(initialStatus.rawValue)")
+            audioCapturePermissionRequestPending = initialStatus == .unknown
+            if audioCapturePermissionRequestPending {
+                publisherStatusText = "Waiting for audio capture permission"
+            }
             defer {
                 audioCapturePermissionRequestPending = false
                 startupPermissionTask = nil
@@ -323,39 +347,54 @@ final class StreamCaptureStore: ObservableObject {
     /// (the server has issued `stream.start`). Picks the preferred capture
     /// source, kicks off CoreAudio via the session, and forwards PCM chunks
     /// to the bridge.
-    private func startServerDrivenCapture() {
+    private func startServerDrivenCapture(endpointId: String) {
         guard !isCapturing else { return }
-        guard allowCommandWhilePermissionPromptPending("startServerDrivenCapture") else { return }
+        guard !audioCapturePermissionRequestPending else {
+            log("server requested capture while startup audio permission request is pending")
+            stopActiveMediaStream(endpointId: endpointId, reasonName: "CAPTURE_PERMISSION_MISSING")
+            return
+        }
         guard mediaStreamPermission == .allow else {
             log("server started stream but owner disallowed media")
+            stopActiveMediaStream(endpointId: endpointId, reasonName: "STREAM_DISABLED")
             return
         }
         selectPreferredSource(preferredProvider: currentMedia?.providerId, preferredBundleId: nil)
         guard let source = selectedSource else {
             log("server started stream but no capture source available")
+            stopActiveMediaStream(endpointId: endpointId, reasonName: "CAPTURE_SOURCE_UNAVAILABLE")
             return
         }
+
+        let permissionStatus = service.audioCapturePermissionStatus()
+        audioCapturePermissionStatus = permissionStatus
+        log("server capture permission status=\(permissionStatus.rawValue)")
+
+        beginServerDrivenCapture(endpointId: endpointId, source: source)
+    }
+
+    private func beginServerDrivenCapture(endpointId: String, source: StreamCaptureSource) {
         errorMessage = nil
         statusText = "Starting stream…"
         isCapturing = true
         meter = StreamCaptureMeter()
         pushMediaStateToBridge(captureRunning: true)
 
-        runStreamingSession(source: source)
+        runStreamingSession(endpointId: endpointId, source: source)
     }
 
 
-    private func runStreamingSession(source: StreamCaptureSource, isManual: Bool = false) {
+    private func runStreamingSession(endpointId: String, source: StreamCaptureSource, isManual: Bool = false) {
         if isManual {
             log("audio permission preflight begin")
         }
-        let worker = self.worker
+        let forwarder = StreamPcmForwarder(worker: worker)
+        pcmForwarder = forwarder
         session.runStreaming(
             source: source,
             preflightPermission: true,
             pcmHandler: { data in
-                let encoded = data.base64EncodedString()
-                worker.submitStreamPcmBase64(chunkBase64: encoded)
+                forwarder.enqueue(data)
             },
             onMeter: { [weak self] m in
                 guard let self else { return }
@@ -371,6 +410,9 @@ final class StreamCaptureStore: ObservableObject {
                 errorMessage = error.localizedDescription
                 statusText = "Stream failed"
                 if isManual { publisherStatusText = "Publisher failed" }
+                if !isManual {
+                    stopActiveMediaStream(endpointId: endpointId, reasonName: Self.streamStopReasonName(for: error))
+                }
             },
             onFinish: { [weak self] in
                 guard let self else { return }
@@ -379,9 +421,33 @@ final class StreamCaptureStore: ObservableObject {
                 }
                 pushMediaStateToBridge(captureRunning: false)
                 isCapturing = false
+                pcmForwarder = nil
                 updateAggregatePublisherState()
             }
         )
+    }
+
+    private func stopActiveMediaStream(endpointId: String, reasonName: String) {
+        guard !endpointId.isEmpty else { return }
+        worker.stopActiveMediaStream(endpointId: endpointId, reasonName: reasonName)
+    }
+
+    private static func streamStopReasonName(for error: Error) -> String {
+        if let captureError = error as? StreamCaptureError {
+            switch captureError {
+            case .audioCapturePermissionDenied, .audioCapturePermissionNotGranted:
+                return "CAPTURE_PERMISSION_MISSING"
+            case .unsupportedOS:
+                return "UNSUPPORTED_APP"
+            case .coreAudio:
+                return "CAPTURE_SOURCE_UNAVAILABLE"
+            }
+        }
+        return "CAPTURE_SOURCE_LOST"
+    }
+
+    private static func effectivePermissionStatusAfterSuccessfulProbe(_ preflightStatus: StreamAudioCapturePermissionStatus) -> StreamAudioCapturePermissionStatus {
+        preflightStatus == .unknown ? .authorized : preflightStatus
     }
 
     func reconnectServer(endpointID: String? = nil) {

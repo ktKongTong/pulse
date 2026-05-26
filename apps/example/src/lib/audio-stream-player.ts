@@ -59,7 +59,7 @@ function pushWavChunk(chunk: ClientAudioChunk) {
       const context = ensureWavContext();
       if (!context || token !== wavToken) return;
       if (unlocked) await context.resume().catch(() => {});
-      const buffer = await context.decodeAudioData(bytes);
+      const buffer = decodePcm16WavChunk(context, bytes);
       if (token !== wavToken) return;
       const source = context.createBufferSource();
       source.buffer = buffer;
@@ -76,6 +76,70 @@ function pushWavChunk(chunk: ClientAudioChunk) {
       wavNextStart += buffer.duration;
     })
     .catch(() => {});
+}
+
+function decodePcm16WavChunk(context: AudioContext, bytes: ArrayBuffer): AudioBuffer {
+  const view = new DataView(bytes);
+  if (
+    view.byteLength < 44 ||
+    readAscii(view, 0, 4) !== "RIFF" ||
+    readAscii(view, 8, 4) !== "WAVE"
+  ) {
+    throw new Error("Invalid WAV chunk");
+  }
+
+  let offset = 12;
+  let channels = 0;
+  let sampleRate = 0;
+  let bitsPerSample = 0;
+  let dataOffset = -1;
+  let dataSize = 0;
+
+  while (offset + 8 <= view.byteLength) {
+    const chunkId = readAscii(view, offset, 4);
+    const chunkSize = view.getUint32(offset + 4, true);
+    const bodyOffset = offset + 8;
+    if (bodyOffset + chunkSize > view.byteLength) break;
+
+    if (chunkId === "fmt ") {
+      const audioFormat = view.getUint16(bodyOffset, true);
+      channels = view.getUint16(bodyOffset + 2, true);
+      sampleRate = view.getUint32(bodyOffset + 4, true);
+      bitsPerSample = view.getUint16(bodyOffset + 14, true);
+      if (audioFormat !== 1 || bitsPerSample !== 16) {
+        throw new Error("Unsupported WAV chunk format");
+      }
+    } else if (chunkId === "data") {
+      dataOffset = bodyOffset;
+      dataSize = chunkSize;
+      break;
+    }
+
+    offset = bodyOffset + chunkSize + (chunkSize % 2);
+  }
+
+  if (channels <= 0 || sampleRate <= 0 || dataOffset < 0 || dataSize <= 0) {
+    throw new Error("Incomplete WAV chunk");
+  }
+
+  const frameCount = Math.floor(dataSize / (channels * 2));
+  const buffer = context.createBuffer(channels, frameCount, sampleRate);
+  for (let channel = 0; channel < channels; channel += 1) {
+    const channelData = buffer.getChannelData(channel);
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const sampleOffset = dataOffset + (frame * channels + channel) * 2;
+      channelData[frame] = view.getInt16(sampleOffset, true) / 32768;
+    }
+  }
+  return buffer;
+}
+
+function readAscii(view: DataView, offset: number, length: number) {
+  let value = "";
+  for (let index = 0; index < length; index += 1) {
+    value += String.fromCharCode(view.getUint8(offset + index));
+  }
+  return value;
 }
 
 function ensureState(): SourceState {

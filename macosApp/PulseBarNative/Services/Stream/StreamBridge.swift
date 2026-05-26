@@ -7,6 +7,7 @@ protocol StreamBridge: AnyObject, Sendable {
     var hostCommands: any KotlinCoroutineSupport.KotlinTypedFlow<NativeHostCommand> { get }
     func emitNativeEvent(event: any NativeDeviceEvent)
     func submitStreamPcmBase64(chunkBase64: String)
+    func stopActiveMediaStream(endpointId: String, reasonName: String)
 }
 
 extension PulseBarBridge: @retroactive @unchecked Sendable {}

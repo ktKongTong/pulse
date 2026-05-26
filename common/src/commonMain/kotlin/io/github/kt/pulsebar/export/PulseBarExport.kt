@@ -463,7 +463,8 @@ expect class PulseBarBridge() {
 
     fun submitStreamPcmBase64(chunkBase64: String)
 
-    
+    fun stopActiveMediaStream(endpointId: String, reasonName: String)
+
     /** Stop the active media stream without closing the Stream WebSocket. */
 //    fun emitStreamLocalStop()
 

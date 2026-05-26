@@ -92,12 +92,12 @@ final class StreamCaptureService: @unchecked Sendable {
             throw StreamCaptureError.audioCapturePermissionDenied
         }
         NSApp.activate(ignoringOtherApps: true)
-        if let granted = await StreamPermission.requestAudioCapturePermission() {
+        if let granted = await StreamPermission.requestAudioCapturePermissionWithTimeout(seconds: 15) {
             appendStreamCaptureServiceLog("audio-capture ui permission requested granted=\(granted)")
             if granted { return }
             throw StreamCaptureError.audioCapturePermissionNotGranted
         }
-        appendStreamCaptureServiceLog("audio-capture ui permission request unavailable")
+        appendStreamCaptureServiceLog("audio-capture ui permission request timed out")
         throw StreamCaptureError.audioCapturePermissionNotGranted
     }
 
@@ -318,8 +318,10 @@ final class StreamCaptureService: @unchecked Sendable {
 
     // MARK: - Permission plumbing
     //
-    // Delegates to `StreamPermission`. The render-start path must never open
-    // a new TCC prompt; the UI startup pre-flight owns prompting.
+    // Delegates to `StreamPermission`. The `WithoutRequest` helper is
+    // kept here because it's the one call site that mixes preflight +
+    // blocking request + throwing translation; it's specific to the
+    // render-start path.
 
     private static func ensureAudioCapturePermissionWithoutRequest() throws {
         let status = StreamPermission.preflightAudioCapturePermission()
@@ -328,7 +330,10 @@ final class StreamCaptureService: @unchecked Sendable {
         if status == .denied {
             throw StreamCaptureError.audioCapturePermissionDenied
         }
-        throw StreamCaptureError.audioCapturePermissionNotGranted
+        if let granted = StreamPermission.requestAudioCapturePermissionBlocking() {
+            if granted { return }
+            throw StreamCaptureError.audioCapturePermissionNotGranted
+        }
     }
 
     private static func defaultOutputDeviceID() throws -> AudioDeviceID {
@@ -414,6 +419,7 @@ final class StreamCaptureService: @unchecked Sendable {
             throw StreamCaptureError.coreAudio("SetNominalSampleRate", status)
         }
     }
+
 }
 
 // MARK: - Render IOProc

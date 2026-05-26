@@ -55,8 +55,9 @@ enum StreamPermission {
         return .unknown
     }
 
-    /// UI pre-flight. Returns only after the TCC prompt is answered.
-    static func requestAudioCapturePermission() async -> Bool? {
+    /// UI pre-flight. Activates the app and waits up to `seconds` for the
+    /// TCC prompt. Returns `nil` on timeout.
+    static func requestAudioCapturePermissionWithTimeout(seconds: UInt64) async -> Bool? {
         guard let request = tccSymbol("TCCAccessRequest", as: StreamTCCRequestFunc.self) else {
             return nil
         }
@@ -65,7 +66,26 @@ enum StreamPermission {
             request("kTCCServiceAudioCapture" as CFString, nil) { allowed in
                 box.resume(allowed)
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Int(seconds))) {
+                box.resume(nil)
+            }
         }
     }
 
+    /// Background flavor used by the render-start path. Blocks the calling
+    /// thread on a semaphore (up to 60 s). Not safe to call from the main
+    /// thread.
+    static func requestAudioCapturePermissionBlocking() -> Bool? {
+        guard let request = tccSymbol("TCCAccessRequest", as: StreamTCCRequestFunc.self) else {
+            return nil
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        var granted = false
+        request("kTCCServiceAudioCapture" as CFString, nil) { allowed in
+            granted = allowed
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 60)
+        return granted
+    }
 }

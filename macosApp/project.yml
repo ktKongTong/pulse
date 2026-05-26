@@ -13,11 +13,6 @@ settings:
     CODE_SIGN_ENTITLEMENTS: PulseBarNative/PulseBarNative.entitlements
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
-    GENERATE_INFOPLIST_FILE: YES
-    INFOPLIST_KEY_LSUIElement: NO
-    INFOPLIST_KEY_NSAppleEventsUsageDescription: PulseBar reads browser and Spotify metadata to show the current status in the menu bar.
-    INFOPLIST_KEY_NSAudioCaptureUsageDescription: PulseBar captures system audio for Live Listen streams after you start capture.
-    INFOPLIST_KEY_NSScreenCaptureUsageDescription: PulseBar may need screen and system audio recording permission to capture Live Listen audio.
     OTHER_LDFLAGS: "$(inherited) -lsqlite3"
 targets:
   PulseBarNative:
@@ -26,12 +21,15 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - PulseBarNative
+    info:
+      path: PulseBarNative/Info.plist
+      properties:
+        LSUIElement: false
+        NSAppleEventsUsageDescription: PulseBar reads browser and Spotify metadata to show the current status in the menu bar.
+        NSAudioCaptureUsageDescription: PulseBar captures system audio for Stream streams after you start capture.
+        NSScreenCaptureUsageDescription: PulseBar may need screen and system audio recording permission to capture Stream audio.
     preBuildScripts:
       - name: Embed Swift Export
         script: |
           cd "$SRCROOT/.."
-          export JAVA_HOME="$HOME/Library/Java/JavaVirtualMachines/jbr-21.0.9/Contents/Home"
-          export PATH="$JAVA_HOME/bin:$PATH"
-          export GRADLE_USER_HOME="$SRCROOT/../.gradle-xcode"
-          export KONAN_DATA_DIR="${KONAN_DATA_DIR:-$HOME/.konan}"
-          ./gradlew --no-daemon -Dorg.gradle.vfs.watch=false :common:embedSwiftExportForXcode
+          ./gradlew :common:embedSwiftExportForXcode

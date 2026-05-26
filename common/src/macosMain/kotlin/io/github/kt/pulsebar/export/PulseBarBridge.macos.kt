@@ -11,6 +11,7 @@ import io.github.kt.pulsebar.core.stream.CommonConfig
 import io.github.kt.pulsebar.core.stream.EndpointConfig
 import io.github.kt.pulsebar.core.stream.PulseConfig
 import io.github.kt.pulsebar.core.stream.StreamConfig
+import io.github.kt.pulsebar.core.stream.StreamStopReason
 import io.github.kt.pulsebar.evt.EventDispatcher
 import io.github.kt.pulsebar.evt.RuntimeState
 import io.github.kt.pulsebar.evt.Stream
@@ -65,6 +66,8 @@ actual class PulseBarBridge actual constructor() {
     private var currentSession: SessionState? = null
     private var lastObservedAtMillis: Long? = null
     private var pendingElapsedMillis: Long = 0L
+    private var pcmSubmitCount: Long = 0L
+    private var pcmSubmitBytes: Long = 0L
 
     private val runtimeState: MutableStateFlow<RuntimeState> = MutableStateFlow(RuntimeState())
 
@@ -197,7 +200,20 @@ actual class PulseBarBridge actual constructor() {
             }
             .getOrNull()
             ?: return
-        Stream.audioChannel.trySend(bytes)
+        val result = Stream.audioChannel.trySend(bytes)
+        pcmSubmitCount += 1
+        pcmSubmitBytes += bytes.size
+        if (pcmSubmitCount <= 3L || pcmSubmitCount % 20L == 0L || result.isFailure) {
+            logger(PulseLogCategory.StreamSession).i {
+                "pcm.submit count=$pcmSubmitCount bytes=$pcmSubmitBytes lastBytes=${bytes.size} accepted=${result.isSuccess}"
+            }
+        }
+    }
+
+    actual fun stopActiveMediaStream(endpointId: String, reasonName: String) {
+        val reason = runCatching { StreamStopReason.valueOf(reasonName) }
+            .getOrElse { StreamStopReason.MANUAL_STOP }
+        eventDispatcher.streamClients.value[endpointId]?.connectedMediaWS?.stopStream(reason)
     }
 
 

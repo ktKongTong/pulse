@@ -66,4 +66,7 @@ actual class PulseBarBridge actual constructor() {
 
     actual fun submitStreamPcmBase64(chunkBase64: String) {
     }
+
+    actual fun stopActiveMediaStream(endpointId: String, reasonName: String) {
+    }
 }
