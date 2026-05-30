@@ -47,11 +47,11 @@ v2 native 仍复用下列概念，但它们不再代表 v1 wire protocol，也�
 
 - `ConnectionConfig`
 - `StreamStats`
-- `StreamMedia`
-- `StreamNativeMediaState`
-- `StreamMediaPermission`
-- `StreamPlaybackWire`
-- `StreamCaptureRuntime`
+- `Media`
+- `MediaStateSnapshot`
+- `StreamPermission`
+- `PlaybackStatus`
+- `StreamCaptureStatus`
 - `StreamStopReason`
 
 这些保留为 native stream UI / device v2 的内部 model。

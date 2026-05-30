@@ -1,0 +1,243 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "0ea40d73156b88245e67e8b1068164b9",
+    "entities": [
+      {
+        "tableName": "usage_rows",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`day_iso` TEXT NOT NULL, `stat_key` TEXT NOT NULL, `bundle_id` TEXT NOT NULL, `label` TEXT NOT NULL, `total_seconds` INTEGER NOT NULL, PRIMARY KEY(`day_iso`, `stat_key`))",
+        "fields": [
+          {
+            "fieldPath": "dayIso",
+            "columnName": "day_iso",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "statKey",
+            "columnName": "stat_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bundleId",
+            "columnName": "bundle_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalSeconds",
+            "columnName": "total_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "day_iso",
+            "stat_key"
+          ]
+        }
+      },
+      {
+        "tableName": "usage_counters",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`day_iso` TEXT NOT NULL, `counter_key` TEXT NOT NULL, `value` INTEGER NOT NULL, PRIMARY KEY(`day_iso`, `counter_key`))",
+        "fields": [
+          {
+            "fieldPath": "dayIso",
+            "columnName": "day_iso",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "counterKey",
+            "columnName": "counter_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "value",
+            "columnName": "value",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "day_iso",
+            "counter_key"
+          ]
+        }
+      },
+      {
+        "tableName": "app_meta",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`meta_key` TEXT NOT NULL, `value` INTEGER NOT NULL, PRIMARY KEY(`meta_key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "meta_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "value",
+            "columnName": "value",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "meta_key"
+          ]
+        }
+      },
+      {
+        "tableName": "raw_journal",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`event_id` TEXT NOT NULL, `protocol` TEXT NOT NULL, `endpoint_key` TEXT NOT NULL, `workspace_id` TEXT NOT NULL, `device_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `seq` INTEGER NOT NULL, `observed_at` TEXT NOT NULL, `sent_at` TEXT NOT NULL, `kind` TEXT NOT NULL, `event_json` TEXT NOT NULL, `queued_at_millis` INTEGER NOT NULL, PRIMARY KEY(`event_id`))",
+        "fields": [
+          {
+            "fieldPath": "eventId",
+            "columnName": "event_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "protocol",
+            "columnName": "protocol",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endpointKey",
+            "columnName": "endpoint_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "workspaceId",
+            "columnName": "workspace_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceId",
+            "columnName": "device_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seq",
+            "columnName": "seq",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observedAt",
+            "columnName": "observed_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sentAt",
+            "columnName": "sent_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventJson",
+            "columnName": "event_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "queuedAtMillis",
+            "columnName": "queued_at_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "event_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_raw_journal_endpoint_key_seq",
+            "unique": false,
+            "columnNames": [
+              "endpoint_key",
+              "seq"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_raw_journal_endpoint_key_seq` ON `${TABLE_NAME}` (`endpoint_key`, `seq`)"
+          }
+        ]
+      },
+      {
+        "tableName": "delivery_watermarks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`endpoint_key` TEXT NOT NULL, `device_id` TEXT NOT NULL, `acknowledged_seq_max` INTEGER NOT NULL, `acknowledged_at_iso8601` TEXT NOT NULL, PRIMARY KEY(`endpoint_key`))",
+        "fields": [
+          {
+            "fieldPath": "endpointKey",
+            "columnName": "endpoint_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceId",
+            "columnName": "device_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acknowledgedSeqMax",
+            "columnName": "acknowledged_seq_max",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acknowledgedAtIso8601",
+            "columnName": "acknowledged_at_iso8601",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "endpoint_key"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0ea40d73156b88245e67e8b1068164b9')"
+    ]
+  }
+}

@@ -1,35 +1,34 @@
 package io.github.kt.pulsebar.ws.media
 
-import io.github.kt.pulsebar.core.devicev2.DeviceV2CaptureInfo
-import io.github.kt.pulsebar.core.devicev2.DeviceV2RejectedReason
-import io.github.kt.pulsebar.core.devicev2.DeviceV2StreamFormat
-import io.github.kt.pulsebar.core.devicev2.toDeviceV2MediaItem
-import io.github.kt.pulsebar.core.devicev2.toDeviceV2StreamState
-import io.github.kt.pulsebar.core.log.PulseLogCategory
-import io.github.kt.pulsebar.core.log.logger
-import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
-import io.github.kt.pulsebar.core.stream.ConnectionConfig
-import io.github.kt.pulsebar.core.stream.EndpointConfig
-import io.github.kt.pulsebar.core.stream.PulseConfig
-import io.github.kt.pulsebar.core.stream.StreamConfig
-import io.github.kt.pulsebar.core.stream.StreamMedia
-import io.github.kt.pulsebar.core.stream.StreamMediaPermission
-import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
-import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
-import io.github.kt.pulsebar.core.stream.StreamStopReason
-import io.github.kt.pulsebar.core.stream.getMediaWSUrl
-import io.github.kt.pulsebar.export.NativeHostCommand
-import io.github.kt.pulsebar.export.NativeStreamRequestedCommand
-import io.github.kt.pulsebar.export.NativeStreamStoppedCommand
-import io.github.kt.pulsebar.media.StreamState
-import io.github.kt.pulsebar.media.deviceV2BytesPerFrame
-import io.github.kt.pulsebar.media.deviceV2ChunkBytesFor
-import io.github.kt.pulsebar.media.deviceV2WrapWav
+
+import io.github.kt.pulsebar.logger.PulseLogCategory
+import io.github.kt.pulsebar.logger.logger
+import io.github.kt.pulsebar.model.PulseConfigItem
+import io.github.kt.pulsebar.model.stream.StreamStopReason
+import io.github.kt.pulsebar.export.event.NativeRequestedCommandEvent
+import io.github.kt.pulsebar.export.event.NativeStoppedCommandEvent
+import io.github.kt.pulsebar.export.event.ServerCommandEvent
+
+import io.github.kt.pulsebar.utils.deviceV2BytesPerFrame
+import io.github.kt.pulsebar.utils.deviceV2ChunkBytesFor
+import io.github.kt.pulsebar.utils.packPcm16
 import io.github.kt.pulsebar.utils.nowInIso8601
+import io.github.kt.pulsebar.model.connection.ServerCommandType
+import io.github.kt.pulsebar.model.connection.ServerStreamCommand
+import io.github.kt.pulsebar.model.getEndpoint
+import io.github.kt.pulsebar.model.stream.CaptureInfo
+import io.github.kt.pulsebar.model.stream.Media
+import io.github.kt.pulsebar.model.stream.MediaState
+import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
+import io.github.kt.pulsebar.model.stream.getSnapshot
+import io.github.kt.pulsebar.model.stream.getStreamState
+import io.github.kt.pulsebar.model.stream.rejectionReason
+
 import io.github.kt.pulsebar.ws.connection.WSConfig
 import io.github.kt.pulsebar.ws.connection.WSManager
 import io.github.kt.pulsebar.ws.connection.WSPayload
 import io.github.kt.pulsebar.ws.connection.deviceV2Json
+import io.github.kt.pulsebar.ws.getMediaWSUrl
 import io.ktor.client.HttpClient
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readReason
@@ -39,11 +38,14 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.getOrElse
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -59,9 +61,9 @@ import kotlinx.serialization.json.jsonPrimitive
 internal class MediaWS(
     http: HttpClient,
     scope: CoroutineScope,
-    val streamStateFlow: StateFlow<StreamState>,
+    val mediaStateFlow: StateFlow<MediaState>,
     private val endpointId: String,
-    private val hostCommandSink: (NativeHostCommand) -> Unit,
+    private val hostCommandSink: (ServerCommandEvent) -> Unit,
 ) {
     internal var pcmBuffer = ByteArray(0)
     internal val mediaOutbound = Channel<WSPayload>(capacity = 64)
@@ -78,10 +80,46 @@ internal class MediaWS(
             runtimeState = runtime,
         )
     }
-    internal suspend fun connect(deviceSessionId: String, config: PulseConfig, onReady: (suspend () -> Unit)? = null, timeout: Duration = 10.seconds) {
+
+    init {
+        // 当stream state 更新时
+        scope.launch {
+            mediaStateFlow
+                .collect {
+                    transitionState(MediaRuntimeEvent.MediaStateChanged(it.getSnapshot()))
+                    mediaOutbound.trySend(DeviceV2StreamStatePayload(state = it.streamState))
+                }
+        }
+
+        scope.launch {
+            mediaStateFlow
+                .distinctUntilChanged { old, new ->
+                  old.streamState == new.streamState
+                }
+                .filter {
+                    it.streamState.reason != null
+                }
+                .collect {
+                    stopStream(StreamStopReason.MANUAL_STOP)
+                }
+        }
+        // media 更新时
+        scope.launch {
+            mediaStateFlow.value.mediaFlow
+                .collect {
+                    transitionState(MediaRuntimeEvent.PlayingChanged(it))
+                    mediaOutbound.trySend(DeviceV2MediaUpdatePayload(it)).getOrElse { error ->
+                    }
+                }
+        }
+
+
+    }
+
+    internal suspend fun connect(deviceSessionId: String, config: PulseConfigItem, onReady: (suspend () -> Unit)? = null, timeout: Duration = 10.seconds) {
         wsManager.connect(
             WSConfig(
-                config.endpoint.getMediaWSUrl(deviceSessionId),
+                config.endpoint.getEndpoint().getMediaWSUrl(deviceSessionId),
                 apiKey = config.endpoint.apiKey,
                 handShakeTimeout = timeout,
             )
@@ -101,62 +139,38 @@ internal class MediaWS(
         _state.update { it.reduce(event) }
     }
 
-    internal fun updateNativeMediaState(next: StreamNativeMediaState) {
-        transitionState(MediaRuntimeEvent.MediaStateChanged(next))
-        log.d { "media.state.enqueue endpointId=$endpointId playback=${next.playback} capture=${next.capture} media=${next.media?.title ?: "nil"}" }
-        mediaOutbound.trySend(
-            DeviceV2StreamStatePayload(
-                sentAt = nowInIso8601(),
-                state = next.toDeviceV2StreamState(streamStateFlow.value.streamFormat),
-            )
-        )
-    }
-
-    internal fun updateNowPlaying(next: StreamMedia?) {
-        transitionState(MediaRuntimeEvent.PlayingChanged(next))
-        if (next != null) {
-            log.d { "media.updated.enqueue endpointId=$endpointId title=${next.title ?: "nil"} playback=${next.playbackState}" }
-            mediaOutbound.trySend(DeviceV2MediaUpdatePayload(next.toDeviceV2MediaItem()))
-        }
-    }
-
     private suspend fun sendCurrentStateSnapshot() {
-        val state = streamStateFlow.value
-        val media = state.mediaState.media ?: state.mediaFlow.value
-        transitionState(MediaRuntimeEvent.MediaStateChanged(state.mediaState))
-        log.d { "media.state.send.snapshot endpointId=$endpointId playback=${state.mediaState.playback} capture=${state.mediaState.capture} media=${state.mediaState.media?.title ?: "nil"}" }
-        wsManager.send(
-            DeviceV2StreamStatePayload(
-                sentAt = nowInIso8601(),
-                state = state.mediaState.toDeviceV2StreamState(state.streamFormat),
-            )
-        )
+        val state = mediaStateFlow.value
+
+        transitionState(MediaRuntimeEvent.MediaStateChanged(state.getSnapshot()))
+//        log.d { "media.state.send.snapshot endpointId=$endpointId playback=${state.mediaState.playback} capture=${state.mediaState.capture} media=${state.mediaState.media?.title ?: "nil"}" }
+        wsManager.send(DeviceV2StreamStatePayload(state.streamState))
+        val media = state.mediaFlow.value
         if (media != null) {
             transitionState(MediaRuntimeEvent.PlayingChanged(media))
-            log.d { "media.updated.send.snapshot endpointId=$endpointId title=${media.title ?: "nil"} playback=${media.playbackState}" }
-            wsManager.send(DeviceV2MediaUpdatePayload(media.toDeviceV2MediaItem()))
+            // log.d { "media.updated.send.snapshot endpointId=$endpointId title=${media.title ?: "nil"} playback=${media.playbackState}" }
+            wsManager.send(DeviceV2MediaUpdatePayload(media))
         }
     }
 
-    internal fun stopStream(reason: StreamStopReason) {
+    private fun stopStream(reason: StreamStopReason) {
         val stream = activeStream ?: return
         activeStream = null
         pcmBuffer = ByteArray(0)
         updateState { it.copy(captureRequested = false) }
-        val wireReason = reason.wireName()
         log.i {
             "media.stream.stopped.local endpointId=$endpointId streamId=${stream.streamId} " +
-                "generation=${stream.generation} reason=$wireReason"
+                "generation=${stream.generation} reason=$reason"
         }
         mediaOutbound.trySend(
             DeviceV2StreamStoppedPayload(
                 streamId = stream.streamId,
                 generation = stream.generation,
-                reason = wireReason,
+                reason = reason,
                 sentAt = nowInIso8601(),
             )
         )
-        transitionState(MediaRuntimeEvent.StreamStopped(wireReason))
+        transitionState(MediaRuntimeEvent.StreamStopped(reason))
     }
 
     internal suspend fun sendFirstFrame(frame: Frame) {
@@ -200,8 +214,8 @@ internal class MediaWS(
 //        log.w { "device.v2.media.inbound.end" }
             }
             val pcm = launch {
-                val streamState = streamStateFlow.value
-                streamState.pcmChannel.receiveAsFlow().collect { pcm ->
+                mediaStateFlow.value.pcmChannel.receiveAsFlow().collect { pcm ->
+                    val mediaState = mediaStateFlow.value
                     pcmAcceptedCount += 1L
                     pcmAcceptedBytes += pcm.size
                     if (pcmAcceptedCount <= 3L || pcmAcceptedCount % 20L == 0L) {
@@ -210,14 +224,18 @@ internal class MediaWS(
                                 "bytes=$pcmAcceptedBytes lastBytes=${pcm.size}"
                         }
                     }
+
+                    val channels = mediaState.streamState.streamFormat?.channels ?: 2
+                    val bytesPerFrame = deviceV2BytesPerFrame(channels)
+                    val sampleRate = mediaState.streamState.streamFormat?.sampleRate ?: 44_100
                     transitionState(MediaRuntimeEvent.PcmAccepted(
                         pcm.size,
-                        (pcm.size / deviceV2BytesPerFrame(streamState.channels)),
+                        (pcm.size / bytesPerFrame),
                     ))
                     val chunkBytes = deviceV2ChunkBytesFor(
-                        streamState.chunkDuration.inWholeMilliseconds.toInt(),
-                        streamState.sampleRate,
-                        streamState.channels,
+                        mediaState.chunkDuration.inWholeMilliseconds.toInt(),
+                        sampleRate,
+                        channels,
                     )
                     // 本地 buffer / 统一 buffer？
                     // 每个 endpoint 单独 buffer
@@ -226,9 +244,9 @@ internal class MediaWS(
                         val chunk = pcmBuffer.copyOfRange(0, chunkBytes)
                         // TODO 低效 copy
                         pcmBuffer = pcmBuffer.copyOfRange(chunkBytes, pcmBuffer.size)
-                        sendChunk(deviceV2WrapWav(chunk, streamState.sampleRate, streamState.channels))
+                        sendChunk(packPcm16(chunk, sampleRate, channels))
                     }
-                    updateState { it.copy(bufferedFrames = (pcmBuffer.size / deviceV2BytesPerFrame(streamState.channels)).toLong()) }
+                    updateState { it.copy(bufferedFrames = (pcmBuffer.size / bytesPerFrame.toLong())) }
                 }
             }
             val outbound = launch {
@@ -251,7 +269,7 @@ internal class MediaWS(
                 streamId = stream.streamId,
                 generation = stream.generation,
                 seq = seq,
-                durationMs = streamStateFlow.value.chunkDuration.inWholeMilliseconds.toInt(),
+                durationMs = mediaStateFlow.value.chunkDuration.inWholeMilliseconds.toInt(),
                 byteLength = bytes.size,
             )
         )
@@ -293,19 +311,19 @@ internal class MediaWS(
             log.w { "media.command.stream.invalid endpointId=$endpointId commandId=$commandId missing=generation payload=$command" }
             return
         }
-        val mediaState = streamStateFlow.value.mediaState
+        val streamState = mediaStateFlow.value.streamState
         log.i {
             "media.command.stream.requested endpointId=$endpointId commandId=$commandId streamId=$streamId " +
-                "generation=$generation permission=${mediaState.permission} playback=${mediaState.playback} " +
-                "capture=${mediaState.capture} media=${mediaState.media?.title ?: "nil"}"
+                "generation=$generation permission=${streamState.permission} playback=${streamState.playbackStatus} " +
+                "capture=${streamState.captureStatus} media=${mediaStateFlow.value.mediaFlow.value?.title ?: "nil"}"
         }
-        val reason = rejectionReason()
+        val reason = mediaStateFlow.value.streamState.rejectionReason()
         if (reason != null) {
-            val rejectedState = streamStateFlow.value.mediaState
+            val rejectedState = mediaStateFlow.value.streamState
             log.w {
                 "media.command.stream.rejected endpointId=$endpointId commandId=$commandId streamId=$streamId " +
                     "generation=$generation reason=$reason permission=${rejectedState.permission} " +
-                    "playback=${rejectedState.playback} capture=${rejectedState.capture} media=${rejectedState.media?.title ?: "nil"}"
+                    "playback=${rejectedState.playbackStatus} capture=${rejectedState.captureStatus} media=${mediaStateFlow.value.mediaFlow.value?.title ?: "nil"}"
             }
             wsManager.send(
                 DeviceV2RejectedAckPayload(
@@ -315,7 +333,7 @@ internal class MediaWS(
                 )
             )
             activeStream = null
-            transitionState(MediaRuntimeEvent.StreamRejected(reason.toString()))
+            transitionState(MediaRuntimeEvent.StreamRejected(reason))
             return
         }
         activeStream = DeviceV2ActiveStream(streamId, generation, 0L)
@@ -329,26 +347,19 @@ internal class MediaWS(
                 streamId = streamId,
                 generation = generation,
                 firstSeq = 0L,
-                capture = DeviceV2CaptureInfo(provider = "macos", displayName = "Mac System Audio"),
-                streamFormat = streamStateFlow.value.streamFormat
+                capture = CaptureInfo(provider = "macos", displayName = "Mac System Audio"),
+                streamFormat = mediaStateFlow.value.streamState.streamFormat
             )
         )
         transitionState(MediaRuntimeEvent.StreamRequested(streamId, generation))
         hostCommandSink(
-            NativeStreamRequestedCommand(
+            NativeRequestedCommandEvent(
                 endpointId = endpointId,
                 commandId = commandId,
                 streamId = streamId,
                 generation = generation,
             )
         )
-    }
-
-    fun rejectionReason(): DeviceV2RejectedReason? = when {
-        streamStateFlow.value.mediaState.permission != StreamMediaPermission.ALLOW -> DeviceV2RejectedReason.CAPTURE_PERMISSION_MISSING
-        streamStateFlow.value.mediaState.playback != StreamPlaybackWire.PLAYING -> DeviceV2RejectedReason.NO_PLAYABLE_MEDIA
-        streamStateFlow.value.mediaState.capture == StreamCaptureRuntime.CAPTURING -> null
-        else -> null
     }
 
     suspend fun handleStreamStop(commandId: String) {
@@ -362,14 +373,15 @@ internal class MediaWS(
                 generation = stream.generation,
             )
         )
-        transitionState(MediaRuntimeEvent.StreamStopped("server_stream_stopped"))
+//        server_stream_stopped
+        transitionState(MediaRuntimeEvent.StreamStopped(StreamStopReason.SERVER_STOPPED))
         hostCommandSink(
-            NativeStreamStoppedCommand(
+            NativeStoppedCommandEvent(
                 endpointId = endpointId,
                 commandId = commandId,
                 streamId = stream.streamId,
                 generation = stream.generation,
-                reason = "server_stream_stopped",
+                reason = StreamStopReason.SERVER_STOPPED,
             )
         )
     }
@@ -379,34 +391,7 @@ internal class MediaWS(
 private fun JsonObject.string(name: String): String? =
     this[name]?.jsonPrimitive?.contentOrNull
 
-private fun StreamStopReason.wireName(): String = when (this) {
-    StreamStopReason.LAST_LISTENER_DISCONNECTED -> "last_listener_disconnected"
-    StreamStopReason.STREAM_DISABLED -> "stream_disabled"
-    StreamStopReason.CAPTURE_PERMISSION_REVOKED -> "capture_permission_revoked"
-    StreamStopReason.CAPTURE_SOURCE_LOST -> "capture_source_lost"
-    StreamStopReason.NATIVE_SHUTDOWN -> "native_shutdown"
-    StreamStopReason.MANUAL_STOP -> "manual_stop"
-    StreamStopReason.NO_PLAYABLE_MEDIA -> "no_playable_media"
-    StreamStopReason.CAPTURE_PERMISSION_MISSING -> "capture_permission_missing"
-    StreamStopReason.CAPTURE_SOURCE_UNAVAILABLE -> "capture_source_unavailable"
-    StreamStopReason.UNSUPPORTED_APP -> "unsupported_app"
-}
 
-internal data class ServerStreamCommand(val commandId: String, val command: JsonObject, val type: ServerCommandType)
-
-enum class ServerCommandType(val cmd: String) {
-    StreamRequest("stream.requested"),
-    StreamResume("stream.resume"),
-    StreamStop("stream.stop"),
-    ;
-    companion object {
-        private val byCmd: Map<String, ServerCommandType> =
-            entries.associateBy(ServerCommandType::cmd)
-
-        fun from(value: String): ServerCommandType? =
-            byCmd[value]
-    }
-}
 
 private sealed interface MediaCommandParseResult {
     data class Command(val command: ServerStreamCommand) : MediaCommandParseResult

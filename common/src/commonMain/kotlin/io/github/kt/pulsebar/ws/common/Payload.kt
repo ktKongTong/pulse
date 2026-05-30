@@ -1,13 +1,6 @@
 package io.github.kt.pulsebar.ws.common
 
-import io.github.kt.pulsebar.core.devicev2.DeviceV2DeviceInfo
-import io.github.kt.pulsebar.core.devicev2.DeviceV2PresenceCapabilities
-import io.github.kt.pulsebar.core.stream.EndpointConfig
-import io.github.kt.pulsebar.focus.DeviceV2Availability
-import io.github.kt.pulsebar.focus.DeviceV2Focus
-import io.github.kt.pulsebar.focus.DeviceV2PresenceState
-import io.github.kt.pulsebar.platform.getFrontmostApp
-import io.github.kt.pulsebar.platform.newPulseUuid
+import io.github.kt.pulsebar.model.Endpoint
 import io.github.kt.pulsebar.utils.nowInIso8601
 import io.github.kt.pulsebar.ws.connection.CommonMessage
 import io.github.kt.pulsebar.ws.DEVICE_CONNECTION_PROTOCOL_V1
@@ -24,7 +17,6 @@ internal data class DeviceV2CommonHelloPayload(
     val supportedProtocols: List<String>,
 ) : WSPayload
 
-
 @Serializable
 @CommonMessage("snapshot")
 internal data class DeviceV2PresencePayload(
@@ -35,14 +27,27 @@ internal data class DeviceV2PresencePayload(
     val state: DeviceV2PresenceState,
 ) : WSPayload
 
+@Serializable
+internal data class DeviceV2PresenceState(val availability: DeviceV2Availability, val focus: DeviceV2Focus)
 
+@Serializable
+internal data class DeviceV2Availability(val state: String, val idleSeconds: Int? = null)
 
+@Serializable
+internal data class DeviceV2Focus(val app: App? = null)
 
-internal fun deviceV2CommonHello(config: EndpointConfig) = DeviceV2CommonHelloPayload(
+@Serializable
+data class App(
+    val name: String? = null,
+    val id: String? = null,
+    val category: String? = null,
+)
+
+internal fun deviceV2CommonHello(config: Endpoint) = DeviceV2CommonHelloPayload(
     device = DeviceV2DeviceInfo(
-        name = config.deviceId,
+        name = config.url,
         platform = "macos",
-        displayName = config.deviceId,
+        displayName = config.url,
     ),
     capabilities = DeviceV2PresenceCapabilities(
         focusApp = true,
@@ -53,20 +58,26 @@ internal fun deviceV2CommonHello(config: EndpointConfig) = DeviceV2CommonHelloPa
     supportedProtocols = listOf(DEVICE_CONNECTION_PROTOCOL_V1),
 )
 
-internal fun deviceV2Presence(seq: Long, now: String): DeviceV2PresencePayload {
-    return DeviceV2PresencePayload(
-        eventId = newPulseUuid(),
-        seq = seq,
-        observedAt = now,
-        sentAt = nowInIso8601(),
-        state = DeviceV2PresenceState(
-            availability = DeviceV2Availability(state = "active", idleSeconds = 0),
-            focus = DeviceV2Focus(
-                app = getFrontmostApp(),
-            ),
-        ),
-    )
-}
+
+
+
+@Serializable
+internal data class DeviceV2DeviceInfo(
+    val name: String,
+    val platform: String,
+    val appVersion: String? = null,
+    val mode: String? = null,
+    val displayName: String? = null,
+)
+
+@Serializable
+internal data class DeviceV2PresenceCapabilities(
+    val focusApp: Boolean,
+    val windowTitle: Boolean,
+    val pageTitle: Boolean,
+    val pageUrl: Boolean,
+)
+
 
 internal fun epochMillisToIso8601(epochMillis: Long): String =
     Instant.fromEpochMilliseconds(epochMillis).toString()

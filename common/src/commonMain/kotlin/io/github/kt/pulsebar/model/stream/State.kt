@@ -1,0 +1,83 @@
+package io.github.kt.pulsebar.model.stream
+
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+
+@Serializable
+data class StreamFormat(
+    val codec: String,
+    val sampleRate: Int = 48_000,
+    val channels: Int = 2,
+    val bitDepth: Int? = null,
+)
+
+data class MediaState(
+    val pcmChannel: Channel<ByteArray> = Channel(capacity = 256),
+    val streamState: StreamState,
+    val chunkDuration: Duration = 0.5.seconds,
+    val chunkBytes: Int,
+    val mediaFlow: StateFlow<Media?>,
+)
+
+fun MediaState.getSnapshot(): MediaStateSnapshot = MediaStateSnapshot(
+    permission = streamState.permission,
+    playbackStatus = streamState.playbackStatus,
+    captureStatus = streamState.captureStatus,
+    reason = streamState.reason,
+    message = streamState.message,
+    format = streamState.streamFormat,
+    media = mediaFlow.value,
+)
+
+@Serializable
+data class MediaStateSnapshot(
+    val permission: StreamPermission = StreamPermission.ALLOW,
+    val playbackStatus: PlaybackStatus = PlaybackStatus.PAUSED,
+    val captureStatus: StreamCaptureStatus = StreamCaptureStatus.IDLE,
+    val reason: StreamBlockedReason? = null,
+    val message: String? = null,
+    val format: StreamFormat? = null,
+    val media: Media? = null,
+)
+
+fun MediaStateSnapshot.getStreamState(): StreamState = StreamState(
+    permission = permission,
+    playbackStatus = playbackStatus,
+    captureStatus = captureStatus,
+    reason = reason,
+    message = message,
+    streamFormat = format,
+)
+
+@Serializable
+internal data class StreamNativeMediaState(
+    val permission: StreamPermission = StreamPermission.ALLOW,
+    val playbackStatus: PlaybackStatus = PlaybackStatus.PAUSED,
+    val captureStatus: StreamCaptureStatus = StreamCaptureStatus.IDLE,
+    val reason: StreamBlockedReason? = null,
+    val message: String? = null,
+    val format: StreamFormat? = null,
+    val media: Media? = null,
+)
+
+
+@Serializable
+data class StreamState(
+    val permission: StreamPermission = StreamPermission.ALLOW,
+    @SerialName("playback") val playbackStatus: PlaybackStatus = PlaybackStatus.PAUSED,
+    @SerialName("capture") val captureStatus: StreamCaptureStatus = StreamCaptureStatus.IDLE,
+    val streamFormat: StreamFormat? = null,
+    val reason: StreamBlockedReason? = null,
+    val message: String? = null,
+)
+
+fun StreamState.rejectionReason(): StreamRejectedReason? = when {
+    permission != StreamPermission.ALLOW -> StreamRejectedReason.CAPTURE_PERMISSION_MISSING
+    playbackStatus != PlaybackStatus.PLAYING -> StreamRejectedReason.NO_PLAYABLE_MEDIA
+    else -> null
+}

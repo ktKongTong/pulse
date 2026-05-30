@@ -35,8 +35,8 @@ struct PulseBarCurrentAppCard: View {
     }
 }
 
-struct PulseBarMediaCard: View {
-    let media: PulseBarMedia
+struct MediaCard: View {
+    let media: Media
     let onPrevious: () -> Void
     let onTogglePlayPause: () -> Void
     let onNext: () -> Void
@@ -123,7 +123,7 @@ func pulseClock(_ seconds: Int) -> String {
 }
 
 /// Formatted `progress / duration` clock string.
-func pulseProgressText(_ media: PulseBarMedia) -> String {
+func pulseProgressText(_ media: Media) -> String {
     let progress = Int(media.progressSeconds.rounded())
     let duration = mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0
     return "\(pulseClock(progress)) / \(pulseClock(duration))"

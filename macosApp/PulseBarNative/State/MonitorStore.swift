@@ -24,27 +24,11 @@ final class MonitorStore: ObservableObject {
     // MARK: - Published state
 
     @Published private(set) var snapshot: PulseBarSnapshot?
-    @Published private(set) var todayStats: [PulseBarUsageRow] = []
+    @Published private(set) var todayStats: [AppUsageItem] = []
     @Published private(set) var todayTotalSeconds: Int = 0
-    @Published private(set) var interactionItems: [PulseBarInteractionItem] = []
-    @Published private(set) var interactionPendingCount: Int = 0
-    @Published private(set) var interactionLastStatus: String?
-    @Published private(set) var syncState: PulseBarSyncState?
     @Published private(set) var connectionStatesByEndpointID: [String: PulseBarConnectionState] = [:]
-    @Published private(set) var manuallyDisconnectedEndpointIDs: Set<String> = []
     @Published private(set) var isMonitoring = false
-    @Published var settingsDraft: PulseBarConfigDraft = PulseBarConfigDraft(
-        endpoints: [PulseBarConfigFactory.shared.defaultPrimaryEndpoint()],
-        idleThresholdSeconds: 300,
-        changeStabilityMillis: 1200,
-        heartbeatSeconds: 60,
-        appPollingMillis: 500,
-        pagePollingMillis: 2000,
-        mediaPollingMillis: 500,
-        allowWebInteractions: false,
-        interactionExecutionModeName: "CONFIRM",
-        interactionPlaybackModeName: "PLAY_NEXT"
-    )
+    @Published private(set) var settings: PulseBarConfig = PulseBarConfig.defaultValue
     @Published var isPaused = false
     @Published var dashboardSelection: DashboardSection = .connection
 
@@ -56,6 +40,7 @@ final class MonitorStore: ObservableObject {
     private var subscribed = false
     private var frontmostAppObserver: NSObjectProtocol?
     private var connectionStores: [String: ConnectionStore] = [:]
+    private var connectionStateTasks: [Int: Task<Void, Never>] = [:]
     private let nowPlayingEventSource = NowPlayingEventSource()
     private var connectedMediaEndpointIDs: Set<String> = []
     private var progressRefreshTask: Task<Void, Never>?
@@ -67,6 +52,7 @@ final class MonitorStore: ObservableObject {
 
     deinit {
         for t in observerTasks { t.cancel() }
+        for t in connectionStateTasks.values { t.cancel() }
         if let frontmostAppObserver {
             Task { @MainActor in
                 NSWorkspace.shared.notificationCenter.removeObserver(frontmostAppObserver)
@@ -105,7 +91,7 @@ final class MonitorStore: ObservableObject {
 
         nowPlayingEventSource.start { [weak self] snapshot in
             Task { @MainActor in
-                self?.handleNowPlayingChange(snapshot?.toNativeMediaSnapshot())
+                self?.handleNowPlayingChange(snapshot)
             }
         }
         startProgressRefreshLoop()
@@ -128,19 +114,11 @@ final class MonitorStore: ObservableObject {
         }
         observerTasks.append(configTask)
 
-        let syncTask: Task<Void, Never> = Task { @MainActor [weak self] in
-            do {
-                for try await state in bridge.syncState.asAsyncSequence() {
-                    self?.applySyncStateUpdate(state)
-                }
-            } catch {}
-        }
-        observerTasks.append(syncTask)
 
         let connectionTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
-                for try await states in bridge.connectionStates.asAsyncSequence() {
-                    self?.applyConnectionStatesUpdate(Array(states))
+                for try await flows in bridge.connectionStates.asAsyncSequence() {
+                    self?.applyConnectionStateFlows(Array(flows))
                 }
             } catch {}
         }
@@ -194,7 +172,7 @@ final class MonitorStore: ObservableObject {
         bridge.emitNativeEvent(event: event)
     }
 
-    private func handleNowPlayingChange(_ snapshot: NativeMediaSnapshot?) {
+    private func handleNowPlayingChange(_ snapshot: Media?) {
         guard isMonitoring, !isPaused else { return }
         if streamStore.updateCurrentMedia(snapshot) {
             let label = snapshot?.title ?? "nil"
@@ -221,18 +199,51 @@ final class MonitorStore: ObservableObject {
         streamStore.requestAudioCapturePermissionAtStartup()
     }
 
-    var streamEndpoints: [StreamEndpointResolved] {
-        PulseBarConfigFactory.shared.resolvedStreamEndpoints(draft: settingsDraft)
+    var streamEndpoints: [EndpointConfig] {
+        settings.streamEndpoints
     }
 
     // MARK: - Settings commands
-    func saveConfig() {
+    func saveConfig(_ config: PulseBarConfig) {
+        bridge.updateConfig(config: config)
+    }
+
+    func addEndpoint() {
+        let next = PulseBarConfig(
+            endpoints: settings.endpoints + [EndpointConfig.defaultEndpoint(index: settings.endpoints.count)],
+            idleThresholdSeconds: settings.idleThresholdSeconds,
+            changeStabilityMillis: settings.changeStabilityMillis
+        )
+        saveConfig(next)
+        streamStore.updateEndpoints(streamEndpoints)
+    }
+
+    func updateEndpoint(_ endpoint: EndpointConfig) {
+        let next = PulseBarConfig(
+            endpoints: settings.endpoints.map { $0.id == endpoint.id ? endpoint : $0 },
+            idleThresholdSeconds: settings.idleThresholdSeconds,
+            changeStabilityMillis: settings.changeStabilityMillis
+        )
+        saveConfig(next)
+    }
+
+    func updateSettings(idleThresholdSeconds: Int32? = nil, changeStabilityMillis: Int32? = nil) {
+        saveConfig(
+            PulseBarConfig(
+                endpoints: settings.endpoints,
+                idleThresholdSeconds: idleThresholdSeconds ?? settings.idleThresholdSeconds,
+                changeStabilityMillis: changeStabilityMillis ?? settings.changeStabilityMillis
+            )
+        )
     }
 
     func connectionStore(endpointId: String) -> ConnectionStore {
         if let store = connectionStores[endpointId] { return store }
         let store = ConnectionStore(endpointId: endpointId, bridge: bridge)
         connectionStores[endpointId] = store
+        if let state = connectionStatesByEndpointID[endpointId] {
+            store.applyState(state)
+        }
         store.start()
         return store
     }
@@ -244,7 +255,7 @@ final class MonitorStore: ObservableObject {
 
     // MARK: - Media / interaction commands
 
-    func mediaCommand(_ command: PulseBarPlaybackCommand) {
+    func mediaCommand(_ command: PlayerPlaybackCommand) {
         let success = nowPlayingEventSource.mediaCommand(command)
         PulseNativeLog.info(.streamSession, "native.mediaCommand command=\(String(describing: command)) success=\(success)")
         if success { refreshNowPlayingSoon() }
@@ -268,18 +279,33 @@ final class MonitorStore: ObservableObject {
     }
 
     private func applyConfigUpdate(_ config: PulseBarConfig) {
-        settingsDraft = PulseBarConfigFactory.shared.toDraft(config: config)
+        settings = config
         streamStore.updateEndpoints(streamEndpoints)
     }
 
-    private func applySyncStateUpdate(_ state: PulseBarSyncState) {
-        syncState = state
+    private func applyConnectionStateFlows(_ flows: [any KotlinCoroutineSupport.KotlinTypedFlow<PulseBarConnectionState>]) {
+        for task in connectionStateTasks.values { task.cancel() }
+        connectionStateTasks.removeAll()
+        connectionStatesByEndpointID = [:]
+        connectedMediaEndpointIDs = []
+
+        for (index, flow) in flows.enumerated() {
+            connectionStateTasks[index] = Task { @MainActor [weak self] in
+                do {
+                    for try await state in flow.asAsyncSequence() {
+                        self?.applyConnectionStateUpdate(state)
+                    }
+                } catch {}
+            }
+        }
     }
 
-    private func applyConnectionStatesUpdate(_ states: [PulseBarConnectionState]) {
-        connectionStatesByEndpointID = Dictionary(uniqueKeysWithValues: states.map { ($0.endpointId, $0) })
-        let connected = Set(states.compactMap { state in
-            state.media.phaseName == "HelloAccepted" ? state.endpointId : nil
+    private func applyConnectionStateUpdate(_ state: PulseBarConnectionState) {
+        connectionStatesByEndpointID[state.endpointId] = state
+        connectionStores[state.endpointId]?.applyState(state)
+
+        let connected = Set(connectionStatesByEndpointID.values.compactMap { state in
+            state.connectionState == .CONNECTED ? state.endpointId : nil
         })
         let newlyConnected = connected.subtracting(connectedMediaEndpointIDs)
         connectedMediaEndpointIDs = connected
@@ -288,11 +314,6 @@ final class MonitorStore: ObservableObject {
             streamStore.republishCurrentMediaState()
             nowPlayingEventSource.refresh()
         }
-    }
-
-    private func isStreamEndpoint(_ endpoint: PulseBarEndpointDraft) -> Bool {
-        !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func refreshNowPlayingSoon() {
@@ -315,314 +336,49 @@ final class MonitorStore: ObservableObject {
             }
         }
     }
+}
+
+private extension PulseBarConfig {
+    static var defaultValue: PulseBarConfig {
+        PulseBarConfig(
+            endpoints: [EndpointConfig.defaultEndpoint(index: 0, name: "Primary", enabled: true)],
+            idleThresholdSeconds: 300,
+            changeStabilityMillis: 1200
+        )
+    }
+
+    var streamEndpoints: [EndpointConfig] {
+        endpoints.filter {
+            $0.enabled &&
+                !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !$0.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
 
 }
 
-private final class NowPlayingEventSource: @unchecked Sendable {
-    private typealias RegisterForNotifications = @convention(c) (DispatchQueue) -> Void
-    private typealias GetNowPlayingInfo = @convention(c) (DispatchQueue, @escaping (CFDictionary?) -> Void) -> Void
-    private typealias GetNowPlayingApplicationIsPlaying = @convention(c) (DispatchQueue, @escaping (Bool) -> Void) -> Void
+extension EndpointConfig: @retroactive Identifiable {}
 
-    private var handle: UnsafeMutableRawPointer?
-    private var registerForNotifications: RegisterForNotifications?
-    private var getNowPlayingInfo: GetNowPlayingInfo?
-    private var getNowPlayingApplicationIsPlaying: GetNowPlayingApplicationIsPlaying?
-    private var observers: [NSObjectProtocol] = []
-    private var onChange: (@Sendable (NowPlayingSnapshot?) -> Void)?
-
-    func start(onChange: @escaping @Sendable (NowPlayingSnapshot?) -> Void) {
-        guard self.onChange == nil else { return }
-        self.onChange = onChange
-        guard loadMediaRemote() else {
-            PulseNativeLog.warn(.streamSession, "media.remote unavailable")
-            return
-        }
-
-        registerForNotifications?(.main)
-        observe("kMRMediaRemoteNowPlayingInfoDidChangeNotification")
-        observe("kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification")
-        observe("kMRMediaRemoteNowPlayingApplicationDidChangeNotification")
-        observeDistributed("com.spotify.client.PlaybackStateChanged")
-        observeDistributed("com.apple.Music.playerInfo")
-        refresh()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.refresh()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
-            self?.refresh()
-        }
-    }
-
-    func stop() {
-        observers.forEach { observer in
-            NotificationCenter.default.removeObserver(observer)
-            DistributedNotificationCenter.default().removeObserver(observer)
-        }
-        observers.removeAll()
-        onChange = nil
-    }
-
-    private func loadMediaRemote() -> Bool {
-        if getNowPlayingInfo != nil { return true }
-        let path = "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
-        guard let handle = dlopen(path, RTLD_NOW) else { return false }
-        self.handle = handle
-
-        guard
-            let registerSymbol = dlsym(handle, "MRMediaRemoteRegisterForNowPlayingNotifications"),
-            let infoSymbol = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo"),
-            let playingSymbol = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationIsPlaying")
-        else {
-            return false
-        }
-
-        registerForNotifications = unsafeBitCast(registerSymbol, to: RegisterForNotifications.self)
-        getNowPlayingInfo = unsafeBitCast(infoSymbol, to: GetNowPlayingInfo.self)
-        getNowPlayingApplicationIsPlaying = unsafeBitCast(playingSymbol, to: GetNowPlayingApplicationIsPlaying.self)
-        return true
-    }
-
-    private func observe(_ name: String) {
-        let observer = NotificationCenter.default.addObserver(
-            forName: Notification.Name(name),
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.refresh()
-        }
-        observers.append(observer)
-    }
-
-    private func observeDistributed(_ name: String) {
-        let observer = DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name(name),
-            object: nil,
-            queue: nil
-        ) { [weak self] _ in
-            self?.refresh()
-        }
-        observers.append(observer)
-    }
-
-    func refresh() {
-        guard let getNowPlayingInfo, let getNowPlayingApplicationIsPlaying else { return }
-        let queue = DispatchQueue.main
-        getNowPlayingApplicationIsPlaying(queue) { [weak self] isPlaying in
-            getNowPlayingInfo(queue) { info in
-                let snapshot = Self.makeSnapshot(info: info, isPlaying: isPlaying)
-                    ?? Self.readPlayerFallbackSnapshot()
-                self?.onChange?(snapshot)
-            }
-        }
-    }
-
-    private static func makeSnapshot(info: CFDictionary?, isPlaying: Bool) -> NowPlayingSnapshot? {
-        guard let raw = info as? [String: Any], !raw.isEmpty else {
-            return nil
-        }
-        let title = string(raw, "kMRMediaRemoteNowPlayingInfoTitle")
-        let artist = string(raw, "kMRMediaRemoteNowPlayingInfoArtist")
-        let album = string(raw, "kMRMediaRemoteNowPlayingInfoAlbum")
-        let duration = double(raw, "kMRMediaRemoteNowPlayingInfoDuration")
-        let elapsed = double(raw, "kMRMediaRemoteNowPlayingInfoElapsedTime") ?? 0
-        let uniqueId = string(raw, "kMRMediaRemoteNowPlayingInfoUniqueIdentifier")
-            ?? string(raw, "kMRMediaRemoteNowPlayingInfoContentItemIdentifier")
-            ?? [title, artist, album].compactMap { $0 }.joined(separator: "|")
-
-        guard title != nil || artist != nil || album != nil || !uniqueId.isEmpty else {
-            return nil
-        }
-
-        return NowPlayingSnapshot(
-            providerId: "system",
-            itemType: "track",
-            trackId: uniqueId.isEmpty ? nil : uniqueId,
-            uri: nil,
-            linkUrl: nil,
-            title: title,
-            artist: artist,
-            album: album,
-            artworkUrl: nil,
-            progressSeconds: elapsed,
-            durationSeconds: duration,
-            isPlaying: isPlaying
+extension EndpointConfig {
+    static func defaultEndpoint(index: Int, name: String? = nil, enabled: Bool = false) -> EndpointConfig {
+        EndpointConfig(
+            id: UUID().uuidString.lowercased(),
+            name: name ?? "Endpoint \(index + 1)",
+            enabled: enabled,
+            url: "http://localhost:8900",
+            siteId: "",
+            workspaceId: "default",
+            apiKey: ""
         )
     }
 
-    private static func string(_ raw: [String: Any], _ key: String) -> String? {
-        raw[key] as? String
-    }
-
-    private static func double(_ raw: [String: Any], _ key: String) -> Double? {
-        if let value = raw[key] as? Double { return value }
-        if let value = raw[key] as? NSNumber { return value.doubleValue }
-        return nil
-    }
-
-    private static func readPlayerFallbackSnapshot() -> NowPlayingSnapshot? {
-        readSpotifySnapshot() ?? readMusicSnapshot()
-    }
-
-    func mediaCommand(_ command: PulseBarPlaybackCommand) -> Bool {
-        let spotifyVerb: String
-        let musicVerb: String
-        switch command {
-        case .PREVIOUS:
-            spotifyVerb = "previous track"
-            musicVerb = "previous track"
-        case .TOGGLE_PLAY_PAUSE:
-            spotifyVerb = "playpause"
-            musicVerb = "playpause"
-        case .NEXT:
-            spotifyVerb = "next track"
-            musicVerb = "next track"
-        @unknown default:
-            return false
+    var displayName: String {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty { return trimmedName }
+        let rawUrl = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: rawUrl), let host = components.host, !host.isEmpty else {
+            return rawUrl.isEmpty ? "Untitled endpoint" : rawUrl
         }
-        return Self.runAppleScript("""
-        tell application id "com.spotify.client"
-            if it is running then
-                \(spotifyVerb)
-                return "ok"
-            end if
-        end tell
-        """) == "ok" || Self.runAppleScript("""
-        tell application id "com.apple.Music"
-            if it is running then
-                \(musicVerb)
-                return "ok"
-            end if
-        end tell
-        """) == "ok"
-    }
-
-    func seek(to progressSeconds: Double) -> Bool {
-        let normalized = String(progressSeconds)
-        return Self.runAppleScript("""
-        tell application id "com.spotify.client"
-            if it is running then
-                set player position to \(normalized)
-                return "ok"
-            end if
-        end tell
-        """) == "ok" || Self.runAppleScript("""
-        tell application id "com.apple.Music"
-            if it is running then
-                set player position to \(normalized)
-                return "ok"
-            end if
-        end tell
-        """) == "ok"
-    }
-
-    private static func readSpotifySnapshot() -> NowPlayingSnapshot? {
-        let script = """
-        tell application id "com.spotify.client"
-            if it is running then
-                if player state is playing or player state is paused then
-                    return (player state as text) & linefeed & (player position as text) & linefeed & (id of current track) & linefeed & (spotify url of current track) & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (duration of current track as text) & linefeed & (artwork url of current track)
-                end if
-            end if
-        end tell
-        """
-        guard let output = runAppleScript(script) else { return nil }
-        let values = paddedLines(output, count: 9)
-        let rawDuration = Double(values[7].replacingOccurrences(of: ",", with: ".")) ?? 0
-        let duration = rawDuration > 10_000 ? rawDuration / 1000 : rawDuration
-        return NowPlayingSnapshot(
-            providerId: "spotify",
-            itemType: "track",
-            trackId: values[2].isEmpty ? nil : values[2],
-            uri: values[3].isEmpty ? nil : values[3],
-            linkUrl: values[3].isEmpty ? nil : values[3],
-            title: values[4].isEmpty ? nil : values[4],
-            artist: values[5].isEmpty ? nil : values[5],
-            album: values[6].isEmpty ? nil : values[6],
-            artworkUrl: values[8].isEmpty ? nil : values[8],
-            progressSeconds: Double(values[1].replacingOccurrences(of: ",", with: ".")) ?? 0,
-            durationSeconds: duration > 0 ? duration : nil,
-            isPlaying: values[0] == "playing"
-        )
-    }
-
-    private static func readMusicSnapshot() -> NowPlayingSnapshot? {
-        let script = """
-        tell application id "com.apple.Music"
-            if it is running then
-                if player state is playing or player state is paused then
-                    set trackId to ""
-                    try
-                        set trackId to (persistent ID of current track)
-                    end try
-                    return (player state as text) & linefeed & (player position as text) & linefeed & trackId & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (album of current track) & linefeed & (duration of current track as text)
-                end if
-            end if
-        end tell
-        """
-        guard let output = runAppleScript(script) else { return nil }
-        let values = paddedLines(output, count: 7)
-        let duration = Double(values[6].replacingOccurrences(of: ",", with: "."))
-        return NowPlayingSnapshot(
-            providerId: "apple-music",
-            itemType: "track",
-            trackId: values[2].isEmpty ? nil : values[2],
-            uri: nil,
-            linkUrl: nil,
-            title: values[3].isEmpty ? nil : values[3],
-            artist: values[4].isEmpty ? nil : values[4],
-            album: values[5].isEmpty ? nil : values[5],
-            artworkUrl: nil,
-            progressSeconds: Double(values[1].replacingOccurrences(of: ",", with: ".")) ?? 0,
-            durationSeconds: duration,
-            isPlaying: values[0] == "playing"
-        )
-    }
-
-    private static func runAppleScript(_ source: String) -> String? {
-        let script = NSAppleScript(source: source)
-        var error: NSDictionary?
-        let result = script?.executeAndReturnError(&error).stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let error {
-            PulseNativeLog.warn(.streamSession, "media.fallback.applescript.error \(error)")
-        }
-        return result?.isEmpty == false ? result : nil
-    }
-
-    private static func paddedLines(_ output: String, count: Int) -> [String] {
-        let values = output.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-        return values + Array(repeating: "", count: max(0, count - values.count))
-    }
-}
-
-private struct NowPlayingSnapshot: Sendable {
-    let providerId: String?
-    let itemType: String?
-    let trackId: String?
-    let uri: String?
-    let linkUrl: String?
-    let title: String?
-    let artist: String?
-    let album: String?
-    let artworkUrl: String?
-    let progressSeconds: Double
-    let durationSeconds: Double?
-    let isPlaying: Bool
-
-    func toNativeMediaSnapshot() -> NativeMediaSnapshot {
-        NativeMediaSnapshot(
-            providerId: providerId,
-            itemType: itemType,
-            trackId: trackId,
-            uri: uri,
-            linkUrl: linkUrl,
-            title: title,
-            artist: artist,
-            album: album,
-            artworkUrl: artworkUrl,
-            progressSeconds: progressSeconds,
-            durationSeconds: durationSeconds,
-            isPlaying: isPlaying
-        )
+        return host
     }
 }

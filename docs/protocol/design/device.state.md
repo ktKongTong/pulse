@@ -56,7 +56,7 @@ allow      owner policy 允许把当前 media 暴露给 server
 disallow   owner policy 或权限约束不允许暴露当前 media
 ```
 
-以下情况不改变 `permission`，只改变 `playback`：
+以下情况不改变 `permission`，只改变 `playbackStatus`：
 
 ```text
 当前没有 media
@@ -121,7 +121,7 @@ type StreamState = {
 映射规则：
 
 - `connection` 不放进 `stream.state.updated`，由 device/common/media WS 连接事实表达。
-- `permission`、`playback`、`capture` 直接映射到 `stream.state.updated.state`。
+- `permission`、`playbackStatus`、`captureStatus` 直接映射到 `stream.state.updated.state`。
 - `reason` 用于解释 `disallow`、`paused` 或错误原因。
 
 ## 可供流判定
@@ -134,7 +134,7 @@ permission = allow
 playback = playing
 ```
 
-此时 `capture` 可以是：
+此时 `captureStatus` 可以是：
 
 ```text
 no-capture   当前可供流，但还没有开始采集
@@ -230,7 +230,7 @@ connected, allow, paused, no-capture -> connected, allow, playing, no-capture
 connected, disallow, paused, no-capture -> connected, disallow, playing, no-capture
 ```
 
-这只改变 `playback`，不自动启动 capture。
+这只改变 `playbackStatus`，不自动启动 capture。
 
 ### playback 从 `playing` 变成 `paused`
 

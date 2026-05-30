@@ -76,7 +76,7 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     var serverEndpointText: String {
-        endpoints.map { "\($0.displayName): \($0.baseUrl)" }.joined(separator: "\n")
+        endpoints.map { "\($0.displayName): \($0.url)" }.joined(separator: "\n")
     }
 
     var captureActivityText: String {
@@ -100,14 +100,14 @@ final class StreamCaptureStore: ObservableObject {
 
     // MARK: - Internal state
 
-    private var endpoints: [StreamEndpointResolved] = []
+    private var endpoints: [EndpointConfig] = []
     private let service = StreamCaptureService()
     private lazy var session = StreamCaptureSession(service: service)
     private var startupPermissionTask: Task<Void, Never>?
     private var lastPublishedMediaSignature: String?
     private var lastPublishedProgressSeconds: Double?
     private var lastPublishedMediaObservedAtMillis: Int64?
-    private var currentMedia: NativeMediaSnapshot?
+    private var currentMedia: Media?
     private let worker: StreamBridge
     private var statsTask: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
@@ -185,7 +185,7 @@ final class StreamCaptureStore: ObservableObject {
 
     // MARK: - Public commands
 
-    func updateEndpoints(_ endpoints: [StreamEndpointResolved]) {
+    func updateEndpoints(_ endpoints: [EndpointConfig]) {
         self.endpoints = endpoints
         if endpoints.isEmpty {
             if isCapturing {
@@ -251,7 +251,7 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     @discardableResult
-    func updateCurrentMedia(_ media: NativeMediaSnapshot?) -> Bool {
+    func updateCurrentMedia(_ media: Media?) -> Bool {
         let signature = mediaSignature(media)
         guard shouldPublishMediaUpdate(signature: signature, media: media) else { return false }
         lastPublishedMediaSignature = signature
@@ -501,7 +501,7 @@ final class StreamCaptureStore: ObservableObject {
 
     }
 
-    private func mediaSignature(_ media: NativeMediaSnapshot?) -> String {
+    private func mediaSignature(_ media: Media?) -> String {
         guard let media else { return "none" }
         return [
             media.providerId ?? "",
@@ -514,7 +514,7 @@ final class StreamCaptureStore: ObservableObject {
         ].joined(separator: "|")
     }
 
-    private func shouldPublishMediaUpdate(signature: String, media: NativeMediaSnapshot?) -> Bool {
+    private func shouldPublishMediaUpdate(signature: String, media: Media?) -> Bool {
         guard signature == lastPublishedMediaSignature else { return true }
         guard let media, media.isPlaying else { return false }
         guard let lastProgress = lastPublishedProgressSeconds,
@@ -535,7 +535,7 @@ final class StreamCaptureStore: ObservableObject {
             return StreamEndpointPublisherStatus(
                 id: endpoint.id,
                 name: endpoint.displayName,
-                endpointURL: endpoint.baseUrl,
+                endpointURL: endpoint.url,
                 workspaceId: endpoint.workspaceId,
                 statusText: publisherStats.statusText,
                 stats: publisherStats

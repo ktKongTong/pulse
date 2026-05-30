@@ -1,0 +1,21 @@
+package io.github.kt.pulsebar.store.database
+
+import androidx.room3.Room
+import androidx.room3.RoomDatabase
+import kotlinx.cinterop.ExperimentalForeignApi
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSHomeDirectory
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun pulseBarRoomDatabaseBuilder(): RoomDatabase.Builder<PulseBarRoomDatabase> {
+    val rootPath = NSHomeDirectory() + "/Library/Application Support/PulseBar"
+    NSFileManager.defaultManager.createDirectoryAtPath(
+        path = rootPath,
+        withIntermediateDirectories = true,
+        attributes = null,
+        error = null
+    )
+    return Room.databaseBuilder<PulseBarRoomDatabase>(
+        name = "$rootPath/pulsebar.room.db"
+    )
+}

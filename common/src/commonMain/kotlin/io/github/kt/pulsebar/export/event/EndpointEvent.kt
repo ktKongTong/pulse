@@ -1,0 +1,34 @@
+package io.github.kt.pulsebar.export.event
+
+import io.github.kt.pulsebar.evt.AppEvent
+import io.github.kt.pulsebar.utils.nowInMillis
+
+data class ConnectEndpointCommand(
+    val endpointId: String,
+    val sentAt: Long = nowInMillis(),
+) : AppEvent
+
+data class EnableEndpointCommand(
+    val endpointId: String,
+    val sentAt: Long = nowInMillis(),
+) : AppEvent
+
+data class DisableEndpointCommand(
+    val endpointId: String,
+    val sentAt: Long = nowInMillis(),
+) : AppEvent
+
+data class DisconnectEndpointCommand(
+    val endpointId: String,
+    val sentAt: Long = nowInMillis(),
+) : AppEvent
+
+data class ReconnectEndpointCommand(
+    val endpointId: String,
+    val sentAt: Long = nowInMillis(),
+) : AppEvent
+
+data class RemoveEndpointCommand(
+    val endpointId: String,
+    val sentAt: Long = nowInMillis(),
+) : AppEvent

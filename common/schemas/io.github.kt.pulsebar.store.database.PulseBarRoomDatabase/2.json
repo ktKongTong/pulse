@@ -1,0 +1,133 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "38e5a58998a05a547b7c6aac328c987e",
+    "entities": [
+      {
+        "tableName": "apps",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`app_id` TEXT NOT NULL, `platform` TEXT NOT NULL, `platform_app_id` TEXT NOT NULL, `name` TEXT NOT NULL, PRIMARY KEY(`app_id`))",
+        "fields": [
+          {
+            "fieldPath": "appId",
+            "columnName": "app_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platform",
+            "columnName": "platform",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformAppId",
+            "columnName": "platform_app_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "app_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_apps_platform_platform_app_id",
+            "unique": true,
+            "columnNames": [
+              "platform",
+              "platform_app_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_apps_platform_platform_app_id` ON `${TABLE_NAME}` (`platform`, `platform_app_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "focus_spans",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`span_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `app_id` TEXT NOT NULL, `started_at_ms` INTEGER NOT NULL, `ended_at_ms` INTEGER NOT NULL, FOREIGN KEY(`app_id`) REFERENCES `apps`(`app_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "spanId",
+            "columnName": "span_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "app_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAtMs",
+            "columnName": "started_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAtMs",
+            "columnName": "ended_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "span_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_focus_spans_started_at_ms_ended_at_ms",
+            "unique": false,
+            "columnNames": [
+              "started_at_ms",
+              "ended_at_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_focus_spans_started_at_ms_ended_at_ms` ON `${TABLE_NAME}` (`started_at_ms`, `ended_at_ms`)"
+          },
+          {
+            "name": "index_focus_spans_app_id_started_at_ms_ended_at_ms",
+            "unique": false,
+            "columnNames": [
+              "app_id",
+              "started_at_ms",
+              "ended_at_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_focus_spans_app_id_started_at_ms_ended_at_ms` ON `${TABLE_NAME}` (`app_id`, `started_at_ms`, `ended_at_ms`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "apps",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "app_id"
+            ],
+            "referencedColumns": [
+              "app_id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '38e5a58998a05a547b7c6aac328c987e')"
+    ]
+  }
+}

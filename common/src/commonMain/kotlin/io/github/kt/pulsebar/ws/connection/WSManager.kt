@@ -1,7 +1,7 @@
 package io.github.kt.pulsebar.ws.connection
 
-import io.github.kt.pulsebar.core.log.PulseLogCategory
-import io.github.kt.pulsebar.core.log.logger
+import io.github.kt.pulsebar.logger.PulseLogCategory
+import io.github.kt.pulsebar.logger.logger
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.ClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocketSession

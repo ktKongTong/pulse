@@ -37,6 +37,7 @@
 		BFF0F53C2B990A54C83ACA38 /* Forms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7631EFBAA6D0FD3B0698E5CD /* Forms.swift */; };
 		D2F95141D1AE7FC5225D8E08 /* PulseBarShared+Media.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D81BAFA6F1CE20A92DE9D4 /* PulseBarShared+Media.swift */; };
 		D405762B9A292BAE32CC2CE6 /* PulseBarNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4171DEE7172AEDFB90C48624 /* PulseBarNativeApp.swift */; };
+		D69AF89F5ED4E98869ACCD2E /* AudioListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = D697110E7003E0ED858DAB8D /* AudioListener.swift */; };
 		E0C30918ED12E502A247F438 /* MediaSeekBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1D03DF85E491216051EE41 /* MediaSeekBar.swift */; };
 		E56A9276D03C051F021494F2 /* WindowHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CA333A2011BA8268CB2126 /* WindowHelpers.swift */; };
 		EAEC8838329E8DEEDF4EBFDF /* StreamCaptureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01460D50C30F11B0573019A1 /* StreamCaptureStore.swift */; };
@@ -77,6 +78,7 @@
 		C0FFA4AAAC50CF63CAA0BD47 /* MediaCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaCards.swift; sourceTree = "<group>"; };
 		C7C1F212279BD741CDF31CE9 /* StreamCaptureSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamCaptureSession.swift; sourceTree = "<group>"; };
 		D4B1513A5FFA66200BE050C9 /* MediaGlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGlassBackground.swift; sourceTree = "<group>"; };
+		D697110E7003E0ED858DAB8D /* AudioListener.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AudioListener.swift; sourceTree = "<group>"; };
 		DED5B1A3040DC72E1B9DDBCF /* MarqueeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarqueeText.swift; sourceTree = "<group>"; };
 		E04E0F792AF2CED97CB0D709 /* AppIconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconView.swift; sourceTree = "<group>"; };
 		F0D77DB5CC212B4742562DA9 /* PulseBarNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseBarNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -109,6 +111,7 @@
 				FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */,
 				01460D50C30F11B0573019A1 /* StreamCaptureStore.swift */,
 				8584A4B1329E8DCAE898B461 /* StreamTypes.swift */,
+				D697110E7003E0ED858DAB8D /* AudioListener.swift */,
 			);
 			path = State;
 			sourceTree = "<group>";
@@ -365,6 +368,7 @@
 				499226D68E891AA8BDE90BA3 /* StreamTypes.swift in Sources */,
 				191E4408A181D5280FECE161 /* StreamWavWriter.swift in Sources */,
 				E56A9276D03C051F021494F2 /* WindowHelpers.swift in Sources */,
+				D69AF89F5ED4E98869ACCD2E /* AudioListener.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

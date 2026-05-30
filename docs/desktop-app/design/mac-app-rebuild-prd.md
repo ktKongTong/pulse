@@ -162,7 +162,7 @@
   - 主标题显示 `connection 名称`
   - 次信息显示 `endpoint 标识`
 - 当 `connection 名称` 为空时：
-  - 主标题直接使用 `endpoint`
+  - 主标题直接使用 `endpoints`
   - 不再显示次级 endpoint 信息
 
 左侧 list 不显示：

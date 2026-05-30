@@ -3,7 +3,7 @@ package io.github.kt.pulsebar.ws.common
 import io.github.kt.pulsebar.utils.nowInMillis
 import io.github.kt.pulsebar.ws.connection.WsConnectionState
 
-internal data class CommonRuntimeState(
+data class CommonRuntimeState(
     val deviceSessionId: String? = null,
     val presenceAccepted: Long = 0L,
     val presenceQueued: Long = 0L,
@@ -14,7 +14,7 @@ internal data class CommonRuntimeState(
     val lastSessionEndReason: String? = null,
 )
 
-internal data class CommonWSState(
+data class CommonWSState(
     val runtimeState: CommonRuntimeState = CommonRuntimeState(),
     val connection: WsConnectionState = WsConnectionState(),
 )

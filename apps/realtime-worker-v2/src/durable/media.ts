@@ -29,7 +29,7 @@ export class MediaDO extends MediaBase {
 
   async revokeClient(sessionId: string, tabId: string) {
     const key = tabKey(sessionId, tabId);
-    closeWith(this.clients.get(key), 4001, "invalid_session");
+    closeWith(this.clients.get(key), 401, "invalid_session");
     this.clients.delete(key);
     this.streamClients.delete(key);
     await this.stopIfNoStreamClients();

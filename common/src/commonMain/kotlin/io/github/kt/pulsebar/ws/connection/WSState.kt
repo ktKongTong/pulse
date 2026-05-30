@@ -5,7 +5,7 @@ import io.github.kt.pulsebar.ws.common.CommonWSState
 import io.github.kt.pulsebar.ws.media.MediaWSState
 
 
-internal data class WsConnectionState(
+data class WsConnectionState(
     val phase: WsPhase = WsPhase.Idle,
     val url: String? = null,
     val lastConnectedAtMillis: Long? = null,
@@ -22,7 +22,7 @@ internal data class WsConnectionState(
     val lastErrorMessage: String? = null,
 )
 
-internal enum class WsPhase {
+enum class WsPhase {
     Idle,
     Connecting,
     Open,
@@ -100,8 +100,8 @@ internal fun WsConnectionState.reduce(event: WsConnectionEvent): WsConnectionSta
 
 
 
-internal data class DeviceWsState(
-    val phase: DeviceWsPhase = DeviceWsPhase.Idle,
+data class DeviceWsState(
+    val phase: ConnectionStatus = ConnectionStatus.Idle,
     val common: CommonWSState = CommonWSState(),
     val media: MediaWSState = MediaWSState(),
     val deviceSessionId: String? = common.runtimeState.deviceSessionId,
@@ -113,7 +113,7 @@ internal data class DeviceWsState(
         media.connection.lastErrorMessage ?: common.connection.lastErrorMessage,
 )
 
-internal enum class DeviceWsPhase {
+enum class ConnectionStatus {
     Idle,
     Connecting,
     Connected,
@@ -126,37 +126,37 @@ internal enum class DeviceWsPhase {
 internal fun deriveDevicePhase(
     common: CommonWSState,
     media: MediaWSState,
-): DeviceWsPhase {
+): ConnectionStatus {
     val commonPhase = common.connection.phase
     val mediaPhase = media.connection.phase
 
     return when {
         commonPhase == WsPhase.Failed || mediaPhase == WsPhase.Failed ->
-            DeviceWsPhase.Failed
+            ConnectionStatus.Failed
 
         commonPhase == WsPhase.HelloAccepted &&
                 mediaPhase == WsPhase.HelloAccepted ->
-            DeviceWsPhase.Connected
+            ConnectionStatus.Connected
 
         commonPhase == WsPhase.Reconnecting ||
                 mediaPhase == WsPhase.Reconnecting ->
-            DeviceWsPhase.Reconnecting
+            ConnectionStatus.Reconnecting
 
         commonPhase == WsPhase.Closing ||
                 mediaPhase == WsPhase.Closing ->
-            DeviceWsPhase.Closing
+            ConnectionStatus.Closing
 
         commonPhase == WsPhase.Closed &&
                 mediaPhase == WsPhase.Closed ->
-            DeviceWsPhase.Closed
+            ConnectionStatus.Closed
 
         commonPhase == WsPhase.Connecting ||
                 commonPhase == WsPhase.Open ||
                 mediaPhase == WsPhase.Connecting ||
                 mediaPhase == WsPhase.Open ->
-            DeviceWsPhase.Connecting
+            ConnectionStatus.Connecting
 
         else ->
-            DeviceWsPhase.Idle
+            ConnectionStatus.Idle
     }
 }

@@ -3,17 +3,16 @@ package io.github.kt.pulsebar.ws.media
 import io.github.kt.pulsebar.ws.connection.MediaConnectionMessage
 import io.github.kt.pulsebar.ws.connection.MediaMessage
 import io.github.kt.pulsebar.ws.connection.WSPayload
-import io.github.kt.pulsebar.core.devicev2.DeviceV2AudioCapabilities
-import io.github.kt.pulsebar.core.devicev2.DeviceV2CaptureInfo
-import io.github.kt.pulsebar.core.devicev2.DeviceV2MediaCapabilities
-import io.github.kt.pulsebar.core.devicev2.DeviceV2MediaClock
-import io.github.kt.pulsebar.core.devicev2.DeviceV2MediaItem
-import io.github.kt.pulsebar.core.devicev2.DeviceV2RejectedReason
-import io.github.kt.pulsebar.core.devicev2.DeviceV2StreamFormat
-import io.github.kt.pulsebar.core.devicev2.DeviceV2StreamState
+import io.github.kt.pulsebar.model.stream.CaptureInfo
+import io.github.kt.pulsebar.model.stream.Media
+import io.github.kt.pulsebar.model.stream.StreamFormat
+import io.github.kt.pulsebar.model.stream.StreamRejectedReason
+import io.github.kt.pulsebar.model.stream.StreamState
+import io.github.kt.pulsebar.model.stream.StreamStopReason
 
 import io.github.kt.pulsebar.utils.nowInIso8601
 import io.github.kt.pulsebar.ws.DEVICE_MEDIA_PROTOCOL_V1
+import kotlinx.serialization.SerialInfo
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -26,13 +25,17 @@ internal data class DeviceV2MediaHelloPayload(
 
 @Serializable
 @MediaMessage("stream.state.updated")
-internal data class DeviceV2StreamStatePayload(val sentAt: String, val state: DeviceV2StreamState): WSPayload
+internal data class DeviceV2StreamStatePayload(
+    val state: StreamState,
+    // @Serializable(with = LongToIsoSerializer::class)
+    val sentAt: String = nowInIso8601(),
+): WSPayload
 
 
 @Serializable
 @MediaMessage("media.updated")
 internal data class DeviceV2MediaUpdatePayload(
-    val media: DeviceV2MediaItem,
+    val media: Media? = null,
     val clock: DeviceV2MediaClock? = null,
     val sentAt: String = nowInIso8601(),
 ): WSPayload
@@ -46,10 +49,15 @@ internal data class DeviceV2AcceptedAckPayload(
     val streamId: String,
     val generation: Int,
     val firstSeq: Long,
-    val capture: DeviceV2CaptureInfo? = null,
-    val streamFormat: DeviceV2StreamFormat? = null,
+    val capture: CaptureInfo? = null,
+    val streamFormat: StreamFormat? = null,
     val sentAt: String = nowInIso8601(),
 ): WSPayload
+
+
+enum class StreamRequestStatus {
+
+}
 
 @Serializable
 @MediaMessage("ack")
@@ -57,7 +65,7 @@ internal data class DeviceV2RejectedAckPayload(
     val commandId: String,
     val commandType: String,
     val status: String = "rejected",
-    val rejectedReason: DeviceV2RejectedReason,
+    val rejectedReason: StreamRejectedReason,
     val sentAt: String = nowInIso8601()
 ): WSPayload
 
@@ -88,7 +96,7 @@ internal data class DeviceV2AudioChunkPayload(
 internal data class DeviceV2StreamStoppedPayload(
     val streamId: String,
     val generation: Int,
-    val reason: String,
+    val reason: StreamStopReason,
     val sentAt: String,
 ): WSPayload
 
@@ -106,4 +114,29 @@ internal fun deviceV2MediaHello(chunkDurationMs: Int) = DeviceV2MediaHelloPayloa
         chunkDurationMs = chunkDurationMs,
     ),
     supportedProtocols = listOf(DEVICE_MEDIA_PROTOCOL_V1),
+)
+
+
+
+@Serializable
+internal data class DeviceV2MediaCapabilities(
+    val media: Boolean,
+    val localPlayback: Boolean,
+    val remotePlayback: Boolean,
+    val binaryAudio: Boolean,
+    val localRingBuffer: Boolean? = null,
+    val localRingBufferSeconds: Int? = null,
+)
+
+@Serializable
+internal data class DeviceV2AudioCapabilities(
+    val codecs: List<String>,
+    val chunkDurationMs: Int? = null,
+)
+
+@Serializable
+internal data class DeviceV2MediaClock(
+    val mediaProgressSeconds: Double? = null,
+    val durationSeconds: Double? = null,
+    val updatedAt: String? = null,
 )

@@ -7,7 +7,7 @@ private typealias EndpointRuntimeInput = ExportedKotlinPackages.io.github.kt.pul
 struct ConnectionDetailPane: View {
     @EnvironmentObject private var monitor: MonitorStore
     @EnvironmentObject private var connectionStore: ConnectionStore
-    let endpoint: PulseBarEndpointDraft
+    let endpoint: EndpointConfig
     let edit: () -> Void
     let delete: () -> Void
 
@@ -49,7 +49,7 @@ struct ConnectionDetailPane: View {
     private var title: String {
         let name = endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !name.isEmpty { return name }
-        let url = endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = endpoint.url.trimmingCharacters(in: .whitespacesAndNewlines)
         return url.isEmpty ? "Untitled endpoint" : url
     }
 
@@ -153,7 +153,7 @@ struct ConnectionDetailPane: View {
                 }
             }
 
-            Text(endpoint.endpointUrl.isEmpty ? "Endpoint identifier not configured" : endpoint.endpointUrl)
+            Text(endpoint.url.isEmpty ? "Endpoint identifier not configured" : endpoint.url)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
@@ -179,7 +179,7 @@ struct ConnectionDetailPane: View {
     }
 
     private var hasStreamConnectionFields: Bool {
-        !endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !endpoint.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -254,10 +254,10 @@ struct ConnectionDetailPane: View {
         EndpointRuntimeInput(
             enabled: endpoint.enabled,
             disconnected: connectionStore.manuallyDisconnected,
-            endpointUrl: endpoint.endpointUrl,
+            endpointUrl: endpoint.url,
             isConnecting: connectionStore.isConnecting,
             status: nil,
-            lastStatus: connectionState?.common.phaseName,
+            lastStatus: connectionState?.commonPhaseName,
             lastErrorMessage: connectionState?.lastErrorMessage,
             pendingCount: 0
         )

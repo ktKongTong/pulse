@@ -142,8 +142,8 @@ type StreamStateUpdatedFrame = {
 | 字段 | 语义 |
 | --- | --- |
 | `permission` | device 是否允许 media/streaming |
-| `playback` | 当前播放状态 |
-| `capture` | 当前是否正在采集音频 |
+| `playbackStatus` | 当前播放状态 |
+| `captureStatus` | 当前是否正在采集音频 |
 | `streamFormat` | 当前采集/编码输出格式；格式变化时通过 `stream.state.updated` 上报 |
 | `reason` | 不可播放、不可采集或错误原因 |
 | `message` | 面向诊断的补充文本 |
@@ -283,7 +283,7 @@ Ack status 只描述 command 处理结果：
 - `unavailableBeforeSeq` 只在接受 `stream.resume` 且 device 无法按 `fromSeq` 无缝继续时出现，表示 `seq < unavailableBeforeSeq` 的音频不可再由 device 补发。
 - `rejectedReason` 只在 `stream.requested` / `stream.resume` 被拒绝时出现。
 - `stream.stop stopped` 必须返回实际停止的 `streamId/generation`。
-- `capture` 是 device 返回的采集展示信息，只用于诊断或下游展示，不参与 server 对供流能力的判断。
+- `captureStatus` 是 device 返回的采集展示信息，只用于诊断或下游展示，不参与 server 对供流能力的判断。
 - `streamFormat` 是当前采集/编码输出格式，必须在 `stream.requested` 被接受时返回；后续格式变化通过 `stream.state.updated` 上报。device 响应 `stream.resume` 时如果切到新的 generation，必须返回当前 `streamFormat`。
 
 ## Resume 游标语义

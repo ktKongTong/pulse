@@ -59,7 +59,7 @@
   - `music | video | other`
 - `item`
   - `track | album | playlist | episode | stream | unknown`
-- `playback`
+- `playbackStatus`
   - `playing | paused | stopped`
   - `scope = local | remote`
 

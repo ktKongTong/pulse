@@ -71,7 +71,7 @@ private struct PermissionPendingOverlay: View {
 }
 
 private struct SidebarMediaSummary: View {
-    let media: PulseBarMedia?
+    let media: Media?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

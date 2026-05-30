@@ -2,7 +2,7 @@ import SwiftUI
 @preconcurrency import PulseBarShared
 
 struct ConnectionListItem: View {
-    let endpoint: PulseBarEndpointDraft
+    let endpoint: EndpointConfig
     let status: PulseBarStreamConnectionState
 
     private var displayName: String {
@@ -10,7 +10,7 @@ struct ConnectionListItem: View {
     }
 
     private var endpointLabel: String {
-        endpoint.endpointUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        endpoint.url.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {

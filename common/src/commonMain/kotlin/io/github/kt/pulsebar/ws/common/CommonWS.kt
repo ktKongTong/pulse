@@ -1,9 +1,8 @@
 package io.github.kt.pulsebar.ws.common
-import io.github.kt.pulsebar.core.stream.EndpointConfig
-import io.github.kt.pulsebar.core.stream.PulseConfig
-import io.github.kt.pulsebar.core.stream.getCommonWSUrl
+import io.github.kt.pulsebar.model.Endpoint
 import io.github.kt.pulsebar.ws.connection.WSConfig
 import io.github.kt.pulsebar.ws.connection.WSManager
+import io.github.kt.pulsebar.ws.getCommonWSUrl
 import io.ktor.client.HttpClient
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -54,7 +53,7 @@ internal class CommonWS(
         return deviceSessionId
     }
 
-    internal suspend fun connect(config: EndpointConfig, onReady: (suspend () -> Unit)? = null, timeout: Duration = 10.seconds): String {
+    internal suspend fun connect(config: Endpoint, onReady: (suspend () -> Unit)? = null, timeout: Duration = 10.seconds): String {
         transitionState(CommonRuntimeEvent.RuntimeReset("connect"))
         val deviceSessionId = wsManager.connect(
             WSConfig(

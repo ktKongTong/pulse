@@ -1,34 +1,35 @@
 package io.github.kt.pulsebar.ws.media
 
-import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
-import io.github.kt.pulsebar.core.stream.StreamMedia
-import io.github.kt.pulsebar.core.stream.StreamMediaPermission
-import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
-import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
+import io.github.kt.pulsebar.model.stream.StreamStopReason
+import io.github.kt.pulsebar.model.stream.Media
+import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
+import io.github.kt.pulsebar.model.stream.PlaybackStatus
+import io.github.kt.pulsebar.model.stream.StreamCaptureStatus
+import io.github.kt.pulsebar.model.stream.StreamPermission
+import io.github.kt.pulsebar.model.stream.StreamRejectedReason
 import io.github.kt.pulsebar.utils.nowInMillis
 import io.github.kt.pulsebar.ws.connection.WsConnectionState
 
 
 internal sealed interface MediaRuntimeEvent {
     data class StreamRequested(val streamId: String, val generation: Int) : MediaRuntimeEvent
-    data class StreamRejected(val reason: String) : MediaRuntimeEvent
-    data class StreamStopped(val reason: String) : MediaRuntimeEvent
+    data class StreamRejected(val reason: StreamRejectedReason) : MediaRuntimeEvent
+    data class StreamStopped(val reason: StreamStopReason) : MediaRuntimeEvent
 
     data class PcmAccepted(val bytes: Int, val frames: Int) : MediaRuntimeEvent
     data class ChunkSent(val seq: Long, val bytes: Int, val sentAtMillis: Long = nowInMillis()) : MediaRuntimeEvent
 
-    data class MediaStateChanged(val state: StreamNativeMediaState) : MediaRuntimeEvent
-    data class PlayingChanged(val media: StreamMedia?) : MediaRuntimeEvent
+    data class MediaStateChanged(val state: MediaStateSnapshot) : MediaRuntimeEvent
+    data class PlayingChanged(val media: Media?) : MediaRuntimeEvent
 }
 
-internal data class MediaRuntimeState(
+data class MediaRuntimeState(
     val deviceSessionId: String? = null,
+    val streamPermission: StreamPermission = StreamPermission.DISALLOW,
+    val playbackStatus: PlaybackStatus = PlaybackStatus.PAUSED,
+    val captureStatus: StreamCaptureStatus = StreamCaptureStatus.IDLE,
 
-    val permissionAllow: Boolean = true,
-    val playbackPlaying: Boolean = false,
-    val captureRunning: Boolean = false,
-
-    val currentMedia: StreamMedia? = null,
+    val currentMedia: Media? = null,
 
     val activeStreamId: String? = null,
     val activeGeneration: Int? = null,
@@ -67,11 +68,11 @@ internal data class MediaRuntimeState(
     val streamResumeCount: Long = 0L,
     val streamStopCount: Long = 0L,
 
-    val lastRejectedReason: String? = null,
-    val lastStopReason: String? = null,
+    val lastRejectedReason: StreamRejectedReason? = null,
+    val lastStopReason: StreamStopReason? = null,
 )
 
-internal data class MediaWSState(
+data class MediaWSState(
     val runtimeState: MediaRuntimeState = MediaRuntimeState(),
     val connection: WsConnectionState = WsConnectionState(),
 )
@@ -120,9 +121,9 @@ internal fun MediaRuntimeState.reduce(event: MediaRuntimeEvent): MediaRuntimeSta
         )
 
         is MediaRuntimeEvent.MediaStateChanged -> copy(
-            permissionAllow = event.state.permission == StreamMediaPermission.ALLOW,
-            playbackPlaying = event.state.playback == StreamPlaybackWire.PLAYING,
-            captureRunning = event.state.capture == StreamCaptureRuntime.CAPTURING,
+            streamPermission = event.state.permission,
+            playbackStatus = event.state.playbackStatus,
+            captureStatus = event.state.captureStatus,
         )
 
         is MediaRuntimeEvent.PlayingChanged -> copy(

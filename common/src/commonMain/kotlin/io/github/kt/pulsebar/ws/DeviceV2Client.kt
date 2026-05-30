@@ -1,12 +1,13 @@
 package io.github.kt.pulsebar.ws
 
-import io.github.kt.pulsebar.core.stream.StreamMedia
-import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
-import io.github.kt.pulsebar.core.log.PulseLogCategory
-import io.github.kt.pulsebar.core.log.logger
-import io.github.kt.pulsebar.core.stream.PulseConfig
-import io.github.kt.pulsebar.export.NativeHostCommand
-import io.github.kt.pulsebar.media.StreamState
+import io.github.kt.pulsebar.logger.PulseLogCategory
+import io.github.kt.pulsebar.logger.logger
+import io.github.kt.pulsebar.model.PulseConfigItem
+import io.github.kt.pulsebar.export.event.ServerCommandEvent
+import io.github.kt.pulsebar.model.getEndpoint
+import io.github.kt.pulsebar.model.stream.Media
+import io.github.kt.pulsebar.model.stream.MediaState
+import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
 import io.github.kt.pulsebar.platform.getHttpClient
 import io.github.kt.pulsebar.ws.common.CommonWS
 import io.github.kt.pulsebar.ws.connection.DeviceWsState
@@ -34,22 +35,21 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 internal class DeviceV2Client(
-    private val configFlow: StateFlow<PulseConfig>,
-    streamFlow: StateFlow<StreamState>,
-    private val endpointId: String,
-    private val hostCommandSink: (NativeHostCommand) -> Unit,
+    val configFlow: StateFlow<PulseConfigItem>,
+    mediaStateFlow: StateFlow<MediaState>,
+    val endpointId: String,
+    hostCommandSink: (ServerCommandEvent) -> Unit,
 ) {
     internal val log = logger(PulseLogCategory.StreamSession)
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, error ->
-        log.e(error) { "device.client.coroutine.failed endpoint=${configFlow.value.endpoint.baseUrl}" }
+        log.e(error) { "device.client.coroutine.failed endpoint=${configFlow.value.endpoint.url}" }
     }
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + coroutineExceptionHandler)
     internal val http = getHttpClient()
     private val mutex = Mutex()
     private var connectionJob: Job? = null
     private var stopRequested = false
-//    private var currentConfig: PulseConfig? = null
-    var connectedMediaWS: MediaWS = MediaWS(http, scope, streamFlow, endpointId, hostCommandSink)
+    var connectedMediaWS: MediaWS = MediaWS(http, scope, mediaStateFlow, endpointId, hostCommandSink)
     var connectedCommonWS: CommonWS = CommonWS(http, scope)
     var reconnectAttempts = 0
 
@@ -73,7 +73,7 @@ internal class DeviceV2Client(
                 if (connectionJob?.isActive == true) return@withLock
                 reconnectAttempts = 0
                 connectionJob?.cancelAndJoin()
-                log.d { "connecting to endpoint ${this@DeviceV2Client.configFlow.value.endpoint.baseUrl}" }
+                log.d { "connecting to endpoint ${this@DeviceV2Client.configFlow.value.endpoint.url}" }
 //                updateStats { it.copy(maxQueuedChunks = 30, chunkDurationMs = 1000) }
                 connectionJob = scope.launch { connect(configFlow.value, onReady) }
             }
@@ -95,11 +95,11 @@ internal class DeviceV2Client(
         scope.cancel("device client disposed")
     }
 
-    private suspend fun connect(config: PulseConfig, onReady: (suspend () -> Unit)? = null) {
+    private suspend fun connect(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {
         while (scope.isActive && !stopRequested) {
             if (reconnectAttempts > 0) sleepBeforeReconnect()
             if (stopRequested) return
-            log.d { "connecting ${config.endpoint.baseUrl}" }
+            log.d { "connecting ${config.endpoint.url}" }
 //            updateStats { it.connecting() }
             val result = runCatching { initConnection(config, onReady) }
             val err = result.exceptionOrNull()?.takeIf { it !is CancellationException }
@@ -122,9 +122,9 @@ internal class DeviceV2Client(
     }
 
 
-    private suspend fun initConnection(config: PulseConfig, onReady: (suspend () -> Unit)? = null) {
+    private suspend fun initConnection(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {
         log.d { "connecting to common ws" }
-        val deviceSessionId = connectedCommonWS.connect(config.endpoint)
+        val deviceSessionId = connectedCommonWS.connect(config.endpoint.getEndpoint())
         log.d { "common ws connected:$deviceSessionId" }
         log.d { "connecting to media ws" }
         connectedMediaWS.connect(deviceSessionId, config, onReady)
@@ -172,29 +172,3 @@ internal fun reconnectDelaySeconds(attempt: Int): Long {
     val schedule = longArrayOf(1, 2, 5, 10, 30, 60)
     return schedule[attempt.coerceIn(0, schedule.size - 1)]
 }
-
-
-internal fun DeviceV2Client.submitPcm(bytes: ByteArray) {
-//    if (!pcmChannel.trySend(bytes).isSuccess) {
-//        updateStats { it.copy(droppedFrames = it.droppedFrames + (bytes.size / deviceV2BytesPerFrame(channels)).toLong()) }
-//    }
-}
-
-internal fun DeviceV2Client.updateMediaState(next: StreamNativeMediaState) {
-    connectedMediaWS.updateNativeMediaState(next)
-}
-
-internal fun DeviceV2Client.updateMedia(next: StreamMedia?) {
-    connectedMediaWS.updateNowPlaying(next)
-}
-
-// updateStats { it.copy(statusText = "Device common connected, connecting stream") }
-//        log.i { "device.v2.common.ack deviceSessionId=${commonWS.deviceSessionId}" }
-//        val url = config.getCommonWSUrl()
-//        log.i { "device.v2.common.open url=$url" }
-//        updateStats {
-//            it.copy(
-//                webSocketUrl = url.toString(),
-//                statusText = "Device common websocket open, waiting for ack",
-//            )
-//        }

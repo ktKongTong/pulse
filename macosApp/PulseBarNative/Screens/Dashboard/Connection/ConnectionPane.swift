@@ -8,11 +8,11 @@ struct ConnectionPane: View {
     @State private var editingEndpointID: String?
     @State private var deleteCandidateID: String?
 
-    private var endpoints: [PulseBarEndpointDraft] {
-        monitor.settingsDraft.endpoints
+    private var endpoints: [EndpointConfig] {
+        monitor.settings.endpoints
     }
 
-    private var selectedEndpoint: PulseBarEndpointDraft? {
+    private var selectedEndpoint: EndpointConfig? {
         guard let selectedEndpointID else { return endpoints.first }
         return endpoints.first { $0.id == selectedEndpointID } ?? endpoints.first
     }
@@ -39,7 +39,7 @@ struct ConnectionPane: View {
             }
         }
         .onAppear(perform: ensureSelection)
-        .onChange(of: monitor.settingsDraft.endpoints.map(\.id)) { _, _ in ensureSelection() }
+        .onChange(of: monitor.settings.endpoints.map(\.id)) { _, _ in ensureSelection() }
         .sheet(
             isPresented: Binding(
                 get: { editingEndpointID != nil },
@@ -106,8 +106,8 @@ struct ConnectionPane: View {
     }
 
     private func addEndpoint() {
-        // monitor.addEndpoint()
-        selectedEndpointID = monitor.settingsDraft.endpoints.last?.id
+        monitor.addEndpoint()
+        selectedEndpointID = monitor.settings.endpoints.last?.id
         editingEndpointID = selectedEndpointID
     }
 
@@ -117,7 +117,7 @@ struct ConnectionPane: View {
         }
     }
 
-    private func connectionStatus(_ endpoint: PulseBarEndpointDraft) -> PulseBarStreamConnectionState {
+    private func connectionStatus(_ endpoint: EndpointConfig) -> PulseBarStreamConnectionState {
         if !endpoint.enabled {
             return .STOPPED
         }
@@ -127,7 +127,7 @@ struct ConnectionPane: View {
 
 private struct ConnectionDetailRoute: View {
     @EnvironmentObject private var monitor: MonitorStore
-    let endpoint: PulseBarEndpointDraft
+    let endpoint: EndpointConfig
     let edit: () -> Void
     let delete: () -> Void
 

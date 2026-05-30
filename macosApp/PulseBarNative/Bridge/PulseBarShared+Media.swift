@@ -7,7 +7,7 @@ import Foundation
 // `Foundation.URL` for `AsyncImage`. Thin conversion layer, no parsing
 // logic — Kotlin already handles URL validation.
 
-extension PulseBarMedia {
+extension Media {
     /// Wraps the Kotlin `String?` URL in a Foundation `URL` for `AsyncImage`.
     var artworkURL: URL? { artworkUrl.flatMap(URL.init(string:)) }
 }

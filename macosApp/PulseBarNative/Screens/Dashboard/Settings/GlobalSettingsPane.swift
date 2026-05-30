@@ -13,13 +13,12 @@ struct GlobalSettingsPane: View {
 
                 DetailSection("Sampling") {
                     NumericField(
-                        title: "App Sampling Interval",
-                        unit: "ms",
+                        title: "Idle Threshold",
+                        unit: "s",
                         value: Binding<Int>(
-                            get: { Int(monitor.settingsDraft.appPollingMillis) },
+                            get: { Int(monitor.settings.idleThresholdSeconds) },
                             set: {
-                                monitor.settingsDraft.appPollingMillis = Int32($0)
-                                monitor.objectWillChange.send()
+                                monitor.updateSettings(idleThresholdSeconds: Int32($0))
                             }
                         )
                     )
@@ -30,10 +29,9 @@ struct GlobalSettingsPane: View {
                         title: "Switch Detection Stability",
                         unit: "ms",
                         value: Binding<Int>(
-                            get: { Int(monitor.settingsDraft.changeStabilityMillis) },
+                            get: { Int(monitor.settings.changeStabilityMillis) },
                             set: {
-                                monitor.settingsDraft.changeStabilityMillis = Int32($0)
-                                monitor.objectWillChange.send()
+                                monitor.updateSettings(changeStabilityMillis: Int32($0))
                             }
                         )
                     )
@@ -46,10 +44,6 @@ struct GlobalSettingsPane: View {
 
                 HStack {
                     Spacer()
-                    Button("Save Changes") {
-                        monitor.saveConfig()
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
             }
             .padding(32)

@@ -1,43 +1,51 @@
 package io.github.kt.pulsebar.evt
 
-import io.github.kt.pulsebar.core.devicev2.DeviceV2StreamFormat
-import io.github.kt.pulsebar.core.stream.StreamMedia
-import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
-import io.github.kt.pulsebar.media.StreamState
-import kotlin.time.Duration.Companion.seconds
+import io.github.kt.pulsebar.export.ui.InitialMediaState
+import io.github.kt.pulsebar.model.stream.Media
+import io.github.kt.pulsebar.model.stream.MediaState
+import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
+import io.github.kt.pulsebar.model.stream.StreamState
+import io.github.kt.pulsebar.model.stream.getStreamState
+import kotlin.time.Duration
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 
 
-internal object Stream {
-    private val mediaState = StreamNativeMediaState()
-    val mediaStateFlow = MutableStateFlow<StreamMedia?>(null)
+
+
+internal class Stream(
+    initialMediaState: InitialMediaState
+) {
+
+    val mediaFlow = MutableStateFlow(initialMediaState.media)
     val audioChannel: Channel<ByteArray> = Channel(capacity = 256)
-    private val mutableStreamStateFlow = MutableStateFlow(StreamState(
-        audioChannel,
-        mediaState,
-        sampleRate = 48_000,
-        channels = 2,
-        chunkDuration = 0.5.seconds,
-        chunkBytes = 0,
-        mediaFlow = mediaStateFlow,
-        streamFormat = DeviceV2StreamFormat("pcm16-wav", 48_000, 2, 16),
+    private val _mediaStateFlow: MutableStateFlow<MediaState> = MutableStateFlow(MediaState(
+        pcmChannel = audioChannel,
+        streamState = initialMediaState.streamState,
+        chunkDuration = initialMediaState.chunkDuration,
+        chunkBytes = initialMediaState.chunkBytes,
+        mediaFlow = mediaFlow,
     ))
+
+    val mediaStateFlow: StateFlow<MediaState> = _mediaStateFlow
+
+    private val mutableStreamStateFlow = MutableStateFlow(initialMediaState.streamState)
+
     val streamStateFlow: StateFlow<StreamState> = mutableStreamStateFlow
 
-    fun updateMedia(media: StreamMedia?) {
-        mediaStateFlow.value = media
-        mutableStreamStateFlow.update { current ->
-            current.copy(mediaState = current.mediaState.copy(media = media))
-        }
+    fun updateMedia(media: Media?) {
+        mediaFlow.value = media
     }
 
-    fun updateMediaState(state: StreamNativeMediaState) {
-        mediaStateFlow.value = state.media
-        mutableStreamStateFlow.update { current ->
-            current.copy(mediaState = state)
+    fun updateMediaState(state: MediaStateSnapshot) {
+        _mediaStateFlow.update { current ->
+            // 需要去重
+            mediaFlow.value = state.media
+            current.copy(
+                streamState = state.getStreamState(),
+            )
         }
     }
 }

@@ -33,7 +33,7 @@ Phase 2 的目标是让 Kotlin 成为 config schema 与 config persistence 的 o
 
 当前完成状态：
 
-- `common/src/commonMain/kotlin/io/github/kt/pulsebar/core/config/PulseBarConfigStore.kt` 已使用 AndroidX DataStore。
+- `../../../../common/src/commonMain/kotlin/io/github/kt/pulsebar/store/config/PulseBarConfigStore.kt` 已使用 AndroidX DataStore。
 - config 落盘文件是 `$HOME/Library/Application Support/PulseBar/config.v1.json`。
 - DataStore 使用 JSON serializer，但架构上属于 Kotlin Typed DataStore。
 - usage / raw journal / checkpoint 没有迁到 DataStore，继续由 Room/SQLite 负责。

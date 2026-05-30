@@ -1,35 +1,31 @@
 package io.github.kt.pulsebar.evt
 
-import io.github.kt.pulsebar.core.config.PulseBarConfigStore
-import io.github.kt.pulsebar.core.log.PulseBarLog
-import io.github.kt.pulsebar.core.log.PulseLogCategory
-import io.github.kt.pulsebar.core.log.logger
-import io.github.kt.pulsebar.export.ConnectEndpointCommand
-import io.github.kt.pulsebar.export.DisableEndpointCommand
-import io.github.kt.pulsebar.export.DisconnectEndpointCommand
-import io.github.kt.pulsebar.export.EnableEndpointCommand
-import io.github.kt.pulsebar.export.NativeDeviceEvent
-import io.github.kt.pulsebar.export.NativeFrontmostAppChanged
-import io.github.kt.pulsebar.export.NativeMediaSnapshot
-import io.github.kt.pulsebar.export.NativeMediaStateChanged
-import io.github.kt.pulsebar.export.NativeNowPlayingChanged
-import io.github.kt.pulsebar.export.RemoveEndpointCommand
-import io.github.kt.pulsebar.core.stream.StreamCaptureRuntime
-import io.github.kt.pulsebar.core.stream.StreamMedia
-import io.github.kt.pulsebar.core.stream.StreamMediaPermission
-import io.github.kt.pulsebar.core.stream.StreamNativeMediaState
-import io.github.kt.pulsebar.core.stream.StreamPlaybackWire
-import io.github.kt.pulsebar.focus.DeviceV2Availability
-import io.github.kt.pulsebar.focus.DeviceV2Focus
-import io.github.kt.pulsebar.focus.DeviceV2PresenceState
-import io.github.kt.pulsebar.platform.App
-import io.github.kt.pulsebar.platform.newPulseUuid
+import io.github.kt.pulsebar.store.config.PulseBarConfigStore
+import io.github.kt.pulsebar.logger.PulseBarLog
+import io.github.kt.pulsebar.logger.PulseLogCategory
+import io.github.kt.pulsebar.logger.logger
+import io.github.kt.pulsebar.export.event.NativeFrontmostAppChanged
+import io.github.kt.pulsebar.export.event.NativeMediaStateChanged
+import io.github.kt.pulsebar.export.event.NativeNowPlayingChanged
+import io.github.kt.pulsebar.export.event.ConnectEndpointCommand
+import io.github.kt.pulsebar.export.event.DisableEndpointCommand
+import io.github.kt.pulsebar.export.event.DisconnectEndpointCommand
+import io.github.kt.pulsebar.export.event.EnableEndpointCommand
+import io.github.kt.pulsebar.export.event.RemoveEndpointCommand
+import io.github.kt.pulsebar.model.FocusState
+import io.github.kt.pulsebar.model.RuntimeState
+import io.github.kt.pulsebar.model.stream.Media
+import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
+import io.github.kt.pulsebar.utils.newPulseUuid
+
 import io.github.kt.pulsebar.ws.DeviceV2Client
-import io.github.kt.pulsebar.ws.updateMedia
-import io.github.kt.pulsebar.ws.updateMediaState
+import io.github.kt.pulsebar.ws.common.App
+import io.github.kt.pulsebar.ws.common.DeviceV2Availability
+import io.github.kt.pulsebar.ws.common.DeviceV2Focus
 import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
+import io.github.kt.pulsebar.ws.common.DeviceV2PresenceState
 import io.github.kt.pulsebar.ws.common.epochMillisToIso8601
-import io.github.kt.pulsebar.ws.connection.DeviceWsPhase
+import io.github.kt.pulsebar.ws.connection.ConnectionStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,13 +34,15 @@ import kotlinx.coroutines.launch
 
 
 internal class EventDispatcher(
-    private val scope: CoroutineScope,
+    scope: CoroutineScope,
     private val state: MutableStateFlow<RuntimeState>,
     private val configStore: PulseBarConfigStore,
+    private val stream: Stream,
     private val connectEndpoint: (String) -> Unit,
+    internal val streamClients: MutableStateFlow<Map<String, DeviceV2Client>>
 ) {
-    private val eventBus: NativeDeviceEventBus = NativeDeviceEventBus()
-    internal val streamClients: MutableStateFlow<Map<String, DeviceV2Client>> = MutableStateFlow(emptyMap())
+    private val eventBus: EventBus = EventBus()
+
     init {
         scope.launch {
             eventBus.events
@@ -58,11 +56,11 @@ internal class EventDispatcher(
         }
     }
     private val log: PulseBarLog = logger(PulseLogCategory.NativeEvent)
-    fun emitNativeEvent(event: NativeDeviceEvent) {
+    fun emitNativeEvent(event: AppEvent) {
         eventBus.emit(event)
     }
 
-    private suspend fun routeNativeEvent(event: NativeDeviceEvent) {
+    private suspend fun routeNativeEvent(event: AppEvent) {
         log.i { event.toString() }
         when (event) {
             is NativeFrontmostAppChanged ->
@@ -78,51 +76,50 @@ internal class EventDispatcher(
                 connectEndpoint(event.endpointId)
 
             is DisconnectEndpointCommand ->
-                removeClient(event.endpointId)
+                streamClients.value[event.endpointId]?.dispose()
 
             is EnableEndpointCommand ->
                 setEndpointEnabled(event.endpointId, enabled = true)
 
+            // streamClient 就是当前
             is DisableEndpointCommand -> {
                 setEndpointEnabled(event.endpointId, enabled = false)
-                removeClient(event.endpointId)
             }
 
             is RemoveEndpointCommand -> {
-                removeClient(event.endpointId)
-                configStore.update { current ->
-                    current.copy(endpoints = current.endpoints.filterNot { it.id == event.endpointId })
-                }
+                // stop client
+                // remove config store
+//                configStore.update { current ->
+//                    current.copy(endpoints = current.endpoints.filterNot { it.id == event.endpointId })
+//                }
             }
         }
     }
 
-    private fun handleNowPlayingChanged(media: NativeMediaSnapshot?) {
-        val next = media?.toStreamMedia()
-        Stream.updateMedia(next)
-        streamClients.value.values.forEach { it.updateMedia(next) }
+    private fun handleNowPlayingChanged(media: Media?) {
+        stream.updateMedia(media)
+    }
+
+    private fun fanoutToStreamClients(foreach: (streamClient: DeviceV2Client) -> Unit) {
+        streamClients.value.values.forEach { foreach(it) }
     }
 
     private fun handleMediaStateChanged(event: NativeMediaStateChanged) {
-        val media = event.media?.toStreamMedia()
-        val next = StreamNativeMediaState(
-            permission = if (event.permissionAllow) StreamMediaPermission.ALLOW else StreamMediaPermission.DISALLOW,
-            playback = if (event.playbackPlaying) StreamPlaybackWire.PLAYING else StreamPlaybackWire.PAUSED,
-            capture = if (event.captureRunning) StreamCaptureRuntime.CAPTURING else StreamCaptureRuntime.NO_CAPTURE,
-            media = media,
+//        val media = event.media?.toStreamMedia()
+        val next = MediaStateSnapshot(
+            permission = event.permission,
+            playbackStatus = event.playbackStatus,
+            captureStatus = event.captureStatus,
+//            media = media,
             message = event.message,
         )
-        Stream.updateMediaState(next)
-        streamClients.value.values.forEach {
-            it.updateMediaState(next)
-            it.updateMedia(media)
-        }
+        stream.updateMediaState(next)
     }
 
     private suspend fun handleFrontmostAppChanged(event: NativeFrontmostAppChanged) {
         state.update {
             it.copy(
-                focusSate = (it.focusSate ?: FocusSate(name = event.name, id = event.bundleId)).copy(
+                focusState = (it.focusState ?: FocusState(name = event.name, id = event.bundleId)).copy(
                     name = event.name,
                     id = event.bundleId
                 )
@@ -130,7 +127,7 @@ internal class EventDispatcher(
         }
         // save2sqlite
         streamClients.value.entries
-            .filter { it.value.deviceWsState.value.phase == DeviceWsPhase.Connected }
+            .filter { it.value.deviceWsState.value.phase == ConnectionStatus.Connected }
             .forEach { entry ->
                 runCatching {
                     entry.value.connectedCommonWS.presenceOutbound.send(
@@ -151,34 +148,13 @@ internal class EventDispatcher(
             }
     }
 
-    private fun removeClient(endpointId: String) {
-        streamClients.value[endpointId]?.dispose()
-        streamClients.update { it - endpointId }
-    }
-
     private suspend fun setEndpointEnabled(endpointId: String, enabled: Boolean) {
-        configStore.update { current ->
-            current.copy(
-                endpoints = current.endpoints.map { endpoint ->
-                    if (endpoint.id == endpointId) endpoint.copy(enabled = enabled) else endpoint
-                },
-            )
-        }
+//        configStore.update { current ->
+//            current.copy(
+//                endpoints = current.endpoints.map { endpoint ->
+//                    if (endpoint.id == endpointId) endpoint.copy(enabled = enabled) else endpoint
+//                },
+//            )
+//        }
     }
 }
-
-private fun NativeMediaSnapshot.toStreamMedia(): StreamMedia =
-    StreamMedia(
-        providerId = providerId,
-        itemType = itemType,
-        trackId = trackId,
-        uri = uri,
-        linkUrl = linkUrl,
-        title = title,
-        artist = artist,
-        album = album,
-        artworkUrl = artworkUrl,
-        progressSeconds = progressSeconds,
-        durationSeconds = durationSeconds,
-        playbackState = if (isPlaying) StreamPlaybackWire.PLAYING else StreamPlaybackWire.PAUSED,
-    )

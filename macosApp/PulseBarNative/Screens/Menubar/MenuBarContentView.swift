@@ -68,7 +68,7 @@ struct MenuBarContentView: View {
         }
     }
 
-    private func mediaSection(_ media: PulseBarMedia) -> some View {
+    private func mediaSection(_ media: Media) -> some View {
         HStack(alignment: .center, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
                 AsyncImage(url: media.artworkURL) { image in
@@ -152,7 +152,7 @@ struct MenuBarContentView: View {
         }
     }
 
-    private func remainingClockText(_ media: PulseBarMedia) -> String {
+    private func remainingClockText(_ media: Media) -> String {
         // Kotlin owns the clock formatting; menubar wants just the leading
         // negative-remaining segment ("-M:SS") without the " / total" suffix.
         let duration = mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0
@@ -163,7 +163,7 @@ struct MenuBarContentView: View {
 }
 
 private struct UsageRowView: View {
-    let row: PulseBarUsageRow
+    let row: AppUsageItem
     let totalSeconds: Int
 
     private var percentage: Int {

@@ -11,7 +11,7 @@ import Foundation
 // Swift Export is still finalizing Sendable inference, so we remain
 // explicit. Revisit when 2.4 GA lands.
 
-extension PulseBarUsageRow: @retroactive Identifiable {
+extension AppUsageItem: @retroactive Identifiable {
     public var id: String { key }
 }
 
@@ -20,9 +20,7 @@ extension PulseBarInteractionItem: @retroactive Identifiable {
 }
 
 extension PulseBarEndpointSyncState: @retroactive Identifiable {}
-extension PulseBarEndpointDraft: @retroactive Identifiable {}
-extension StreamEndpointResolved: @retroactive Identifiable {}
 
 extension PulseBarStreamStats: @retroactive @unchecked Sendable {}
-extension PulseBarMedia: @retroactive @unchecked Sendable {}
+extension Media: @retroactive @unchecked Sendable {}
 extension PulseBarSnapshot: @retroactive @unchecked Sendable {}
