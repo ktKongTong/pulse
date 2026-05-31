@@ -168,8 +168,8 @@ final class StreamCaptureService: @unchecked Sendable {
 
     /// Stream PCM16 chunks to [pcmHandler] for as long as the returned stream
     /// is consumed. The handler runs on the CoreAudio render thread — it must
-    /// be real-time safe. Consumers typically do nothing but forward the
-    /// bytes into Kotlin via `bridge.submitStreamPcmBase64(...)`.
+    /// be real-time safe. Consumers typically do nothing but enqueue the bytes
+    /// before emitting them into Kotlin as a native event.
     func capture(
         source: StreamCaptureSource,
         pcmHandler: @escaping @Sendable (Data) -> Void

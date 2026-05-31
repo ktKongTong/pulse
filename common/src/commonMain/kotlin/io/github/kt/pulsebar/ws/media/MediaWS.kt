@@ -17,11 +17,8 @@ import io.github.kt.pulsebar.model.connection.ServerCommandType
 import io.github.kt.pulsebar.model.connection.ServerStreamCommand
 import io.github.kt.pulsebar.model.getEndpoint
 import io.github.kt.pulsebar.model.stream.CaptureInfo
-import io.github.kt.pulsebar.model.stream.Media
 import io.github.kt.pulsebar.model.stream.MediaState
-import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
 import io.github.kt.pulsebar.model.stream.getSnapshot
-import io.github.kt.pulsebar.model.stream.getStreamState
 import io.github.kt.pulsebar.model.stream.rejectionReason
 
 import io.github.kt.pulsebar.ws.connection.WSConfig
@@ -151,6 +148,10 @@ internal class MediaWS(
             // log.d { "media.updated.send.snapshot endpointId=$endpointId title=${media.title ?: "nil"} playback=${media.playbackState}" }
             wsManager.send(DeviceV2MediaUpdatePayload(media))
         }
+    }
+
+    internal fun stopActiveStream(reason: StreamStopReason) {
+        stopStream(reason)
     }
 
     private fun stopStream(reason: StreamStopReason) {

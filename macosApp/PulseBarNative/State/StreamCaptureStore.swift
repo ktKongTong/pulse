@@ -3,8 +3,9 @@ import Foundation
 @preconcurrency import PulseBarShared
 import SwiftUI
 
-private typealias StreamStatusInput = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.StreamStatusInput
-private typealias StreamPresentation = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.StreamPresentation
+private typealias PulseStreamPermission = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamPermission
+private typealias PulsePlaybackStatus = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.PlaybackStatus
+private typealias PulseStreamCaptureStatus = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamCaptureStatus
 
 private final class StreamPcmForwarder: @unchecked Sendable {
     private let worker: StreamBridge
@@ -20,7 +21,7 @@ private final class StreamPcmForwarder: @unchecked Sendable {
         queue.async { [worker] in
             self.chunks += 1
             self.bytes += data.count
-            worker.submitStreamPcmBase64(chunkBase64: data.base64EncodedString())
+            worker.emitNativeEvent(event: NativeStreamPcmChunk(chunkBase64: data.base64EncodedString()))
             if self.chunks <= 3 || self.chunks % 20 == 0 {
                 PulseNativeLog.debug(
                     .streamSession,
@@ -72,7 +73,7 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     var serverConnectionText: String {
-        StreamPresentation.shared.serverConnectionText(input: buildStatusInput())
+        publisherStatusText
     }
 
     var serverEndpointText: String {
@@ -80,14 +81,11 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     var captureActivityText: String {
-        StreamPresentation.shared.captureActivityText(input: buildStatusInput())
+        isCapturing ? "Capturing \(meter.capturedFrames) frames" : statusText
     }
 
     var nextReconnectText: String {
-        StreamPresentation.shared.nextReconnectText(
-            input: buildStatusInput(),
-            nowMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
-        )
+        "No reconnect scheduled"
     }
 
     var canReconnectServer: Bool {
@@ -138,7 +136,7 @@ final class StreamCaptureStore: ObservableObject {
         let worker = self.worker
         commandTask = Task { @MainActor [weak self] in
             do {
-                for try await command in worker.hostCommands.asAsyncSequence() {
+                for try await command in worker.serverCommands.asAsyncSequence() {
                     self?.handleHostCommand(command)
                 }
             } catch {
@@ -147,12 +145,12 @@ final class StreamCaptureStore: ObservableObject {
         }
     }
 
-    private func handleHostCommand(_ command: NativeHostCommand) {
-        if let command = command as? NativeStreamRequestedCommand {
+    private func handleHostCommand(_ command: any ServerCommandEvent) {
+        if let command = command as? NativeRequestedCommandEvent {
             log("server requested capture start endpoint=\(command.endpointId) stream=\(command.streamId) generation=\(command.generation)")
             startServerDrivenCapture(endpointId: command.endpointId)
-        } else if let command = command as? NativeStreamStoppedCommand {
-            log("server requested capture stop endpoint=\(command.endpointId) stream=\(command.streamId ?? "nil") reason=\(command.reason)")
+        } else if let command = command as? NativeStoppedCommandEvent {
+            log("server requested capture stop endpoint=\(command.endpointId) stream=\(command.streamId ?? "nil") reason=\(String(describing: command.reason))")
             stopCaptureSession()
         } else {
             log("ignored host command type=\(type(of: command))")
@@ -351,18 +349,18 @@ final class StreamCaptureStore: ObservableObject {
         guard !isCapturing else { return }
         guard !audioCapturePermissionRequestPending else {
             log("server requested capture while startup audio permission request is pending")
-            stopActiveMediaStream(endpointId: endpointId, reasonName: "CAPTURE_PERMISSION_MISSING")
+            emitMediaStreamStopped(reason: .CAPTURE_PERMISSION_MISSING)
             return
         }
         guard mediaStreamPermission == .allow else {
             log("server started stream but owner disallowed media")
-            stopActiveMediaStream(endpointId: endpointId, reasonName: "STREAM_DISABLED")
+            emitMediaStreamStopped(reason: .STREAM_DISABLED)
             return
         }
         selectPreferredSource(preferredProvider: currentMedia?.providerId, preferredBundleId: nil)
         guard let source = selectedSource else {
             log("server started stream but no capture source available")
-            stopActiveMediaStream(endpointId: endpointId, reasonName: "CAPTURE_SOURCE_UNAVAILABLE")
+            emitMediaStreamStopped(reason: .CAPTURE_SOURCE_UNAVAILABLE)
             return
         }
 
@@ -411,7 +409,7 @@ final class StreamCaptureStore: ObservableObject {
                 statusText = "Stream failed"
                 if isManual { publisherStatusText = "Publisher failed" }
                 if !isManual {
-                    stopActiveMediaStream(endpointId: endpointId, reasonName: Self.streamStopReasonName(for: error))
+                    emitMediaStreamStopped(reason: Self.streamStopReason(for: error))
                 }
             },
             onFinish: { [weak self] in
@@ -427,23 +425,22 @@ final class StreamCaptureStore: ObservableObject {
         )
     }
 
-    private func stopActiveMediaStream(endpointId: String, reasonName: String) {
-        guard !endpointId.isEmpty else { return }
-        worker.stopActiveMediaStream(endpointId: endpointId, reasonName: reasonName)
+    private func emitMediaStreamStopped(reason: PulseStreamStopReason) {
+        worker.emitNativeEvent(event: NativeMediaStreamStopped(reason: reason))
     }
 
-    private static func streamStopReasonName(for error: Error) -> String {
+    private static func streamStopReason(for error: Error) -> PulseStreamStopReason {
         if let captureError = error as? StreamCaptureError {
             switch captureError {
             case .audioCapturePermissionDenied, .audioCapturePermissionNotGranted:
-                return "CAPTURE_PERMISSION_MISSING"
+                return .CAPTURE_PERMISSION_MISSING
             case .unsupportedOS:
-                return "UNSUPPORTED_APP"
+                return .UNSUPPORTED_APP
             case .coreAudio:
-                return "CAPTURE_SOURCE_UNAVAILABLE"
+                return .CAPTURE_SOURCE_UNAVAILABLE
             }
         }
-        return "CAPTURE_SOURCE_LOST"
+        return .CAPTURE_SOURCE_LOST
     }
 
     private static func effectivePermissionStatusAfterSuccessfulProbe(_ preflightStatus: StreamAudioCapturePermissionStatus) -> StreamAudioCapturePermissionStatus {
@@ -489,9 +486,9 @@ final class StreamCaptureStore: ObservableObject {
         let capture = captureRunning ?? isCapturing
         worker.emitNativeEvent(
             event: NativeMediaStateChanged(
-                permissionAllow: mediaStreamPermission == .allow,
-                playbackPlaying: mediaPlaybackStatus == .playing,
-                captureRunning: capture,
+                permission: mediaStreamPermission == .allow ? PulseStreamPermission.ALLOW : PulseStreamPermission.DISALLOW,
+                playbackStatus: mediaPlaybackStatus == .playing ? PulsePlaybackStatus.PLAYING : PulsePlaybackStatus.PAUSED,
+                captureStatus: capture ? PulseStreamCaptureStatus.CAPTURING : PulseStreamCaptureStatus.IDLE,
                 reason: nil,
                 message: nil,
                 media: currentMedia,
@@ -553,42 +550,13 @@ final class StreamCaptureStore: ObservableObject {
         sourceName: String,
         publisherStats: PulseBarStreamStats
     ) -> String {
-        StreamPresentation.shared.streamStatusText(
-            sourceName: sourceName,
-            input: makeStatusInput(stats: publisherStats, isCapturing: false, capturedFrames: 0, endpointCount: 0, activeConnected: false)
-        )
-    }
-
-    private func buildStatusInput() -> StreamStatusInput {
-        let activeConnected = publisherStats.connectionState == .CONNECTED
-        return Self.makeStatusInput(
-            stats: publisherStats,
-            isCapturing: isCapturing,
-            capturedFrames: Int64(meter.capturedFrames),
-            endpointCount: Int32(endpoints.count),
-            activeConnected: activeConnected
-        )
-    }
-
-    private static func makeStatusInput(
-        stats: PulseBarStreamStats,
-        isCapturing: Bool,
-        capturedFrames: Int64,
-        endpointCount: Int32,
-        activeConnected: Bool
-    ) -> StreamStatusInput {
-        let connectedAt = activeConnected ? Int32(1) : Int32(0)
-        // Kotlin uses `0L` as the "no scheduled reconnect" sentinel.
-        let nextReconnectMillis: Int64? = stats.nextReconnectAtMillis > 0 ? stats.nextReconnectAtMillis : nil
-        return StreamStatusInput(
-            connectionState: stats.connectionState,
-            isSending: stats.isSending,
-            isCapturing: isCapturing,
-            capturedFrames: capturedFrames,
-            nextReconnectAtMillis: nextReconnectMillis,
-            endpointCount: endpointCount,
-            connectedEndpointCount: connectedAt
-        )
+        if publisherStats.isSending {
+            return "Streaming \(sourceName)"
+        }
+        if publisherStats.captureRequested {
+            return "Starting \(sourceName)"
+        }
+        return "Ready for \(sourceName)"
     }
 
     private func log(_ message: String) {

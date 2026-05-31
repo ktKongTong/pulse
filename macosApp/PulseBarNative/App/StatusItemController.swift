@@ -3,6 +3,8 @@ import SwiftUI
 
 @MainActor
 final class StatusItemController: NSObject {
+    private static let panelSize = NSSize(width: 332, height: 476)
+
     private let monitor: MonitorStore
     private let statusItem: NSStatusItem
     private let panel: NSPanel
@@ -14,7 +16,7 @@ final class StatusItemController: NSObject {
         self.monitor = monitor
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 332, height: 392),
+            contentRect: NSRect(origin: .zero, size: Self.panelSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -37,7 +39,7 @@ final class StatusItemController: NSObject {
         panel.contentViewController = NSHostingController(
             rootView: MenuBarContentView()
                 .environmentObject(monitor)
-                .frame(width: 332)
+                .frame(width: Self.panelSize.width)
         )
     }
 

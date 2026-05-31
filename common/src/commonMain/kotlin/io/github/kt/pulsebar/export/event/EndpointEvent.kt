@@ -1,6 +1,7 @@
 package io.github.kt.pulsebar.export.event
 
 import io.github.kt.pulsebar.evt.AppEvent
+import io.github.kt.pulsebar.model.PulseConfig
 import io.github.kt.pulsebar.utils.nowInMillis
 
 data class ConnectEndpointCommand(
@@ -30,5 +31,10 @@ data class ReconnectEndpointCommand(
 
 data class RemoveEndpointCommand(
     val endpointId: String,
+    val sentAt: Long = nowInMillis(),
+) : AppEvent
+
+data class UpdateConfigCommand(
+    val config: PulseConfig,
     val sentAt: Long = nowInMillis(),
 ) : AppEvent

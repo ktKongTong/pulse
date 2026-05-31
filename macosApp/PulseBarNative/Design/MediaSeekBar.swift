@@ -1,5 +1,81 @@
 import SwiftUI
 
+struct MediaProgressTimeline<Content: View>: View {
+    let progressSeconds: Double
+    let durationSeconds: Double
+    let isPlaying: Bool
+
+    private let content: (Double) -> Content
+
+    @State private var baseProgressSeconds: Double = 0
+    @State private var baseDate: Date = .now
+    @State private var hasBase = false
+    @State private var tickDate: Date = .now
+
+    init(
+        progressSeconds: Double,
+        durationSeconds: Double,
+        isPlaying: Bool,
+        @ViewBuilder content: @escaping (Double) -> Content
+    ) {
+        self.progressSeconds = progressSeconds
+        self.durationSeconds = durationSeconds
+        self.isPlaying = isPlaying
+        self.content = content
+    }
+
+    var body: some View {
+        content(displayProgress(at: tickDate))
+        .onAppear {
+            let now = Date.now
+            tickDate = now
+            resetBase(to: progressSeconds, at: now)
+        }
+        .onChange(of: progressSeconds) { _, newValue in
+            let now = Date.now
+            tickDate = now
+            resetBase(to: newValue, at: now)
+        }
+        .onChange(of: isPlaying) { _, _ in
+            let now = Date.now
+            tickDate = now
+            resetBase(to: displayProgress(at: now), at: now)
+        }
+        .onChange(of: durationSeconds) { _, _ in
+            let now = Date.now
+            tickDate = now
+            resetBase(to: displayProgress(at: now), at: now)
+        }
+        .task(id: isPlaying) {
+            tickDate = .now
+            guard isPlaying else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                tickDate = .now
+            }
+        }
+    }
+
+    private func displayProgress(at date: Date) -> Double {
+        let base = hasBase ? baseProgressSeconds : progressSeconds
+        let elapsed = isPlaying ? max(0, date.timeIntervalSince(baseDate)) : 0
+        return clamped(base + elapsed)
+    }
+
+    private func resetBase(to progress: Double, at date: Date) {
+        baseProgressSeconds = clamped(progress)
+        baseDate = date
+        hasBase = true
+    }
+
+    private func clamped(_ progress: Double) -> Double {
+        let lowerBounded = max(0, progress)
+        guard durationSeconds > 0 else { return lowerBounded }
+        return min(lowerBounded, durationSeconds)
+    }
+}
+
 struct MediaSeekBar: View {
     let progressSeconds: Double
     let durationSeconds: Double
@@ -7,7 +83,7 @@ struct MediaSeekBar: View {
     let onSeek: (Double) -> Void
 
     @State private var dragProgress: Double? = nil
-    @State private var visualProgress: Double = 0
+    @State private var seekPreviewProgress: Double? = nil
     @State private var isDragging = false
     @State private var lastSeekAt: Date? = nil
 
@@ -18,7 +94,7 @@ struct MediaSeekBar: View {
     var body: some View {
         GeometryReader { geometry in
             let width = max(geometry.size.width, 1)
-            let displayed = dragProgress ?? visualProgress
+            let displayed = dragProgress ?? seekPreviewProgress ?? progressSeconds
             let normalized = durationSeconds > 0 ? min(max(displayed / durationSeconds, 0), 1) : 0
             ZStack {
                 Capsule()
@@ -51,7 +127,7 @@ struct MediaSeekBar: View {
                     .onEnded { value in
                         let ratio = min(max(value.location.x / width, 0), 1)
                         let target = ratio * durationSeconds
-                        visualProgress = target
+                        seekPreviewProgress = target
                         dragProgress = nil
                         isDragging = false
                         lastSeekAt = Date()
@@ -59,13 +135,10 @@ struct MediaSeekBar: View {
                     }
             )
         }
-        .onAppear {
-            visualProgress = progressSeconds
-        }
-        .onChange(of: progressSeconds) { _, newValue in
+        .onChange(of: progressSeconds) { _, _ in
             let recentlySought = lastSeekAt.map { Date().timeIntervalSince($0) < 0.8 } ?? false
             if !isDragging && !recentlySought {
-                visualProgress = newValue
+                seekPreviewProgress = nil
             }
         }
     }

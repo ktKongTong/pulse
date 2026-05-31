@@ -11,7 +11,7 @@ settings:
     ENABLE_DEBUG_DYLIB: NO
     LM_SKIP_METADATA_EXTRACTION: YES
     CODE_SIGN_ENTITLEMENTS: PulseBarNative/PulseBarNative.entitlements
-    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_IDENTITY: PulseBar Local Development
     CODE_SIGN_STYLE: Manual
     OTHER_LDFLAGS: "$(inherited) -lsqlite3"
 targets:

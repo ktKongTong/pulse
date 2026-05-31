@@ -6,7 +6,7 @@ import io.ktor.client.engine.HttpClientEngineFactory
 import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.plugins.websocket.WebSockets
 
-actual fun getKtorEngineFactory(): HttpClientEngineFactory<HttpClientEngineConfig> = Darwin
+internal actual fun getKtorEngineFactory(): HttpClientEngineFactory<HttpClientEngineConfig> = Darwin
 
 internal actual fun getHttpClient(): HttpClient {
    return HttpClient(Darwin) { install(WebSockets) }

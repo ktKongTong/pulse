@@ -15,12 +15,5 @@ extension AppUsageItem: @retroactive Identifiable {
     public var id: String { key }
 }
 
-extension PulseBarInteractionItem: @retroactive Identifiable {
-    public var id: String { requestId }
-}
-
-extension PulseBarEndpointSyncState: @retroactive Identifiable {}
-
 extension PulseBarStreamStats: @retroactive @unchecked Sendable {}
 extension Media: @retroactive @unchecked Sendable {}
-extension PulseBarSnapshot: @retroactive @unchecked Sendable {}

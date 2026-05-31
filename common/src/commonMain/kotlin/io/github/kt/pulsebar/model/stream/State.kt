@@ -16,7 +16,7 @@ data class StreamFormat(
     val bitDepth: Int? = null,
 )
 
-data class MediaState(
+internal data class MediaState(
     val pcmChannel: Channel<ByteArray> = Channel(capacity = 256),
     val streamState: StreamState,
     val chunkDuration: Duration = 0.5.seconds,
@@ -24,7 +24,7 @@ data class MediaState(
     val mediaFlow: StateFlow<Media?>,
 )
 
-fun MediaState.getSnapshot(): MediaStateSnapshot = MediaStateSnapshot(
+internal fun MediaState.getSnapshot(): MediaStateSnapshot = MediaStateSnapshot(
     permission = streamState.permission,
     playbackStatus = streamState.playbackStatus,
     captureStatus = streamState.captureStatus,
@@ -45,7 +45,27 @@ data class MediaStateSnapshot(
     val media: Media? = null,
 )
 
-fun MediaStateSnapshot.getStreamState(): StreamState = StreamState(
+data class MediaFlowState(
+    val permission: StreamPermission = StreamPermission.ALLOW,
+    val playbackStatus: PlaybackStatus = PlaybackStatus.PAUSED,
+    val captureStatus: StreamCaptureStatus = StreamCaptureStatus.IDLE,
+    val reason: StreamBlockedReason? = null,
+    val message: String? = null,
+    val format: StreamFormat? = null,
+    val media: StateFlow<Media?>,
+)
+
+internal fun MediaState.toMediaFlowState(): MediaFlowState = MediaFlowState(
+    permission = streamState.permission,
+    playbackStatus = streamState.playbackStatus,
+    captureStatus = streamState.captureStatus,
+    reason = streamState.reason,
+    message = streamState.message,
+    format = streamState.streamFormat,
+    media = mediaFlow,
+)
+
+fun MediaStateSnapshot.toStreamState(): StreamState = StreamState(
     permission = permission,
     playbackStatus = playbackStatus,
     captureStatus = captureStatus,
@@ -53,18 +73,6 @@ fun MediaStateSnapshot.getStreamState(): StreamState = StreamState(
     message = message,
     streamFormat = format,
 )
-
-@Serializable
-internal data class StreamNativeMediaState(
-    val permission: StreamPermission = StreamPermission.ALLOW,
-    val playbackStatus: PlaybackStatus = PlaybackStatus.PAUSED,
-    val captureStatus: StreamCaptureStatus = StreamCaptureStatus.IDLE,
-    val reason: StreamBlockedReason? = null,
-    val message: String? = null,
-    val format: StreamFormat? = null,
-    val media: Media? = null,
-)
-
 
 @Serializable
 data class StreamState(

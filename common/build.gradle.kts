@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.swiftexport.ExperimentalSwiftExportDsl
+import org.jetbrains.kotlin.gradle.tasks.KotlinNativeCompile
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -68,4 +69,13 @@ dependencies {
 
 room3 {
     schemaDirectory("$projectDir/schemas")
+}
+
+tasks.withType<KotlinNativeCompile>().configureEach {
+    if (name.startsWith("compileSwiftExport")) {
+        compilerOptions.optIn.addAll(
+            "kotlin.time.ExperimentalTime",
+            "kotlinx.coroutines.InternalCoroutinesApi",
+        )
+    }
 }

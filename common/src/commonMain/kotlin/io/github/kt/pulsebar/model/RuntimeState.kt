@@ -1,6 +1,6 @@
 package io.github.kt.pulsebar.model
 
-import io.github.kt.pulsebar.model.stream.MediaState
+import io.github.kt.pulsebar.model.stream.MediaFlowState
 
 
 data class FocusState(
@@ -12,5 +12,5 @@ data class FocusState(
 
 data class RuntimeState(
     val focusState: FocusState? = null,
-    val mediaState: MediaState? = null,
+    val mediaState: MediaFlowState? = null,
 )

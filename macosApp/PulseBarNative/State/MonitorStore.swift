@@ -23,7 +23,9 @@ final class MonitorStore: ObservableObject {
 
     // MARK: - Published state
 
-    @Published private(set) var snapshot: PulseBarSnapshot?
+    @Published private(set) var focusState: FocusState?
+    @Published private(set) var mediaState: MediaFlowState?
+    @Published private(set) var currentMedia: Media?
     @Published private(set) var todayStats: [AppUsageItem] = []
     @Published private(set) var todayTotalSeconds: Int = 0
     @Published private(set) var connectionStatesByEndpointID: [String: PulseBarConnectionState] = [:]
@@ -40,26 +42,28 @@ final class MonitorStore: ObservableObject {
     private var subscribed = false
     private var frontmostAppObserver: NSObjectProtocol?
     private var connectionStores: [String: ConnectionStore] = [:]
-    private var connectionStateTasks: [Int: Task<Void, Never>] = [:]
+    private var connectionStateTasks: [String: Task<Void, Never>] = [:]
+    private var mediaStateTask: Task<Void, Never>?
+    private var appUsageTask: Task<Void, Never>?
     private let nowPlayingEventSource = NowPlayingEventSource()
     private var connectedMediaEndpointIDs: Set<String> = []
-    private var progressRefreshTask: Task<Void, Never>?
 
     init() {
-        self.bridge = PulseBarBridge()
+        self.bridge = PulseBarBridge(initialMedia: NowPlayingEventSource.startupSnapshot())
         self.streamStore = StreamCaptureStore(bridge: bridge)
     }
 
     deinit {
         for t in observerTasks { t.cancel() }
         for t in connectionStateTasks.values { t.cancel() }
+        mediaStateTask?.cancel()
+        appUsageTask?.cancel()
         if let frontmostAppObserver {
             Task { @MainActor in
                 NSWorkspace.shared.notificationCenter.removeObserver(frontmostAppObserver)
             }
         }
         nowPlayingEventSource.stop()
-        progressRefreshTask?.cancel()
     }
 
     // MARK: - Lifecycle
@@ -94,16 +98,24 @@ final class MonitorStore: ObservableObject {
                 self?.handleNowPlayingChange(snapshot)
             }
         }
-        startProgressRefreshLoop()
 
-        let menuTask: Task<Void, Never> = Task { @MainActor [weak self] in
+        let runtimeTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
-                for try await state in bridge.menuState.asAsyncSequence() {
-                    self?.applyMenuStateUpdate(state)
+                for try await state in bridge.runtimeState.asAsyncSequence() {
+                    self?.applyRuntimeStateUpdate(state)
                 }
             } catch {}
         }
-        observerTasks.append(menuTask)
+        observerTasks.append(runtimeTask)
+
+        let mediaFlowTask: Task<Void, Never> = Task { @MainActor [weak self] in
+            do {
+                for try await state in bridge.mediaFlow.asAsyncSequence() {
+                    self?.applyMediaFlowStateUpdate(state)
+                }
+            } catch {}
+        }
+        observerTasks.append(mediaFlowTask)
 
         let configTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
@@ -118,20 +130,20 @@ final class MonitorStore: ObservableObject {
         let connectionTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
                 for try await flows in bridge.connectionStates.asAsyncSequence() {
-                    self?.applyConnectionStateFlows(Array(flows))
+                    self?.applyConnectionStateFlows(flows)
                 }
             } catch {}
         }
         observerTasks.append(connectionTask)
 
-        let todayTask: Task<Void, Never> = Task { @MainActor [weak self] in
+        let usageTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
-                for try await stats in bridge.todayStats.asAsyncSequence() {
-                    self?.applyTodayStatsUpdate(stats)
+                for try await stats in bridge.usageStats.asAsyncSequence() {
+                    self?.applyUsageStatsUpdate(stats)
                 }
             } catch {}
         }
-        observerTasks.append(todayTask)
+        observerTasks.append(usageTask)
 
         streamStore.updateEndpoints(streamEndpoints)
     }
@@ -205,7 +217,7 @@ final class MonitorStore: ObservableObject {
 
     // MARK: - Settings commands
     func saveConfig(_ config: PulseBarConfig) {
-        bridge.updateConfig(config: config)
+        bridge.emitNativeEvent(event: UpdateConfigCommand(config: config))
     }
 
     func addEndpoint() {
@@ -269,13 +281,33 @@ final class MonitorStore: ObservableObject {
 
     // MARK: - Observer handlers
 
-    private func applyMenuStateUpdate(_ state: PulseBarMenuState) {
-        snapshot = state.snapshot
+    private func applyRuntimeStateUpdate(_ state: RuntimeState) {
+        focusState = state.focusState
     }
 
-    private func applyTodayStatsUpdate(_ stats: PulseBarTodayStats) {
-        todayStats = stats.topRows
-        todayTotalSeconds = Int(stats.totalSeconds)
+    private func applyMediaFlowStateUpdate(_ state: MediaFlowState) {
+        mediaState = state
+        mediaStateTask?.cancel()
+        mediaStateTask = Task { @MainActor [weak self] in
+            do {
+                for try await media in state.media.asAsyncSequence() {
+                    self?.currentMedia = media
+                }
+            } catch {}
+        }
+    }
+
+    private func applyUsageStatsUpdate(_ stats: UsageStats) {
+        todayTotalSeconds = Int(stats.appStats.totalSeconds)
+        appUsageTask?.cancel()
+        let usages = stats.appStats.usages
+        appUsageTask = Task { @MainActor [weak self] in
+            do {
+                for try await rows in usages.asAsyncSequence() {
+                    self?.todayStats = rows
+                }
+            } catch {}
+        }
     }
 
     private func applyConfigUpdate(_ config: PulseBarConfig) {
@@ -283,14 +315,14 @@ final class MonitorStore: ObservableObject {
         streamStore.updateEndpoints(streamEndpoints)
     }
 
-    private func applyConnectionStateFlows(_ flows: [any KotlinCoroutineSupport.KotlinTypedFlow<PulseBarConnectionState>]) {
+    private func applyConnectionStateFlows(_ flows: [String: any KotlinCoroutineSupport.KotlinTypedFlow<PulseBarConnectionState>]) {
         for task in connectionStateTasks.values { task.cancel() }
         connectionStateTasks.removeAll()
         connectionStatesByEndpointID = [:]
         connectedMediaEndpointIDs = []
 
-        for (index, flow) in flows.enumerated() {
-            connectionStateTasks[index] = Task { @MainActor [weak self] in
+        for (endpointId, flow) in flows {
+            connectionStateTasks[endpointId] = Task { @MainActor [weak self] in
                 do {
                     for try await state in flow.asAsyncSequence() {
                         self?.applyConnectionStateUpdate(state)
@@ -323,17 +355,6 @@ final class MonitorStore: ObservableObject {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             self?.nowPlayingEventSource.refresh()
-        }
-    }
-
-    private func startProgressRefreshLoop() {
-        guard progressRefreshTask == nil else { return }
-        progressRefreshTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard let self, isMonitoring, !isPaused else { continue }
-                nowPlayingEventSource.refresh()
-            }
         }
     }
 }

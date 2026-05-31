@@ -20,7 +20,7 @@ struct PulseBarDashboardView: View {
                 }
                 .listStyle(.sidebar)
 
-                SidebarMediaSummary(media: monitor.snapshot?.media)
+                SidebarMediaSummary(media: monitor.currentMedia)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 16)
             }
@@ -89,10 +89,10 @@ private struct SidebarMediaSummary: View {
                     .clipShape(RoundedRectangle(cornerRadius: 5))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(media.title)
+                        Text(media.displayTitle)
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(1)
-                        Text(media.artist)
+                        Text(media.displayArtist)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

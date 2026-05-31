@@ -4,13 +4,21 @@ import io.github.kt.pulsebar.logger.PulseLogCategory
 import io.github.kt.pulsebar.logger.logger
 import io.github.kt.pulsebar.model.PulseConfigItem
 import io.github.kt.pulsebar.export.event.ServerCommandEvent
+import io.github.kt.pulsebar.export.event.NativeFrontmostAppChanged
 import io.github.kt.pulsebar.model.getEndpoint
-import io.github.kt.pulsebar.model.stream.Media
 import io.github.kt.pulsebar.model.stream.MediaState
-import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
+import io.github.kt.pulsebar.model.stream.StreamStopReason
 import io.github.kt.pulsebar.platform.getHttpClient
+import io.github.kt.pulsebar.utils.newPulseUuid
 import io.github.kt.pulsebar.ws.common.CommonWS
+import io.github.kt.pulsebar.ws.common.App
+import io.github.kt.pulsebar.ws.common.DeviceV2Availability
+import io.github.kt.pulsebar.ws.common.DeviceV2Focus
+import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
+import io.github.kt.pulsebar.ws.common.DeviceV2PresenceState
+import io.github.kt.pulsebar.ws.common.epochMillisToIso8601
 import io.github.kt.pulsebar.ws.connection.DeviceWsState
+import io.github.kt.pulsebar.ws.connection.ConnectionStatus
 import io.github.kt.pulsebar.ws.connection.deriveDevicePhase
 import io.github.kt.pulsebar.ws.media.MediaWS
 import kotlin.time.Duration.Companion.seconds
@@ -93,6 +101,30 @@ internal class DeviceV2Client(
     fun dispose() {
         stopRequested = true
         scope.cancel("device client disposed")
+    }
+
+    suspend fun publishFocusChanged(event: NativeFrontmostAppChanged) {
+        if (deviceWsState.value.phase != ConnectionStatus.Connected) return
+        runCatching {
+            connectedCommonWS.presenceOutbound.send(
+                DeviceV2PresencePayload(
+                    eventId = newPulseUuid(),
+                    seq = 1,
+                    observedAt = epochMillisToIso8601(event.observedAtMillis),
+                    state = DeviceV2PresenceState(
+                        availability = DeviceV2Availability(state = "active", idleSeconds = 0),
+                        focus = DeviceV2Focus(App(event.name, event.bundleId)),
+                    ),
+                )
+            )
+        }.onFailure { error ->
+            if (error is CancellationException) throw error
+            log.w(error) { "presence.enqueue.failed endpointId=$endpointId" }
+        }
+    }
+
+    fun stopActiveStream(reason: StreamStopReason) {
+        connectedMediaWS.stopActiveStream(reason)
     }
 
     private suspend fun connect(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {

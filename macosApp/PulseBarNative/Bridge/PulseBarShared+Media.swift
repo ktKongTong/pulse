@@ -10,4 +10,24 @@ import Foundation
 extension Media {
     /// Wraps the Kotlin `String?` URL in a Foundation `URL` for `AsyncImage`.
     var artworkURL: URL? { artworkUrl.flatMap(URL.init(string:)) }
+
+    var source: String { providerId ?? "" }
+
+    var isPlaying: Bool { playbackStatus == .PLAYING }
+
+    var displayTitle: String {
+        title?.takeIfNotBlank() ?? "No title"
+    }
+
+    var displayArtist: String {
+        artist?.takeIfNotBlank() ?? "Unknown artist"
+    }
+
+    var displayAlbum: String? {
+        album?.takeIfNotBlank()
+    }
+}
+
+func mediaDurationSecondsOrNull(media: Media) -> Double? {
+    media.durationSeconds
 }

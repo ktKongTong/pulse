@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 @preconcurrency import PulseBarShared
 
-private typealias Formatters = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.PulseBarFormatters
+private let menuBarUsageRowLimit = 5
 
 struct MenuBarContentView: View {
     @EnvironmentObject private var monitor: MonitorStore
@@ -12,12 +12,12 @@ struct MenuBarContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             topSection
 
-            if monitor.snapshot != nil {
+            if monitor.focusState != nil {
                 Divider()
                     .padding(.vertical, 10)
             }
 
-            if let media = monitor.snapshot?.media {
+            if let media = monitor.currentMedia {
                 mediaSection(media)
                 Divider()
                     .padding(.vertical, 10)
@@ -32,9 +32,9 @@ struct MenuBarContentView: View {
 
     private var topSection: some View {
         HStack(alignment: .center, spacing: 10) {
-            if let snapshot = monitor.snapshot {
-                AppIconView(bundleId: snapshot.bundleId, size: 40)
-                Text(snapshot.appName)
+            if let focusState = monitor.focusState {
+                AppIconView(bundleId: focusState.id, size: 40)
+                Text(focusState.name)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -69,7 +69,8 @@ struct MenuBarContentView: View {
     }
 
     private func mediaSection(_ media: Media) -> some View {
-        HStack(alignment: .center, spacing: 10) {
+        let durationSeconds = Double(mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0)
+        return HStack(alignment: .center, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
                 AsyncImage(url: media.artworkURL) { image in
                     image.resizable().scaledToFill()
@@ -83,18 +84,18 @@ struct MenuBarContentView: View {
 
                 if media.source.lowercased() == "spotify" {
                     ProviderIconBadge(bundleId: "com.spotify.client")
-                } else if media.source.lowercased() == "music" {
+                } else if media.source.lowercased() == "apple-music" || media.source.lowercased() == "music" {
                     ProviderIconBadge(bundleId: "com.apple.Music")
                 }
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(media.title)
+                    Text(media.displayTitle)
                         .font(.system(size: 12, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    Text(media.artist)
+                    Text(media.displayArtist)
                         .font(.system(size: 10, weight: .light))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -111,22 +112,28 @@ struct MenuBarContentView: View {
                     MediaTransportButton(systemName: "forward.fill", action: { monitor.mediaCommand(.NEXT) })
                 }
                 .frame(maxWidth: .infinity)
-                VStack(alignment: .leading, spacing: 6) {
-                    MediaSeekBar(
-                        progressSeconds: media.progressSeconds,
-                        durationSeconds: Double(mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0),
-                        accentColor: .accentColor,
-                        onSeek: { monitor.seekMedia(to: $0) }
-                    )
-                    .frame(height: 3)
+                MediaProgressTimeline(
+                    progressSeconds: media.progressSeconds,
+                    durationSeconds: durationSeconds,
+                    isPlaying: media.isPlaying
+                ) { displayedProgress in
+                    VStack(alignment: .leading, spacing: 6) {
+                        MediaSeekBar(
+                            progressSeconds: displayedProgress,
+                            durationSeconds: durationSeconds,
+                            accentColor: .accentColor,
+                            onSeek: { monitor.seekMedia(to: $0) }
+                        )
+                        .frame(height: 3)
 
-                    HStack {
-                        Text(pulseClock(Int(media.progressSeconds.rounded())))
-                        Spacer()
-                        Text(remainingClockText(media))
+                        HStack {
+                            Text(pulseClock(Int(displayedProgress.rounded())))
+                            Spacer()
+                            Text(remainingClockText(media, progressSeconds: displayedProgress))
+                        }
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
                     }
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -144,7 +151,7 @@ struct MenuBarContentView: View {
         Group {
             if !monitor.todayStats.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(monitor.todayStats.prefix(2))) { row in
+                    ForEach(Array(monitor.todayStats.prefix(menuBarUsageRowLimit))) { row in
                         UsageRowView(row: row, totalSeconds: monitor.todayTotalSeconds)
                     }
                 }
@@ -152,13 +159,11 @@ struct MenuBarContentView: View {
         }
     }
 
-    private func remainingClockText(_ media: Media) -> String {
-        // Kotlin owns the clock formatting; menubar wants just the leading
-        // negative-remaining segment ("-M:SS") without the " / total" suffix.
+    private func remainingClockText(_ media: Media, progressSeconds: Double? = nil) -> String {
         let duration = mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0
-        let progress = Int(media.progressSeconds.rounded())
+        let progress = Int((progressSeconds ?? media.progressSeconds).rounded())
         let remaining = max(0, duration - progress)
-        return "-\(Formatters.shared.formatClock(seconds: Int32(remaining)))"
+        return "-\(pulseClock(remaining))"
     }
 }
 
@@ -210,6 +215,6 @@ private struct UsageRowView: View {
     }
 
     private var durationText: String {
-        Formatters.shared.formatDurationHuman(seconds: Int32(row.totalSeconds))
+        pulseDurationHuman(seconds: row.totalSeconds)
     }
 }

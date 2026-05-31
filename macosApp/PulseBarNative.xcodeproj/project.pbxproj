@@ -16,6 +16,7 @@
 		25416E4D68A7CF58F64F004F /* EndpointEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 756BABB2D8242410711EC698 /* EndpointEditorSheet.swift */; };
 		258746F6820E49F13BC373E2 /* Buttons.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA76178436F5D6D5686B5A92 /* Buttons.swift */; };
 		29F14E2EE2128FCB95E9CCD0 /* PulseBarShared+ConnectionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59A9286630929C63277C45B8 /* PulseBarShared+ConnectionStatus.swift */; };
+		32C9F16732C9F16732C9F167 /* PulseBarShared+Aliases.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C9F16632C9F16632C9F166 /* PulseBarShared+Aliases.swift */; };
 		36670F66E61AD804AC0B9BE6 /* AppIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04E0F792AF2CED97CB0D709 /* AppIconView.swift */; };
 		41DEB95F159C6B8418C7DAA7 /* MediaCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFA4AAAC50CF63CAA0BD47 /* MediaCards.swift */; };
 		499226D68E891AA8BDE90BA3 /* StreamTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8584A4B1329E8DCAE898B461 /* StreamTypes.swift */; };
@@ -53,6 +54,7 @@
 		0C6D4AF4F941200092C2AB7F /* InstalledReportingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstalledReportingApp.swift; sourceTree = "<group>"; };
 		162EAFF3861D5E4246836A7F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		2ECAB8819B655CCC3ACEC0E1 /* InstalledAppCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstalledAppCatalog.swift; sourceTree = "<group>"; };
+		32C9F16632C9F16632C9F166 /* PulseBarShared+Aliases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PulseBarShared+Aliases.swift"; sourceTree = "<group>"; };
 		34DE0842403E3CACE604031C /* ConnectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStore.swift; sourceTree = "<group>"; };
 		4171DEE7172AEDFB90C48624 /* PulseBarNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseBarNativeApp.swift; sourceTree = "<group>"; };
 		48CA333A2011BA8268CB2126 /* WindowHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowHelpers.swift; sourceTree = "<group>"; };
@@ -216,6 +218,7 @@
 		9F1C4FF4B2780356307D8181 /* Bridge */ = {
 			isa = PBXGroup;
 			children = (
+				32C9F16632C9F16632C9F166 /* PulseBarShared+Aliases.swift */,
 				59A9286630929C63277C45B8 /* PulseBarShared+ConnectionStatus.swift */,
 				99E9B44F61A00E4C201FB209 /* PulseBarShared+Identifiable.swift */,
 				07D81BAFA6F1CE20A92DE9D4 /* PulseBarShared+Media.swift */,
@@ -355,6 +358,7 @@
 				0EBC85E3C0BA813F320CC1F5 /* MonitorStore.swift in Sources */,
 				D405762B9A292BAE32CC2CE6 /* PulseBarNativeApp.swift in Sources */,
 				29F14E2EE2128FCB95E9CCD0 /* PulseBarShared+ConnectionStatus.swift in Sources */,
+				32C9F16732C9F16732C9F167 /* PulseBarShared+Aliases.swift in Sources */,
 				5D1B897A858FE22BCB2E5AC7 /* PulseBarShared+Identifiable.swift in Sources */,
 				D2F95141D1AE7FC5225D8E08 /* PulseBarShared+Media.swift in Sources */,
 				8CBD735AD287840AD7EC5DB7 /* PulseNativeLog.swift in Sources */,
@@ -409,7 +413,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = PulseBarNative/PulseBarNative.entitlements;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "PulseBar Local Development";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -479,7 +483,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = PulseBarNative/PulseBarNative.entitlements;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "PulseBar Local Development";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";

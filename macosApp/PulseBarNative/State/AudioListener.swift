@@ -13,6 +13,10 @@ final class NowPlayingEventSource: @unchecked Sendable {
     private var observers: [NSObjectProtocol] = []
     private var onChange: (@Sendable (Media?) -> Void)?
 
+    static func startupSnapshot() -> Media? {
+        readPlayerFallbackSnapshot()
+    }
+
     func start(onChange: @escaping @Sendable (Media?) -> Void) {
         guard self.onChange == nil else { return }
         self.onChange = onChange
@@ -128,7 +132,12 @@ final class NowPlayingEventSource: @unchecked Sendable {
             artworkUrl: nil,
             progressSeconds: elapsed,
             durationSeconds: duration,
-            isPlaying: isPlaying
+            trackNumber: nil,
+            discNumber: nil,
+            collectionId: nil,
+            collectionTitle: nil,
+            collectionLinkUrl: nil,
+            playbackStatus: isPlaying ? .PLAYING : .PAUSED
         )
     }
 
@@ -224,7 +233,12 @@ final class NowPlayingEventSource: @unchecked Sendable {
             artworkUrl: values[8].isEmpty ? nil : values[8],
             progressSeconds: Double(values[1].replacingOccurrences(of: ",", with: ".")) ?? 0,
             durationSeconds: duration > 0 ? duration : nil,
-            isPlaying: values[0] == "playing"
+            trackNumber: nil,
+            discNumber: nil,
+            collectionId: nil,
+            collectionTitle: nil,
+            collectionLinkUrl: nil,
+            playbackStatus: values[0] == "playing" ? .PLAYING : .PAUSED
         )
     }
 
@@ -257,7 +271,12 @@ final class NowPlayingEventSource: @unchecked Sendable {
             artworkUrl: nil,
             progressSeconds: Double(values[1].replacingOccurrences(of: ",", with: ".")) ?? 0,
             durationSeconds: duration,
-            isPlaying: values[0] == "playing"
+            trackNumber: nil,
+            discNumber: nil,
+            collectionId: nil,
+            collectionTitle: nil,
+            collectionLinkUrl: nil,
+            playbackStatus: values[0] == "playing" ? .PLAYING : .PAUSED
         )
     }
 

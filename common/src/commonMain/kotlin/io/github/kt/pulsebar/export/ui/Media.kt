@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class InitialMediaState(
     val streamState: StreamState,
-    val media: Media? = null,
+    val media: Media?,
     val chunkDuration: Duration,
     val chunkBytes: Int,
 )

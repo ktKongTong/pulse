@@ -1,45 +1,43 @@
 package io.github.kt.pulsebar.evt
 
-import io.github.kt.pulsebar.store.config.PulseBarConfigStore
 import io.github.kt.pulsebar.logger.PulseBarLog
 import io.github.kt.pulsebar.logger.PulseLogCategory
 import io.github.kt.pulsebar.logger.logger
 import io.github.kt.pulsebar.export.event.NativeFrontmostAppChanged
 import io.github.kt.pulsebar.export.event.NativeMediaStateChanged
+import io.github.kt.pulsebar.export.event.NativeMediaStreamStopped
 import io.github.kt.pulsebar.export.event.NativeNowPlayingChanged
+import io.github.kt.pulsebar.export.event.NativeStreamPcmChunk
 import io.github.kt.pulsebar.export.event.ConnectEndpointCommand
 import io.github.kt.pulsebar.export.event.DisableEndpointCommand
 import io.github.kt.pulsebar.export.event.DisconnectEndpointCommand
 import io.github.kt.pulsebar.export.event.EnableEndpointCommand
 import io.github.kt.pulsebar.export.event.RemoveEndpointCommand
+import io.github.kt.pulsebar.export.event.UpdateConfigCommand
 import io.github.kt.pulsebar.model.FocusState
-import io.github.kt.pulsebar.model.RuntimeState
+import io.github.kt.pulsebar.model.PulseConfig
 import io.github.kt.pulsebar.model.stream.Media
 import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
-import io.github.kt.pulsebar.utils.newPulseUuid
-
-import io.github.kt.pulsebar.ws.DeviceV2Client
-import io.github.kt.pulsebar.ws.common.App
-import io.github.kt.pulsebar.ws.common.DeviceV2Availability
-import io.github.kt.pulsebar.ws.common.DeviceV2Focus
-import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
-import io.github.kt.pulsebar.ws.common.DeviceV2PresenceState
-import io.github.kt.pulsebar.ws.common.epochMillisToIso8601
-import io.github.kt.pulsebar.ws.connection.ConnectionStatus
+import io.github.kt.pulsebar.model.stream.StreamStopReason
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import okio.ByteString.Companion.decodeBase64
 
 
 internal class EventDispatcher(
     scope: CoroutineScope,
-    private val state: MutableStateFlow<RuntimeState>,
-    private val configStore: PulseBarConfigStore,
+    private val focusState: MutableStateFlow<FocusState?>,
     private val stream: Stream,
     private val connectEndpoint: (String) -> Unit,
-    internal val streamClients: MutableStateFlow<Map<String, DeviceV2Client>>
+    private val disconnectEndpoint: (String) -> Unit,
+    private val setEndpointEnabled: suspend (String, Boolean) -> Unit,
+    private val removeEndpoint: suspend (String) -> Unit,
+    private val updateConfig: suspend (PulseConfig) -> Unit,
+    private val publishFocusChanged: suspend (NativeFrontmostAppChanged) -> Unit,
+    private val handleMediaStreamStopped: (StreamStopReason) -> Unit,
 ) {
     private val eventBus: EventBus = EventBus()
 
@@ -72,27 +70,29 @@ internal class EventDispatcher(
             is NativeMediaStateChanged ->
                 handleMediaStateChanged(event)
 
+            is NativeStreamPcmChunk ->
+                handleStreamPcmChunk(event)
+
+            is NativeMediaStreamStopped ->
+                handleMediaStreamStopped(event.reason)
+
             is ConnectEndpointCommand ->
                 connectEndpoint(event.endpointId)
 
             is DisconnectEndpointCommand ->
-                streamClients.value[event.endpointId]?.dispose()
+                disconnectEndpoint(event.endpointId)
 
             is EnableEndpointCommand ->
-                setEndpointEnabled(event.endpointId, enabled = true)
+                setEndpointEnabled(event.endpointId, true)
 
-            // streamClient 就是当前
-            is DisableEndpointCommand -> {
-                setEndpointEnabled(event.endpointId, enabled = false)
-            }
+            is DisableEndpointCommand ->
+                setEndpointEnabled(event.endpointId, false)
 
-            is RemoveEndpointCommand -> {
-                // stop client
-                // remove config store
-//                configStore.update { current ->
-//                    current.copy(endpoints = current.endpoints.filterNot { it.id == event.endpointId })
-//                }
-            }
+            is RemoveEndpointCommand ->
+                removeEndpoint(event.endpointId)
+
+            is UpdateConfigCommand ->
+                updateConfig(event.config)
         }
     }
 
@@ -100,61 +100,46 @@ internal class EventDispatcher(
         stream.updateMedia(media)
     }
 
-    private fun fanoutToStreamClients(foreach: (streamClient: DeviceV2Client) -> Unit) {
-        streamClients.value.values.forEach { foreach(it) }
-    }
-
     private fun handleMediaStateChanged(event: NativeMediaStateChanged) {
-//        val media = event.media?.toStreamMedia()
         val next = MediaStateSnapshot(
             permission = event.permission,
             playbackStatus = event.playbackStatus,
             captureStatus = event.captureStatus,
-//            media = media,
+            reason = event.reason,
             message = event.message,
+            media = event.media,
         )
         stream.updateMediaState(next)
     }
 
-    private suspend fun handleFrontmostAppChanged(event: NativeFrontmostAppChanged) {
-        state.update {
-            it.copy(
-                focusState = (it.focusState ?: FocusState(name = event.name, id = event.bundleId)).copy(
-                    name = event.name,
-                    id = event.bundleId
-                )
-            )
+    private fun handleStreamPcmChunk(event: NativeStreamPcmChunk) {
+        val bytes = event.chunkBase64.decodeBase64()?.toByteArray()
+        if (bytes == null) {
+            log.w { "native.stream.pcm.invalid_base64 bytes=${event.chunkBase64.length}" }
+            return
         }
-        // save2sqlite
-        streamClients.value.entries
-            .filter { it.value.deviceWsState.value.phase == ConnectionStatus.Connected }
-            .forEach { entry ->
-                runCatching {
-                    entry.value.connectedCommonWS.presenceOutbound.send(
-                        DeviceV2PresencePayload(
-                            eventId = newPulseUuid(),
-                            seq = 1,
-                            observedAt = epochMillisToIso8601(event.observedAtMillis),
-                            state = DeviceV2PresenceState(
-                                availability = DeviceV2Availability(state = "active", idleSeconds = 0),
-                                focus = DeviceV2Focus(App(event.name, event.bundleId)),
-                            ),
-                        )
-                    )
-                }.onFailure { error ->
-                    if (error is CancellationException) throw error
-                    log.w(error) { "presence.enqueue.failed endpointId=${entry.key}" }
-                }
-            }
+        if (!stream.submitPcm(bytes)) {
+            log.w { "native.stream.pcm.dropped bytes=${bytes.size}" }
+        }
     }
 
-    private suspend fun setEndpointEnabled(endpointId: String, enabled: Boolean) {
-//        configStore.update { current ->
-//            current.copy(
-//                endpoints = current.endpoints.map { endpoint ->
-//                    if (endpoint.id == endpointId) endpoint.copy(enabled = enabled) else endpoint
-//                },
-//            )
-//        }
+    private suspend fun handleFrontmostAppChanged(event: NativeFrontmostAppChanged) {
+        focusState.update { current ->
+            if (current?.id == event.bundleId) {
+                current.copy(
+                    name = event.name,
+                    id = event.bundleId,
+                    lastActiveAt = event.observedAtMillis,
+                )
+            } else {
+                FocusState(
+                    name = event.name,
+                    id = event.bundleId,
+                    startedAt = event.observedAtMillis,
+                    lastActiveAt = event.observedAtMillis,
+                )
+            }
+        }
+        publishFocusChanged(event)
     }
 }

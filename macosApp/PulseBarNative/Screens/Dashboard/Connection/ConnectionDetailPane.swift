@@ -1,9 +1,6 @@
 import SwiftUI
 @preconcurrency import PulseBarShared
 
-private typealias EndpointPresentation = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.EndpointPresentation
-private typealias EndpointRuntimeInput = ExportedKotlinPackages.io.github.kt.pulsebar.core.presentation.EndpointRuntimeInput
-
 struct ConnectionDetailPane: View {
     @EnvironmentObject private var monitor: MonitorStore
     @EnvironmentObject private var connectionStore: ConnectionStore
@@ -72,8 +69,8 @@ struct ConnectionDetailPane: View {
 
                     DetailSection("Streaming") {
                         KeyValueGrid(rows: [
-                            ("Focus", monitor.snapshot?.appName ?? "No active sample"),
-                            ("Media", monitor.snapshot?.media.map { "\($0.title) - \($0.artist)" } ?? "No media"),
+                            ("Focus", monitor.focusState?.name ?? "No active sample"),
+                            ("Media", monitor.currentMedia.map { "\($0.displayTitle) - \($0.displayArtist)" } ?? "No media"),
                             ("Delivery", deliveryDetail),
                             ("Stream", streamStatusText),
                             ("Capture source", monitor.streamStore.selectedSource?.name ?? "No source"),
@@ -164,18 +161,21 @@ struct ConnectionDetailPane: View {
         if let message = connectionState?.lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
             return message
         }
-        return EndpointPresentation.shared.disconnectedReason(input: buildRuntimeInput())
+        if !endpoint.enabled { return "Endpoint disabled" }
+        if connectionStore.manuallyDisconnected { return "Disconnected manually" }
+        return "-"
     }
 
     private var connectionActionTitle: String {
-        EndpointPresentation.shared.connectionActionTitle(input: buildRuntimeInput(), status: status)
+        status.isConnected ? "Disconnect" : "Connect"
     }
 
     private var deliveryDetail: String {
         if let connectionState {
             return connectionState.statusText
         }
-        return EndpointPresentation.shared.deliveryDetail(input: buildRuntimeInput())
+        if !endpoint.enabled { return "Endpoint disabled" }
+        return connectionStore.isConnecting ? "Connecting" : "Idle"
     }
 
     private var hasStreamConnectionFields: Bool {
@@ -223,7 +223,7 @@ struct ConnectionDetailPane: View {
             }
             return streamEndpoint.statusText
         }
-        return EndpointPresentation.shared.deliveryDetail(input: buildRuntimeInput())
+        return deliveryDetail
     }
 
     private var streamMessage: String? {
@@ -250,19 +250,6 @@ struct ConnectionDetailPane: View {
         return streamEndpoint?.stats.connectionState == .FAILED
     }
 
-    private func buildRuntimeInput() -> EndpointRuntimeInput {
-        EndpointRuntimeInput(
-            enabled: endpoint.enabled,
-            disconnected: connectionStore.manuallyDisconnected,
-            endpointUrl: endpoint.url,
-            isConnecting: connectionStore.isConnecting,
-            status: nil,
-            lastStatus: connectionState?.commonPhaseName,
-            lastErrorMessage: connectionState?.lastErrorMessage,
-            pendingCount: 0
-        )
-    }
-
     private func nowMillis() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1000.0)
     }
@@ -277,10 +264,6 @@ struct ConnectionDetailPane: View {
         return "\(delta / 86_400)d ago"
     }
 
-    private func wallClock(_ iso8601: String?) -> String {
-        let epochMillis = ExportedKotlinPackages.io.github.kt.pulsebar.platform.parseIso8601ToMillis(value: iso8601)
-        return ExportedKotlinPackages.io.github.kt.pulsebar.platform.formatWallClockTime(epochMillis: epochMillis)
-    }
 }
 
 private extension String {
