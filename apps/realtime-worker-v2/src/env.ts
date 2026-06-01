@@ -27,7 +27,7 @@ export function mediaStub(env: Env) {
   return env.MEDIA_DO.getByName("owner");
 }
 
-export function deviceStub(env: Env, deviceId = "owner") {
+export function deviceStub(env: Env, deviceId: string) {
   return env.DEVICE_DO.getByName(deviceId);
 }
 

@@ -22,12 +22,12 @@ typealias PlayerPlaybackCommand = ExportedKotlinPackages.io.github.kt.pulsebar.e
 typealias PulseBarConfig = ExportedKotlinPackages.io.github.kt.pulsebar.model.PulseConfig
 typealias PulseBarConnectionState = ExportedKotlinPackages.io.github.kt.pulsebar.model.connection.ConnectionState
 typealias PulseBarStreamStats = ExportedKotlinPackages.io.github.kt.pulsebar.ws.media.MediaRuntimeState
+typealias StreamFormat = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamFormat
 typealias PulseStreamStopReason = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamStopReason
 typealias ReconnectEndpointCommand = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.ReconnectEndpointCommand
 typealias RemoveEndpointCommand = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.RemoveEndpointCommand
 typealias RuntimeState = ExportedKotlinPackages.io.github.kt.pulsebar.model.RuntimeState
 typealias ServerCommandEvent = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.ServerCommandEvent
-typealias StreamConfig = ExportedKotlinPackages.io.github.kt.pulsebar.model.StreamConfig
 typealias UpdateConfigCommand = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.UpdateConfigCommand
 typealias UsageStats = ExportedKotlinPackages.io.github.kt.pulsebar.export.ui.UsageStats
 
@@ -107,7 +107,6 @@ extension PulseBarConfig {
     ) {
         self.init(
             endpoints: endpoints,
-            stream: StreamConfig(sampleRate: 48_000, channels: 2, chunkDurationMs: 500),
             commonConfig: FocusConfig(
                 idleThresholdSeconds: idleThresholdSeconds,
                 changeStabilityMillis: changeStabilityMillis
@@ -139,10 +138,10 @@ final class PulseBarStreamStatsFactory: @unchecked Sendable {
             activeStreamId: nil,
             activeGeneration: nil,
             captureRequested: false,
-            sampleRate: 48_000,
-            channels: 2,
-            chunkDurationMs: 500,
-            chunkBytes: 96_000,
+            sampleRate: 0,
+            channels: 0,
+            chunkDurationMs: 0,
+            chunkBytes: 0,
             acceptedFrames: 0,
             acceptedBytes: 0,
             droppedFrames: 0,

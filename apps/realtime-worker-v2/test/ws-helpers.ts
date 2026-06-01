@@ -61,9 +61,9 @@ export async function connectCommon(
   return { global, claim, common };
 }
 
-export async function connectDevice(env: Env) {
-  const device = env.DEVICE_DO.getByName("owner");
-  const common = (await device.fetch(wsRequest("https://pulse.test/api/v1/device/ws?deviceId=owner"))).webSocket!;
+export async function connectDevice(env: Env, deviceId = "owner") {
+  const device = env.DEVICE_DO.getByName(deviceId);
+  const common = (await device.fetch(wsRequest(`https://pulse.test/api/v1/device/ws?deviceId=${deviceId}`))).webSocket!;
   common.accept();
   common.send(JSON.stringify({
     protocol: DEVICE_CONNECTION_PROTOCOL,
@@ -75,11 +75,11 @@ export async function connectDevice(env: Env) {
     },
   }));
   const ack = await nextMessage(common) as { payload: { deviceSessionId: string } };
-  return { device, common, deviceSessionId: ack.payload.deviceSessionId };
+  return { device, common, deviceId, deviceSessionId: ack.payload.deviceSessionId };
 }
 
-export async function connectDeviceMedia(env: Env, media: DurableObjectStub, deviceSessionId: string) {
-  const socket = (await media.fetch(wsRequest(`https://pulse.test/api/v1/device/media/ws?deviceSessionId=${deviceSessionId}`))).webSocket!;
+export async function connectDeviceMedia(env: Env, media: DurableObjectStub, deviceSessionId: string, deviceId = "owner") {
+  const socket = (await media.fetch(wsRequest(`https://pulse.test/api/v1/device/media/ws?deviceId=${deviceId}&deviceSessionId=${deviceSessionId}`))).webSocket!;
   socket.accept();
   socket.send(JSON.stringify({
     protocol: DEVICE_MEDIA_CONNECTION_PROTOCOL,

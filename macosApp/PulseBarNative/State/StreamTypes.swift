@@ -8,7 +8,6 @@ struct StreamEndpointPublisherStatus: Identifiable, Equatable {
     let id: String
     let name: String
     let endpointURL: String
-    let workspaceId: String
     let statusText: String
     let stats: PulseBarStreamStats
 
@@ -16,7 +15,6 @@ struct StreamEndpointPublisherStatus: Identifiable, Equatable {
         lhs.id == rhs.id &&
             lhs.name == rhs.name &&
             lhs.endpointURL == rhs.endpointURL &&
-            lhs.workspaceId == rhs.workspaceId &&
             lhs.statusText == rhs.statusText &&
             lhs.stats === rhs.stats
     }

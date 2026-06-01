@@ -11,8 +11,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class StreamFormat(
     val codec: String,
-    val sampleRate: Int = 48_000,
-    val channels: Int = 2,
+    val sampleRate: Int,
+    val channels: Int,
     val bitDepth: Int? = null,
 )
 
@@ -20,7 +20,6 @@ internal data class MediaState(
     val pcmChannel: Channel<ByteArray> = Channel(capacity = 256),
     val streamState: StreamState,
     val chunkDuration: Duration = 0.5.seconds,
-    val chunkBytes: Int,
     val mediaFlow: StateFlow<Media?>,
 )
 
@@ -65,13 +64,13 @@ internal fun MediaState.toMediaFlowState(): MediaFlowState = MediaFlowState(
     media = mediaFlow,
 )
 
-fun MediaStateSnapshot.toStreamState(): StreamState = StreamState(
+fun MediaStateSnapshot.toStreamState(previousFormat: StreamFormat? = null): StreamState = StreamState(
     permission = permission,
     playbackStatus = playbackStatus,
     captureStatus = captureStatus,
     reason = reason,
     message = message,
-    streamFormat = format,
+    streamFormat = format ?: previousFormat,
 )
 
 @Serializable

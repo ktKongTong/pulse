@@ -120,9 +120,7 @@ internal class MediaWS(
                 apiKey = config.endpoint.apiKey,
                 handShakeTimeout = timeout,
             )
-        ) {
-            deviceV2MediaHello(config.stream.chunkDurationMs)
-        }
+        ) { deviceV2MediaHello() }
         onReady?.invoke()
         sendCurrentStateSnapshot()
         wsManager.listen { listen() }

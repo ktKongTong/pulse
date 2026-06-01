@@ -9,7 +9,6 @@ import io.github.kt.pulsebar.model.stream.StreamState
 import io.github.kt.pulsebar.model.stream.getSnapshot
 import io.github.kt.pulsebar.model.stream.toMediaFlowState
 import io.github.kt.pulsebar.model.stream.toStreamState
-import kotlin.time.Duration
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,8 +29,6 @@ internal class Stream(
     private val _mediaState: MutableStateFlow<MediaState> = MutableStateFlow(MediaState(
         pcmChannel = audioChannel,
         streamState = initialMediaState.streamState,
-        chunkDuration = initialMediaState.chunkDuration,
-        chunkBytes = initialMediaState.chunkBytes,
         mediaFlow = mediaFlow,
     ))
 
@@ -58,7 +55,7 @@ internal class Stream(
             // 需要去重
             mediaFlow.value = state.media
             current.copy(
-                streamState = state.toStreamState(),
+                streamState = state.toStreamState(current.streamState.streamFormat),
             )
         }
     }

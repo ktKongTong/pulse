@@ -107,6 +107,7 @@ internal class EventDispatcher(
             captureStatus = event.captureStatus,
             reason = event.reason,
             message = event.message,
+            format = event.format,
             media = event.media,
         )
         stream.updateMediaState(next)

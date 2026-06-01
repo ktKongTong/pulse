@@ -127,15 +127,6 @@ final class MonitorStore: ObservableObject {
         observerTasks.append(configTask)
 
 
-        let connectionTask: Task<Void, Never> = Task { @MainActor [weak self] in
-            do {
-                for try await flows in bridge.connectionStates.asAsyncSequence() {
-                    self?.applyConnectionStateFlows(flows)
-                }
-            } catch {}
-        }
-        observerTasks.append(connectionTask)
-
         let usageTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
                 for try await stats in bridge.usageStats.asAsyncSequence() {
@@ -220,9 +211,9 @@ final class MonitorStore: ObservableObject {
         bridge.emitNativeEvent(event: UpdateConfigCommand(config: config))
     }
 
-    func addEndpoint() {
+    func addEndpoint(_ endpoint: EndpointConfig) {
         let next = PulseBarConfig(
-            endpoints: settings.endpoints + [EndpointConfig.defaultEndpoint(index: settings.endpoints.count)],
+            endpoints: settings.endpoints + [endpoint],
             idleThresholdSeconds: settings.idleThresholdSeconds,
             changeStabilityMillis: settings.changeStabilityMillis
         )
@@ -313,21 +304,31 @@ final class MonitorStore: ObservableObject {
     private func applyConfigUpdate(_ config: PulseBarConfig) {
         settings = config
         streamStore.updateEndpoints(streamEndpoints)
+        reconcileConnectionStateTasks(for: config.endpoints)
     }
 
-    private func applyConnectionStateFlows(_ flows: [String: any KotlinCoroutineSupport.KotlinTypedFlow<PulseBarConnectionState>]) {
-        for task in connectionStateTasks.values { task.cancel() }
-        connectionStateTasks.removeAll()
-        connectionStatesByEndpointID = [:]
-        connectedMediaEndpointIDs = []
+    private func reconcileConnectionStateTasks(for endpoints: [EndpointConfig]) {
+        let endpointIDs = Set(endpoints.map(\.id))
+        let removedEndpointIDs = connectionStateTasks.keys.filter { !endpointIDs.contains($0) }
+        for endpointId in removedEndpointIDs {
+            connectionStateTasks[endpointId]?.cancel()
+            connectionStateTasks.removeValue(forKey: endpointId)
+            connectionStatesByEndpointID.removeValue(forKey: endpointId)
+            connectedMediaEndpointIDs.remove(endpointId)
+            removeConnectionStore(endpointId: endpointId)
+        }
 
-        for (endpointId, flow) in flows {
-            connectionStateTasks[endpointId] = Task { @MainActor [weak self] in
+        for endpointId in endpointIDs where connectionStateTasks[endpointId] == nil {
+            connectionStateTasks[endpointId] = Task { @MainActor [weak self, bridge] in
                 do {
-                    for try await state in flow.asAsyncSequence() {
+                    for try await state in bridge.connectionState(endpointId: endpointId).asAsyncSequence() {
                         self?.applyConnectionStateUpdate(state)
                     }
-                } catch {}
+                } catch {
+                    self?.connectionStateTasks.removeValue(forKey: endpointId)
+                    self?.connectionStatesByEndpointID.removeValue(forKey: endpointId)
+                    self?.connectedMediaEndpointIDs.remove(endpointId)
+                }
             }
         }
     }
@@ -371,8 +372,7 @@ private extension PulseBarConfig {
     var streamEndpoints: [EndpointConfig] {
         endpoints.filter {
             $0.enabled &&
-                !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                !$0.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -387,8 +387,7 @@ extension EndpointConfig {
             name: name ?? "Endpoint \(index + 1)",
             enabled: enabled,
             url: "http://localhost:8900",
-            siteId: "",
-            workspaceId: "default",
+            deviceId: "pulse",
             apiKey: ""
         )
     }

@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
@@ -77,13 +78,18 @@ internal class DeviceV2Client(
         stopRequested = false
         scope.launch {
             mutex.withLock {
+                val config = configFlow.value
+                val configError = config.endpoint.validationError()
+                if (configError != null) {
+                    log.w { "device.v2.config.invalid endpointId=$endpointId reason=$configError" }
+                    return@withLock
+                }
                 log.d { "start ${this@DeviceV2Client::class.simpleName}" }
                 if (connectionJob?.isActive == true) return@withLock
                 reconnectAttempts = 0
                 connectionJob?.cancelAndJoin()
-                log.d { "connecting to endpoint ${this@DeviceV2Client.configFlow.value.endpoint.url}" }
-//                updateStats { it.copy(maxQueuedChunks = 30, chunkDurationMs = 1000) }
-                connectionJob = scope.launch { connect(configFlow.value, onReady) }
+                log.d { "connecting to endpoint ${config.endpoint.url}" }
+                connectionJob = scope.launch { connect(config, onReady) }
             }
         }
     }
@@ -134,10 +140,18 @@ internal class DeviceV2Client(
             log.d { "connecting ${config.endpoint.url}" }
 //            updateStats { it.connecting() }
             val result = runCatching { initConnection(config, onReady) }
-            val err = result.exceptionOrNull()?.takeIf { it !is CancellationException }
-            val reason = err?.let { "${it::class.simpleName}: ${it.message ?: "(no message)"}" }
-                ?: "socket closed"
-            if (err != null) log.w(err) { "device.v2.failed reason=$reason" }
+            val failure = result.exceptionOrNull()
+            val expectedClose = failure?.takeIf { it.isExpectedSocketCloseNoise() }
+            val err = failure?.takeIf { it !is CancellationException && !it.isExpectedSocketCloseNoise() }
+            val reason = when {
+                err != null -> err.reasonText()
+                expectedClose != null -> "socket closed: ${expectedClose.reasonText()}"
+                else -> "socket closed"
+            }
+            when {
+                err != null -> log.w(err) { "device.v2.failed reason=$reason" }
+                expectedClose != null -> log.d { "device.v2.closed reason=$reason" }
+            }
             if (!scope.isActive || stopRequested) {
                 log.d { "scope not active anymore" }
                 return
@@ -204,3 +218,26 @@ internal fun reconnectDelaySeconds(attempt: Int): Long {
     val schedule = longArrayOf(1, 2, 5, 10, 30, 60)
     return schedule[attempt.coerceIn(0, schedule.size - 1)]
 }
+
+private fun Throwable.isExpectedSocketCloseNoise(): Boolean {
+    var current: Throwable? = this
+    while (current != null) {
+        val name = current::class.simpleName.orEmpty()
+        if (current is ClosedReceiveChannelException || name == "ClosedReceiveChannelException") return true
+        current = current.cause
+    }
+    return false
+}
+
+private fun Throwable.reasonText(): String =
+    "${this::class.simpleName}: ${message ?: "(no message)"}"
+
+private fun PulseConfigItem.validationError(): String? =
+    endpoint.validationError()
+
+private fun io.github.kt.pulsebar.model.EndpointConfig.validationError(): String? =
+    when {
+        url.isBlank() -> "empty_url"
+        deviceId.isBlank() -> "empty_device_id"
+        else -> null
+    }

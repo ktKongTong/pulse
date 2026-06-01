@@ -5,7 +5,7 @@ import SwiftUI
 struct ConnectionPane: View {
     @EnvironmentObject private var monitor: MonitorStore
     @State private var selectedEndpointID: String?
-    @State private var editingEndpointID: String?
+    @State private var editingDraft: EndpointEditorDraft?
     @State private var deleteCandidateID: String?
 
     private var endpoints: [EndpointConfig] {
@@ -28,7 +28,7 @@ struct ConnectionPane: View {
             if let endpoint = selectedEndpoint {
                 ConnectionDetailRoute(
                     endpoint: endpoint,
-                    edit: { editingEndpointID = endpoint.id },
+                    edit: { editingDraft = EndpointEditorDraft(mode: .edit, endpoint: endpoint) },
                     delete: { deleteCandidateID = endpoint.id }
                 )
                 .environmentObject(monitor)
@@ -40,17 +40,17 @@ struct ConnectionPane: View {
         }
         .onAppear(perform: ensureSelection)
         .onChange(of: monitor.settings.endpoints.map(\.id)) { _, _ in ensureSelection() }
-        .sheet(
-            isPresented: Binding(
-                get: { editingEndpointID != nil },
-                set: { if !$0 { editingEndpointID = nil } }
-            )
-        ) {
-            if let editingEndpointID {
-                EndpointEditorSheet(endpointID: editingEndpointID)
-                    .environmentObject(monitor)
-                    .frame(width: 560, height: 620)
+        .sheet(item: $editingDraft) { draft in
+            EndpointEditorSheet(draft: draft) { endpoint in
+                switch draft.mode {
+                case .add:
+                    monitor.addEndpoint(endpoint)
+                case .edit:
+                    monitor.updateEndpoint(endpoint)
+                }
+                selectedEndpointID = endpoint.id
             }
+            .frame(width: 560, height: 620)
         }
         .alert(
             "Delete Connection?",
@@ -106,9 +106,10 @@ struct ConnectionPane: View {
     }
 
     private func addEndpoint() {
-        monitor.addEndpoint()
-        selectedEndpointID = monitor.settings.endpoints.last?.id
-        editingEndpointID = selectedEndpointID
+        editingDraft = EndpointEditorDraft(
+            mode: .add,
+            endpoint: EndpointConfig.defaultEndpoint(index: endpoints.count)
+        )
     }
 
     private func ensureSelection() {

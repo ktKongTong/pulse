@@ -106,6 +106,7 @@ final class StreamCaptureStore: ObservableObject {
     private var lastPublishedProgressSeconds: Double?
     private var lastPublishedMediaObservedAtMillis: Int64?
     private var currentMedia: Media?
+    private var currentStreamFormat: StreamFormat?
     private let worker: StreamBridge
     private var statsTask: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
@@ -376,6 +377,7 @@ final class StreamCaptureStore: ObservableObject {
         statusText = "Starting stream…"
         isCapturing = true
         meter = StreamCaptureMeter()
+        currentStreamFormat = streamFormat(for: source)
         pushMediaStateToBridge(captureRunning: true)
 
         runStreamingSession(endpointId: endpointId, source: source)
@@ -476,6 +478,7 @@ final class StreamCaptureStore: ObservableObject {
         session.cancel()
         pushMediaStateToBridge(captureRunning: false)
         isCapturing = false
+        currentStreamFormat = nil
         statusText = "Stopped"
         updateAggregatePublisherState()
     }
@@ -491,11 +494,21 @@ final class StreamCaptureStore: ObservableObject {
                 captureStatus: capture ? PulseStreamCaptureStatus.CAPTURING : PulseStreamCaptureStatus.IDLE,
                 reason: nil,
                 message: nil,
+                format: currentStreamFormat ?? streamFormat(for: selectedSource),
                 media: currentMedia,
                 observedAtMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
             )
         )
 
+    }
+
+    private func streamFormat(for source: StreamCaptureSource?) -> StreamFormat {
+        StreamFormat(
+            codec: "pcm16-wav",
+            sampleRate: Int32(service.streamSampleRate(for: source)),
+            channels: 2,
+            bitDepth: 16
+        )
     }
 
     private func mediaSignature(_ media: Media?) -> String {
@@ -533,7 +546,6 @@ final class StreamCaptureStore: ObservableObject {
                 id: endpoint.id,
                 name: endpoint.displayName,
                 endpointURL: endpoint.url,
-                workspaceId: endpoint.workspaceId,
                 statusText: publisherStats.statusText,
                 stats: publisherStats
             )

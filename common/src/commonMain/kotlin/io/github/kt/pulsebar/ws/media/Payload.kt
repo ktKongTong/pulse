@@ -101,7 +101,9 @@ internal data class DeviceV2StreamStoppedPayload(
 ): WSPayload
 
 
-internal fun deviceV2MediaHello(chunkDurationMs: Int) = DeviceV2MediaHelloPayload(
+internal const val DEVICE_V2_AUDIO_CHUNK_DURATION_MS: Int = 1000
+
+internal fun deviceV2MediaHello() = DeviceV2MediaHelloPayload(
     capabilities = DeviceV2MediaCapabilities(
         media = true,
         localPlayback = true,
@@ -111,7 +113,7 @@ internal fun deviceV2MediaHello(chunkDurationMs: Int) = DeviceV2MediaHelloPayloa
     ),
     audio = DeviceV2AudioCapabilities(
         codecs = listOf("pcm16-wav"),
-        chunkDurationMs = chunkDurationMs,
+        chunkDurationMs = DEVICE_V2_AUDIO_CHUNK_DURATION_MS,
     ),
     supportedProtocols = listOf(DEVICE_MEDIA_PROTOCOL_V1),
 )

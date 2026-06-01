@@ -4,9 +4,8 @@ import kotlinx.serialization.Serializable
 
 
 data class Endpoint(
-    val siteId: String,
+    val deviceId: String,
     val url: String,
-    val workspaceId: String,
     val apiKey: String,
 )
 
@@ -16,14 +15,12 @@ data class EndpointConfig(
     val name: String,
     val enabled: Boolean,
     val url: String,
-    val siteId: String,
-    val workspaceId: String,
+    val deviceId: String,
     val apiKey: String,
 )
 
 fun EndpointConfig.getEndpoint() = Endpoint(
-    siteId = siteId,
+    deviceId = deviceId,
     url = url,
     apiKey = apiKey,
-    workspaceId = workspaceId,
 )

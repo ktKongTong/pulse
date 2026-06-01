@@ -7,10 +7,9 @@ import platform.Foundation.NSFileManager
 import platform.Foundation.NSHomeDirectory
 import platform.Foundation.NSLog
 import platform.Foundation.NSProcessInfo
-import platform.Foundation.NSString
-import platform.Foundation.NSUTF8StringEncoding
-import platform.Foundation.create
-import platform.Foundation.writeToFile
+import okio.FileSystem
+import okio.Path.Companion.toPath
+import okio.buffer
 
 @OptIn(ExperimentalForeignApi::class)
 private val logFilePath: String by lazy {
@@ -66,14 +65,11 @@ internal actual fun platformLog(
     }
 }
 
-@OptIn(ExperimentalForeignApi::class)
 private fun appendToLogFile(line: String) {
-    val fileManager = NSFileManager.defaultManager
-    if (!fileManager.fileExistsAtPath(logFilePath)) {
-        fileManager.createFileAtPath(logFilePath, contents = null, attributes = null)
+    val sink = FileSystem.SYSTEM.appendingSink(logFilePath.toPath()).buffer()
+    try {
+        sink.writeUtf8(line)
+    } finally {
+        sink.close()
     }
-    val existing = NSString.create(contentsOfFile = logFilePath, encoding = NSUTF8StringEncoding, error = null) ?: ""
-    val updated = "$existing$line"
-    @Suppress("CAST_NEVER_SUCCEEDS")
-    (updated as NSString).writeToFile(logFilePath, atomically = true, encoding = NSUTF8StringEncoding, error = null)
 }

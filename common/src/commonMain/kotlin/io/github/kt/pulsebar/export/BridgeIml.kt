@@ -17,7 +17,6 @@ import io.github.kt.pulsebar.model.RuntimeState
 import io.github.kt.pulsebar.model.connection.ConnectionState
 import io.github.kt.pulsebar.model.stream.Media
 import io.github.kt.pulsebar.model.stream.PlaybackStatus
-import io.github.kt.pulsebar.model.stream.StreamFormat
 import io.github.kt.pulsebar.model.stream.StreamCaptureStatus
 import io.github.kt.pulsebar.model.stream.StreamPermission
 import io.github.kt.pulsebar.model.stream.StreamStopReason
@@ -29,10 +28,8 @@ import io.github.kt.pulsebar.store.database.PulseBarRoomProvider
 import io.github.kt.pulsebar.store.database.model.AppUsageOrder
 import io.github.kt.pulsebar.store.repository.AppFocusSpanRecord
 import io.github.kt.pulsebar.store.repository.UsageRepository
-import io.github.kt.pulsebar.utils.deviceV2ChunkBytesFor
 import io.github.kt.pulsebar.ws.DeviceV2Client
 import kotlin.time.Clock
-import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -98,7 +95,7 @@ class PulseBarBridge private constructor(
         todayUsageRangeFlow()
             .flatMapLatest { range ->
                 usageRepository
-                    .appUsageItemsBe·tween(
+                    .appUsageItemsBetween(
                         rangeStartMs = range.startMs,
                         rangeEndMs = range.endMs,
                         order = AppUsageOrder.FOCUS_TIME,
@@ -179,7 +176,6 @@ class PulseBarBridge private constructor(
             val endpointId = endpoint.id
             val item = PulseConfigItem(
                 endpoint = endpoint,
-                stream = config.stream,
                 commonConfig = config.commonConfig,
             )
             val existing = current[endpointId]
@@ -376,25 +372,12 @@ private fun todayUsageRangeFlow(): Flow<UsageRange> = flow {
 }
 
 private fun PulseConfig.toInitialMediaState(initialMedia: Media?): InitialMediaState {
-    val streamConfig = stream
     return InitialMediaState(
         streamState = StreamState(
             permission = StreamPermission.ALLOW,
             playbackStatus = initialMedia?.playbackStatus ?: PlaybackStatus.PAUSED,
             captureStatus = StreamCaptureStatus.IDLE,
-            streamFormat = StreamFormat(
-                codec = "pcm16-wav",
-                sampleRate = streamConfig.sampleRate,
-                channels = streamConfig.channels,
-                bitDepth = 16,
-            ),
         ),
         media = initialMedia,
-        chunkDuration = streamConfig.chunkDurationMs.milliseconds,
-        chunkBytes = deviceV2ChunkBytesFor(
-            chunkDurationMs = streamConfig.chunkDurationMs,
-            sampleRate = streamConfig.sampleRate,
-            channels = streamConfig.channels,
-        ),
     )
 }

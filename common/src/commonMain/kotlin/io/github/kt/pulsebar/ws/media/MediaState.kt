@@ -7,6 +7,7 @@ import io.github.kt.pulsebar.model.stream.PlaybackStatus
 import io.github.kt.pulsebar.model.stream.StreamCaptureStatus
 import io.github.kt.pulsebar.model.stream.StreamPermission
 import io.github.kt.pulsebar.model.stream.StreamRejectedReason
+import io.github.kt.pulsebar.utils.deviceV2ChunkBytesFor
 import io.github.kt.pulsebar.utils.nowInMillis
 import io.github.kt.pulsebar.ws.connection.WsConnectionState
 
@@ -35,9 +36,9 @@ data class MediaRuntimeState(
     val activeGeneration: Int? = null,
     val captureRequested: Boolean = false,
 
-    val sampleRate: Int = 48_000,
-    val channels: Int = 2,
-    val chunkDurationMs: Int = 500,
+    val sampleRate: Int = 0,
+    val channels: Int = 0,
+    val chunkDurationMs: Int = 0,
     val chunkBytes: Int = 0,
 
     val acceptedFrames: Long = 0L,
@@ -124,6 +125,16 @@ internal fun MediaRuntimeState.reduce(event: MediaRuntimeEvent): MediaRuntimeSta
             streamPermission = event.state.permission,
             playbackStatus = event.state.playbackStatus,
             captureStatus = event.state.captureStatus,
+            sampleRate = event.state.format?.sampleRate ?: sampleRate,
+            channels = event.state.format?.channels ?: channels,
+            chunkDurationMs = if (event.state.format != null) DEVICE_V2_AUDIO_CHUNK_DURATION_MS else chunkDurationMs,
+            chunkBytes = event.state.format?.let { format ->
+                deviceV2ChunkBytesFor(
+                    chunkDurationMs = DEVICE_V2_AUDIO_CHUNK_DURATION_MS,
+                    sampleRate = format.sampleRate,
+                    channels = format.channels,
+                )
+            } ?: chunkBytes,
         )
 
         is MediaRuntimeEvent.PlayingChanged -> copy(

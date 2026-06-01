@@ -74,6 +74,7 @@ room3 {
 tasks.withType<KotlinNativeCompile>().configureEach {
     if (name.startsWith("compileSwiftExport")) {
         compilerOptions.optIn.addAll(
+            "-Xexpect-actual-classes",
             "kotlin.time.ExperimentalTime",
             "kotlinx.coroutines.InternalCoroutinesApi",
         )

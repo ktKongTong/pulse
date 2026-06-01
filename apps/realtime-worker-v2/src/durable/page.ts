@@ -57,7 +57,7 @@ export class PageDO extends DurableObject<Env> {
   async revokeTab(sessionId: string, tabId: string) {
     const key = tabKey(sessionId, tabId);
     const socket = this.sockets.get(key);
-    if (socket) closeWith(socket, 4001, "invalid_session");
+    if (socket) closeWith(socket, 401, "invalid_session");
     if (this.tabs.delete(key)) await this.afterPageChanged();
   }
 

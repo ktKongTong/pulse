@@ -38,9 +38,11 @@ export class MediaDO extends MediaBase {
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected websocket", { status: 426 });
     const { client, server } = createAcceptedPair();
-    const deviceSessionId = new URL(request.url).searchParams.get("deviceSessionId");
+    const url = new URL(request.url);
+    const deviceId = url.searchParams.get("deviceId") ?? "owner";
+    const deviceSessionId = url.searchParams.get("deviceSessionId");
     if (deviceSessionId) {
-      server.serializeAttachment({ kind: "pending-device", deviceSessionId } satisfies PendingDeviceAttachment);
+      server.serializeAttachment({ kind: "pending-device", deviceId, deviceSessionId } satisfies PendingDeviceAttachment);
     }
     this.ctx.acceptWebSocket(server);
     return upgradeResponse(client);
@@ -108,13 +110,14 @@ export class MediaDO extends MediaBase {
   private async acceptDevice(socket: WebSocket, frame: DeviceMediaConnectionHelloFrame) {
     const pending = socketAttachment<PendingDeviceAttachment>(socket);
     const deviceSessionId = pending?.kind === "pending-device" ? pending.deviceSessionId : "";
-    console.log("[media-do] accept_device start", { deviceSessionId, frame });
-    if (!(await deviceStub(this.env).isDeviceSessionActive(deviceSessionId))) {
-      console.log("[media-do] accept_device invalid_session", { deviceSessionId });
+    const deviceId = pending?.kind === "pending-device" ? pending.deviceId : "owner";
+    console.log("[media-do] accept_device start", { deviceId, deviceSessionId, frame });
+    if (!(await deviceStub(this.env, deviceId).isDeviceSessionActive(deviceSessionId))) {
+      console.log("[media-do] accept_device invalid_session", { deviceId, deviceSessionId });
       return closeWith(socket, 4001, "invalid_session");
     }
     const attachment: DeviceAttachment = {
-      kind: "device", connectionId: crypto.randomUUID(), deviceId: "owner", deviceSessionId,
+      kind: "device", connectionId: crypto.randomUUID(), deviceId, deviceSessionId,
     };
     closeWith(this.deviceSocket, 4000, "connection_superseded");
     socket.serializeAttachment(attachment);
@@ -133,7 +136,7 @@ export class MediaDO extends MediaBase {
         capabilities: { streaming: this.state.device.capabilities.streaming },
       },
     });
-    console.log("[media-do] accept_device ok", { deviceSessionId });
+    console.log("[media-do] accept_device ok", { deviceId, deviceSessionId });
     this.broadcastState();
   }
 

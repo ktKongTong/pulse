@@ -18,6 +18,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -136,6 +137,10 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
 
                     is Frame.Close -> {
                         val reason = frame.readReason()
+                        logger(PulseLogCategory.StreamSession).e {
+                            "device common closed before hello_ack: " +
+                                    "code=${reason?.code} message=${reason?.message}"
+                        }
                         error(
                             "device common closed before hello_ack: " +
                                 "code=${reason?.code} message=${reason?.message}"
@@ -168,8 +173,13 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
                 listener(currentSession)
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
-                transition(WsConnectionEvent.Failed(error.message ?: "unknown error"))
-                logger(PulseLogCategory.StreamSession).w(error) { "ws.listen.failed url=${currentSession.call.request.url}" }
+                if (error is ClosedReceiveChannelException) {
+                    transition(WsConnectionEvent.Closed(error.message))
+                    logger(PulseLogCategory.StreamSession).d { "ws.listen.closed url=${currentSession.call.request.url}" }
+                } else {
+                    transition(WsConnectionEvent.Failed(error.message ?: "unknown error"))
+                    logger(PulseLogCategory.StreamSession).w(error) { "ws.listen.failed url=${currentSession.call.request.url}" }
+                }
             } finally {
                 if (currentSession.isActive) {
                     currentSession.close()

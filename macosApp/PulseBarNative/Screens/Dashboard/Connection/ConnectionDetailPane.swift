@@ -179,8 +179,7 @@ struct ConnectionDetailPane: View {
     }
 
     private var hasStreamConnectionFields: Bool {
-        !endpoint.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !endpoint.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !endpoint.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var lastProbeText: String {

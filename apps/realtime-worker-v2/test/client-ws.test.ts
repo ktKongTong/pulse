@@ -107,6 +107,24 @@ describe("realtime-worker-v2 client ws", () => {
     await tick();
   });
 
+  it("binds media ws to the same non-default device id as common ws", async () => {
+    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
+    const { claim, common } = await connectCommon(env as Env, "named-device-tab");
+    const device = await connectDevice(env as Env, "pulse");
+    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId, device.deviceId);
+    sendReadyStreamState(deviceMedia);
+    const clientMedia = await connectClientMedia(media, claim.sessionId, "named-device-tab");
+    expect(await nextMessage(clientMedia)).toMatchObject({
+      type: "state",
+      stream: { source: { state: "ready" } },
+    });
+    common.close();
+    clientMedia.close();
+    deviceMedia.close();
+    device.common.close();
+    await tick();
+  });
+
   it("returns disabled source after device rejects requested stream", async () => {
     const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
     const { claim, common } = await connectCommon(env as Env, "reject-tab");

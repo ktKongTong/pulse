@@ -38,6 +38,7 @@ export interface DeviceAttachment {
 
 export interface PendingDeviceAttachment {
   kind: "pending-device";
+  deviceId: string;
   deviceSessionId: string;
 }
 
