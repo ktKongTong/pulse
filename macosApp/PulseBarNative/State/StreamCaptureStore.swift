@@ -8,28 +8,98 @@ private typealias PulsePlaybackStatus = ExportedKotlinPackages.io.github.kt.puls
 private typealias PulseStreamCaptureStatus = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamCaptureStatus
 
 private final class StreamPcmForwarder: @unchecked Sendable {
+    private static let targetChunkDurationMillis = 500
+
     private let worker: StreamBridge
     private let queue = DispatchQueue(label: "io.github.kt.pulsebar.native.stream-pcm-forward")
-    private var chunks = 0
-    private var bytes = 0
+    private let anchorProgressMs: Int64
+    private let anchorObservedAtMillis: Int64
+    private let sampleRate: Int
+    private let channels: Int
+    private let bytesPerFrame: Int
+    private let targetChunkBytes: Int
+    private var inputChunks = 0
+    private var emittedChunks = 0
+    private var inputBytes = 0
+    private var emittedBytes = 0
+    private var forwardedFrames: Int64 = 0
+    private var pendingData = Data()
+    private var firstPcmStartAtMillis: Int64?
 
-    init(worker: StreamBridge) {
+    init(worker: StreamBridge, anchor: StreamMediaPositionAnchor, format: StreamFormat) {
         self.worker = worker
+        self.anchorProgressMs = anchor.progressMs
+        self.anchorObservedAtMillis = anchor.observedAtMillis
+        self.sampleRate = max(Int(format.sampleRate), 1)
+        self.channels = max(Int(format.channels), 1)
+        self.bytesPerFrame = max(Int(format.channels), 1) * 2
+        self.targetChunkBytes = max(
+            1,
+            max(Int(format.sampleRate), 1) * max(Int(format.channels), 1) * 2 * Self.targetChunkDurationMillis / 1_000
+        )
     }
 
     func enqueue(_ data: Data) {
-        queue.async { [worker] in
-            self.chunks += 1
-            self.bytes += data.count
-            worker.emitNativeEvent(event: NativeStreamPcmChunk(chunkBase64: data.base64EncodedString()))
-            if self.chunks <= 3 || self.chunks % 20 == 0 {
-                PulseNativeLog.debug(
-                    .streamSession,
-                    "capture pcm.forward chunks=\(self.chunks) bytes=\(self.bytes) lastBytes=\(data.count)"
+        queue.async { [worker, anchorProgressMs, anchorObservedAtMillis, sampleRate, channels] in
+            self.inputChunks += 1
+            self.inputBytes += data.count
+            self.pendingData.append(data)
+            while self.pendingData.count >= self.targetChunkBytes {
+                let chunk = self.pendingData.prefix(self.targetChunkBytes)
+                self.pendingData.removeFirst(self.targetChunkBytes)
+                self.emitChunk(
+                    Data(chunk),
+                    worker: worker,
+                    anchorProgressMs: anchorProgressMs,
+                    anchorObservedAtMillis: anchorObservedAtMillis,
+                    sampleRate: sampleRate,
+                    channels: channels
                 )
             }
         }
     }
+
+    private func emitChunk(
+        _ data: Data,
+        worker: StreamBridge,
+        anchorProgressMs: Int64,
+        anchorObservedAtMillis: Int64,
+        sampleRate: Int,
+        channels: Int
+    ) {
+            emittedChunks += 1
+            emittedBytes += data.count
+            let frames = Int64(data.count / bytesPerFrame)
+            let nowMillis = Int64(Date().timeIntervalSince1970 * 1000.0)
+            let dataDurationMs = frames * 1_000 / Int64(sampleRate)
+            if firstPcmStartAtMillis == nil {
+                firstPcmStartAtMillis = nowMillis - dataDurationMs
+            }
+            let firstPcmStartAtMillis = firstPcmStartAtMillis ?? nowMillis
+            let streamOffsetMs = forwardedFrames * 1_000 / Int64(sampleRate)
+            let mediaStartPositionMs = max(
+                0,
+                anchorProgressMs + (firstPcmStartAtMillis - anchorObservedAtMillis) + streamOffsetMs
+            )
+            forwardedFrames += frames
+            worker.emitNativeEvent(
+                event: NativeStreamPcmChunk(
+                    chunkBase64: data.base64EncodedString(),
+                    mediaStartPositionMs: mediaStartPositionMs
+                )
+            )
+            if emittedChunks <= 3 || emittedChunks % 20 == 0 {
+                PulseNativeLog.debug(
+                    .streamSession,
+                    "capture pcm.forward bytes=\(self.emittedBytes) inputBytes=\(self.inputBytes) lastBytes=\(data.count) mediaStartPositionMs=\(mediaStartPositionMs)"
+                )
+            }
+    }
+}
+
+private struct StreamMediaPositionAnchor {
+    let progressMs: Int64
+    let observedAtMillis: Int64
 }
 
 /// `@MainActor ObservableObject` store for the Stream screen.
@@ -111,11 +181,13 @@ final class StreamCaptureStore: ObservableObject {
     private var statsTask: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
     private var pcmForwarder: StreamPcmForwarder?
+    private let currentMediaSnapshot: @Sendable () async -> Media?
 
     // MARK: - Lifecycle
 
-    init(bridge: StreamBridge) {
+    init(bridge: StreamBridge, currentMediaSnapshot: @escaping @Sendable () async -> Media?) {
         self.worker = bridge
+        self.currentMediaSnapshot = currentMediaSnapshot
         if UserDefaults.standard.object(forKey: Self.mediaStreamAllowedKey) == nil {
             UserDefaults.standard.set(true, forKey: Self.mediaStreamAllowedKey)
         }
@@ -149,7 +221,9 @@ final class StreamCaptureStore: ObservableObject {
     private func handleHostCommand(_ command: any ServerCommandEvent) {
         if let command = command as? NativeRequestedCommandEvent {
             log("server requested capture start endpoint=\(command.endpointId) stream=\(command.streamId) generation=\(command.generation)")
-            startServerDrivenCapture(endpointId: command.endpointId)
+            Task { @MainActor [weak self] in
+                await self?.startServerDrivenCapture(endpointId: command.endpointId)
+            }
         } else if let command = command as? NativeStoppedCommandEvent {
             log("server requested capture stop endpoint=\(command.endpointId) stream=\(command.streamId ?? "nil") reason=\(String(describing: command.reason))")
             stopCaptureSession()
@@ -165,7 +239,10 @@ final class StreamCaptureStore: ObservableObject {
         updateAggregatePublisherState()
         if snapshot.captureRequested && !previouslyRequested {
             log("server requested capture start")
-            startServerDrivenCapture(endpointId: endpoints.first?.id ?? "")
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.startServerDrivenCapture(endpointId: self.endpoints.first?.id ?? "")
+            }
         } else if !snapshot.captureRequested && previouslyRequested && isCapturing {
             log("server requested capture stop")
             stopCaptureSession()
@@ -346,7 +423,7 @@ final class StreamCaptureStore: ObservableObject {
     /// (the server has issued `stream.start`). Picks the preferred capture
     /// source, kicks off CoreAudio via the session, and forwards PCM chunks
     /// to the bridge.
-    private func startServerDrivenCapture(endpointId: String) {
+    private func startServerDrivenCapture(endpointId: String) async {
         guard !isCapturing else { return }
         guard !audioCapturePermissionRequestPending else {
             log("server requested capture while startup audio permission request is pending")
@@ -365,14 +442,36 @@ final class StreamCaptureStore: ObservableObject {
             return
         }
 
+        guard let anchor = await refreshMediaPositionAnchor() else {
+            log("server started stream but media position unavailable")
+            emitMediaStreamStopped(reason: .NO_PLAYABLE_MEDIA)
+            return
+        }
         let permissionStatus = service.audioCapturePermissionStatus()
         audioCapturePermissionStatus = permissionStatus
         log("server capture permission status=\(permissionStatus.rawValue)")
 
-        beginServerDrivenCapture(endpointId: endpointId, source: source)
+        beginServerDrivenCapture(endpointId: endpointId, source: source, anchor: anchor)
     }
 
-    private func beginServerDrivenCapture(endpointId: String, source: StreamCaptureSource) {
+    private func refreshMediaPositionAnchor() async -> StreamMediaPositionAnchor? {
+        let observedAtMillis = nowMillis()
+        guard let snapshot = await currentMediaSnapshot(), snapshot.isPlaying else {
+            return nil
+        }
+        currentMedia = snapshot
+        lastPublishedMediaSignature = mediaSignature(snapshot)
+        lastPublishedProgressSeconds = snapshot.progressSeconds
+        lastPublishedMediaObservedAtMillis = observedAtMillis
+        mediaPlaybackStatus = .playing
+        pushMediaStateToBridge()
+        return StreamMediaPositionAnchor(
+            progressMs: Int64((snapshot.progressSeconds * 1_000.0).rounded()),
+            observedAtMillis: observedAtMillis
+        )
+    }
+
+    private func beginServerDrivenCapture(endpointId: String, source: StreamCaptureSource, anchor: StreamMediaPositionAnchor) {
         errorMessage = nil
         statusText = "Starting stream…"
         isCapturing = true
@@ -380,15 +479,15 @@ final class StreamCaptureStore: ObservableObject {
         currentStreamFormat = streamFormat(for: source)
         pushMediaStateToBridge(captureRunning: true)
 
-        runStreamingSession(endpointId: endpointId, source: source)
+        runStreamingSession(endpointId: endpointId, source: source, anchor: anchor)
     }
 
 
-    private func runStreamingSession(endpointId: String, source: StreamCaptureSource, isManual: Bool = false) {
+    private func runStreamingSession(endpointId: String, source: StreamCaptureSource, anchor: StreamMediaPositionAnchor, isManual: Bool = false) {
         if isManual {
             log("audio permission preflight begin")
         }
-        let forwarder = StreamPcmForwarder(worker: worker)
+        let forwarder = StreamPcmForwarder(worker: worker, anchor: anchor, format: currentStreamFormat ?? streamFormat(for: source))
         pcmForwarder = forwarder
         session.runStreaming(
             source: source,

@@ -13,6 +13,7 @@ import io.github.kt.pulsebar.utils.deviceV2BytesPerFrame
 import io.github.kt.pulsebar.utils.deviceV2ChunkBytesFor
 import io.github.kt.pulsebar.utils.packPcm16
 import io.github.kt.pulsebar.utils.nowInIso8601
+import io.github.kt.pulsebar.utils.nowInMillis
 import io.github.kt.pulsebar.model.connection.ServerCommandType
 import io.github.kt.pulsebar.model.connection.ServerStreamCommand
 import io.github.kt.pulsebar.model.getEndpoint
@@ -30,7 +31,6 @@ import io.ktor.client.HttpClient
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readReason
 import io.ktor.websocket.readText
-import kotlin.collections.plus
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +55,43 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 
+private class PcmSegmentBuffer {
+    private val segments = ArrayDeque<ByteArray>()
+    var size: Int = 0
+        private set
+
+    fun isEmpty(): Boolean = size == 0
+
+    fun append(bytes: ByteArray) {
+        if (bytes.isEmpty()) return
+        segments.addLast(bytes)
+        size += bytes.size
+    }
+
+    fun take(byteCount: Int): ByteArray {
+        require(byteCount <= size) { "requested $byteCount bytes from $size-byte PCM buffer" }
+        val out = ByteArray(byteCount)
+        var copied = 0
+        while (copied < byteCount) {
+            val segment = segments.removeFirst()
+            val remaining = byteCount - copied
+            val take = minOf(segment.size, remaining)
+            segment.copyInto(out, destinationOffset = copied, startIndex = 0, endIndex = take)
+            copied += take
+            size -= take
+            if (take < segment.size) {
+                segments.addFirst(segment.copyOfRange(take, segment.size))
+            }
+        }
+        return out
+    }
+
+    fun clear() {
+        segments.clear()
+        size = 0
+    }
+}
+
 internal class MediaWS(
     http: HttpClient,
     scope: CoroutineScope,
@@ -62,7 +99,8 @@ internal class MediaWS(
     private val endpointId: String,
     private val hostCommandSink: (ServerCommandEvent) -> Unit,
 ) {
-    internal var pcmBuffer = ByteArray(0)
+    private val pcmBuffer = PcmSegmentBuffer()
+    private var pcmBufferStartMediaPositionMs: Long? = null
     internal val mediaOutbound = Channel<WSPayload>(capacity = 64)
     internal var activeStream: DeviceV2ActiveStream? = null
     internal var wsManager: WSManager = WSManager(http, scope)
@@ -114,6 +152,7 @@ internal class MediaWS(
     }
 
     internal suspend fun connect(deviceSessionId: String, config: PulseConfigItem, onReady: (suspend () -> Unit)? = null, timeout: Duration = 10.seconds) {
+        resetConnection("connect")
         wsManager.connect(
             WSConfig(
                 config.endpoint.getEndpoint().getMediaWSUrl(deviceSessionId),
@@ -121,9 +160,17 @@ internal class MediaWS(
                 handShakeTimeout = timeout,
             )
         ) { deviceV2MediaHello() }
+        transitionState(MediaRuntimeEvent.HelloAccepted(deviceSessionId))
         onReady?.invoke()
         sendCurrentStateSnapshot()
         wsManager.listen { listen() }
+    }
+
+    internal fun resetConnection(reason: String) {
+        wsManager.reset(reason)
+        pcmBuffer.clear()
+        pcmBufferStartMediaPositionMs = null
+        transitionState(MediaRuntimeEvent.RuntimeReset(reason))
     }
 
     internal fun updateState(tran: (stats: MediaRuntimeState) -> MediaRuntimeState) {
@@ -155,7 +202,8 @@ internal class MediaWS(
     private fun stopStream(reason: StreamStopReason) {
         val stream = activeStream ?: return
         activeStream = null
-        pcmBuffer = ByteArray(0)
+        pcmBuffer.clear()
+        pcmBufferStartMediaPositionMs = null
         updateState { it.copy(captureRequested = false) }
         log.i {
             "media.stream.stopped.local endpointId=$endpointId streamId=${stream.streamId} " +
@@ -170,6 +218,15 @@ internal class MediaWS(
             )
         )
         transitionState(MediaRuntimeEvent.StreamStopped(reason))
+        hostCommandSink(
+            NativeStoppedCommandEvent(
+                endpointId = endpointId,
+                commandId = "local-${nowInMillis()}",
+                streamId = stream.streamId,
+                generation = stream.generation,
+                reason = reason,
+            )
+        )
     }
 
     internal suspend fun sendFirstFrame(frame: Frame) {
@@ -216,11 +273,11 @@ internal class MediaWS(
                 mediaStateFlow.value.pcmChannel.receiveAsFlow().collect { pcm ->
                     val mediaState = mediaStateFlow.value
                     pcmAcceptedCount += 1L
-                    pcmAcceptedBytes += pcm.size
+                    pcmAcceptedBytes += pcm.bytes.size
                     if (pcmAcceptedCount <= 3L || pcmAcceptedCount % 20L == 0L) {
                         log.i {
                             "media.pcm.accepted endpointId=$endpointId count=$pcmAcceptedCount " +
-                                "bytes=$pcmAcceptedBytes lastBytes=${pcm.size}"
+                                "bytes=$pcmAcceptedBytes lastBytes=${pcm.bytes.size} mediaStartPositionMs=${pcm.mediaStartPositionMs}"
                         }
                     }
 
@@ -228,22 +285,39 @@ internal class MediaWS(
                     val bytesPerFrame = deviceV2BytesPerFrame(channels)
                     val sampleRate = mediaState.streamState.streamFormat?.sampleRate ?: 44_100
                     transitionState(MediaRuntimeEvent.PcmAccepted(
-                        pcm.size,
-                        (pcm.size / bytesPerFrame),
+                        pcm.bytes.size,
+                        (pcm.bytes.size / bytesPerFrame),
                     ))
                     val chunkBytes = deviceV2ChunkBytesFor(
                         mediaState.chunkDuration.inWholeMilliseconds.toInt(),
                         sampleRate,
                         channels,
                     )
+                    val expectedPosition = pcmBufferStartMediaPositionMs?.let { start ->
+                        start + ((pcmBuffer.size / bytesPerFrame).toLong() * 1_000L / sampleRate.toLong())
+                    }
+                    if (expectedPosition != null && kotlin.math.abs(expectedPosition - pcm.mediaStartPositionMs) > 100L) {
+                        log.w {
+                            "media.pcm.timeline.discontinuity endpointId=$endpointId expectedMediaStartPositionMs=$expectedPosition " +
+                                "actualMediaStartPositionMs=${pcm.mediaStartPositionMs} bufferedBytes=${pcmBuffer.size}"
+                        }
+                        pcmBuffer.clear()
+                        pcmBufferStartMediaPositionMs = null
+                    }
+                    if (pcmBuffer.isEmpty()) {
+                        pcmBufferStartMediaPositionMs = pcm.mediaStartPositionMs
+                    }
                     // 本地 buffer / 统一 buffer？
                     // 每个 endpoint 单独 buffer
-                    pcmBuffer += pcm
+                    pcmBuffer.append(pcm.bytes)
                     while (pcmBuffer.size >= chunkBytes) {
-                        val chunk = pcmBuffer.copyOfRange(0, chunkBytes)
-                        // TODO 低效 copy
-                        pcmBuffer = pcmBuffer.copyOfRange(chunkBytes, pcmBuffer.size)
-                        sendChunk(packPcm16(chunk, sampleRate, channels))
+                        val chunk = pcmBuffer.take(chunkBytes)
+                        val mediaStartPositionMs = pcmBufferStartMediaPositionMs ?: pcm.mediaStartPositionMs
+                        pcmBufferStartMediaPositionMs = mediaStartPositionMs + mediaState.chunkDuration.inWholeMilliseconds
+                        sendChunk(packPcm16(chunk, sampleRate, channels), mediaStartPositionMs)
+                    }
+                    if (pcmBuffer.isEmpty()) {
+                        pcmBufferStartMediaPositionMs = null
                     }
                     updateState { it.copy(bufferedFrames = (pcmBuffer.size / bytesPerFrame.toLong())) }
                 }
@@ -259,24 +333,25 @@ internal class MediaWS(
         }
     }
 
-    suspend fun sendChunk(bytes: ByteArray) {
+    suspend fun sendChunk(bytes: ByteArray, mediaStartPositionMs: Long) {
         val stream = activeStream ?: return
         val seq = stream.nextSeq
         activeStream = stream.copy(nextSeq = seq + 1)
-        wsManager.send(
-            DeviceV2AudioChunkPayload(
+        wsManager.sendBinaryPair(
+            payload = DeviceV2AudioChunkPayload(
                 streamId = stream.streamId,
                 generation = stream.generation,
                 seq = seq,
                 durationMs = mediaStateFlow.value.chunkDuration.inWholeMilliseconds.toInt(),
                 byteLength = bytes.size,
-            )
+                mediaStartPositionMs = mediaStartPositionMs,
+            ),
+            bytes = bytes,
         )
-        wsManager.send(bytes)
         if (seq < 3L || seq % 20L == 0L) {
             log.i {
                 "media.audio.chunk.sent endpointId=$endpointId streamId=${stream.streamId} " +
-                    "generation=${stream.generation} seq=$seq bytes=${bytes.size}"
+                    "generation=${stream.generation} seq=$seq bytes=${bytes.size} mediaStartPositionMs=$mediaStartPositionMs"
             }
         }
         transitionState(MediaRuntimeEvent.ChunkSent(seq = seq, bytes=bytes.size))
@@ -364,7 +439,8 @@ internal class MediaWS(
     suspend fun handleStreamStop(commandId: String) {
         val stream = activeStream ?: return
         activeStream = null
-        pcmBuffer = ByteArray(0)
+        pcmBuffer.clear()
+        pcmBufferStartMediaPositionMs = null
         wsManager.send(
             DeviceV2StoppedAckPayload(
                 commandId = commandId,

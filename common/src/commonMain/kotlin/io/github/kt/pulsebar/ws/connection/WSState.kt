@@ -35,6 +35,7 @@ enum class WsPhase {
 }
 
 internal sealed interface WsConnectionEvent {
+    data class Reset(val reason: String) : WsConnectionEvent
     data class Connecting(val url: String) : WsConnectionEvent
     data object Opened : WsConnectionEvent
     data object HelloSent : WsConnectionEvent
@@ -48,6 +49,8 @@ internal sealed interface WsConnectionEvent {
 
 internal fun WsConnectionState.reduce(event: WsConnectionEvent): WsConnectionState =
     when (event) {
+        is WsConnectionEvent.Reset -> WsConnectionState()
+
         is WsConnectionEvent.Connecting -> copy(
             phase = WsPhase.Connecting,
             url = event.url,
@@ -118,45 +121,8 @@ enum class ConnectionStatus {
     Connecting,
     Connected,
     Reconnecting,
+    Offline,
     Closing,
     Closed,
     Failed,
-}
-
-internal fun deriveDevicePhase(
-    common: CommonWSState,
-    media: MediaWSState,
-): ConnectionStatus {
-    val commonPhase = common.connection.phase
-    val mediaPhase = media.connection.phase
-
-    return when {
-        commonPhase == WsPhase.Failed || mediaPhase == WsPhase.Failed ->
-            ConnectionStatus.Failed
-
-        commonPhase == WsPhase.HelloAccepted &&
-                mediaPhase == WsPhase.HelloAccepted ->
-            ConnectionStatus.Connected
-
-        commonPhase == WsPhase.Reconnecting ||
-                mediaPhase == WsPhase.Reconnecting ->
-            ConnectionStatus.Reconnecting
-
-        commonPhase == WsPhase.Closing ||
-                mediaPhase == WsPhase.Closing ->
-            ConnectionStatus.Closing
-
-        commonPhase == WsPhase.Closed &&
-                mediaPhase == WsPhase.Closed ->
-            ConnectionStatus.Closed
-
-        commonPhase == WsPhase.Connecting ||
-                commonPhase == WsPhase.Open ||
-                mediaPhase == WsPhase.Connecting ||
-                mediaPhase == WsPhase.Open ->
-            ConnectionStatus.Connecting
-
-        else ->
-            ConnectionStatus.Idle
-    }
 }

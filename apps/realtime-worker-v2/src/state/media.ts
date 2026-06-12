@@ -68,6 +68,7 @@ export interface AudioChunkMeta {
   sentAt: string;
   durationMs: number;
   byteLength: number;
+  mediaStartPositionMs: number;
   codec: StreamCodec;
 }
 

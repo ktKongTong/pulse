@@ -16,8 +16,40 @@ let wavStreamKey: string | null = null;
 let wavToken = 0;
 let wavChain: Promise<void> = Promise.resolve();
 let wavSources: AudioBufferSourceNode[] = [];
+let wavScheduledSegments: WavScheduledSegment[] = [];
+let progressTimer: number | null = null;
+let progressSnapshot: StreamPlaybackProgress | null = null;
+const progressListeners = new Set<() => void>();
 
 const WAV_INITIAL_BUFFER_SECONDS = 2;
+
+export type StreamPlaybackProgress = {
+  streamKey: string;
+  streamId: string;
+  generation: number;
+  seq: number;
+  progressMs: number;
+  durationMs: number;
+  audioStartTime: number;
+  audioEndTime: number;
+};
+
+export type MediaProgressAnchor = {
+  progressMs: number;
+  updatedAt?: string;
+  playbackState: "playing" | "paused";
+};
+
+type WavScheduledSegment = {
+  streamKey: string;
+  streamId: string;
+  generation: number;
+  seq: number;
+  mediaStartPositionMs: number;
+  durationMs: number;
+  audioStartTime: number;
+  audioEndTime: number;
+};
 
 export function unlockAudioStream() {
   if (typeof window === "undefined") return;
@@ -72,10 +104,50 @@ function pushWavChunk(chunk: ClientAudioChunk) {
         wavNextStart > context.currentTime
           ? wavNextStart
           : context.currentTime + WAV_INITIAL_BUFFER_SECONDS;
-      source.start(wavNextStart);
+      const audioStartTime = wavNextStart;
+      const audioEndTime = audioStartTime + buffer.duration;
+      wavScheduledSegments.push({
+        streamKey,
+        streamId: chunk.streamId,
+        generation: chunk.generation,
+        seq: chunk.seq,
+        mediaStartPositionMs: chunk.mediaStartPositionMs,
+        durationMs: chunk.durationMs,
+        audioStartTime,
+        audioEndTime,
+      });
+      source.start(audioStartTime);
       wavNextStart += buffer.duration;
+      startProgressTimer();
     })
     .catch(() => {});
+}
+
+export function getStreamPlaybackProgress(): StreamPlaybackProgress | null {
+  return progressSnapshot;
+}
+
+export function subscribeStreamPlaybackProgress(listener: () => void) {
+  progressListeners.add(listener);
+  startProgressTimer();
+  return () => {
+    progressListeners.delete(listener);
+    stopProgressTimerIfIdle();
+  };
+}
+
+export function reconcileStreamPlaybackProgress(media: MediaProgressAnchor | null) {
+  if (!media || media.playbackState !== "playing") {
+    clearPlaybackProgress();
+    return;
+  }
+  const current = getStreamPlaybackProgress();
+  if (!current) return;
+  const serverProgressMs = resolveMediaAnchorProgressMs(media);
+  if (serverProgressMs === null) return;
+  if (Math.abs(serverProgressMs - current.progressMs) > 2_000) {
+    clearPlaybackProgress();
+  }
 }
 
 function decodePcm16WavChunk(context: AudioContext, bytes: ArrayBuffer): AudioBuffer {
@@ -204,6 +276,8 @@ function resetWavStream() {
   wavStreamKey = null;
   wavNextStart = 0;
   wavToken += 1;
+  wavScheduledSegments = [];
+  publishProgress(null);
   for (const source of wavSources) {
     try {
       source.stop();
@@ -213,4 +287,82 @@ function resetWavStream() {
   }
   wavSources = [];
   wavChain = Promise.resolve();
+  stopProgressTimerIfIdle();
+}
+
+function clearPlaybackProgress() {
+  wavScheduledSegments = [];
+  publishProgress(null);
+  stopProgressTimerIfIdle();
+}
+
+function startProgressTimer() {
+  if (progressTimer !== null || typeof window === "undefined") return;
+  updateProgressSnapshot();
+  progressTimer = window.setInterval(() => {
+    updateProgressSnapshot();
+  }, 250);
+}
+
+function stopProgressTimerIfIdle() {
+  if (progressTimer === null || progressListeners.size > 0 || wavScheduledSegments.length > 0) {
+    return;
+  }
+  window.clearInterval(progressTimer);
+  progressTimer = null;
+}
+
+function updateProgressSnapshot() {
+  const context = wavContext;
+  if (!context) {
+    publishProgress(null);
+    return;
+  }
+  const now = context.currentTime;
+  wavScheduledSegments = wavScheduledSegments.filter(
+    (segment) => segment.audioEndTime > now - 0.5
+  );
+  const active =
+    wavScheduledSegments.find(
+      (segment) => segment.audioStartTime <= now && segment.audioEndTime >= now
+    ) ?? null;
+  if (!active) {
+    if (wavScheduledSegments.length === 0) publishProgress(null);
+    stopProgressTimerIfIdle();
+    return;
+  }
+  publishProgress({
+    streamKey: active.streamKey,
+    streamId: active.streamId,
+    generation: active.generation,
+    seq: active.seq,
+    progressMs:
+      active.mediaStartPositionMs +
+      Math.max(0, now - active.audioStartTime) * 1_000,
+    durationMs: active.durationMs,
+    audioStartTime: active.audioStartTime,
+    audioEndTime: active.audioEndTime,
+  });
+}
+
+function publishProgress(next: StreamPlaybackProgress | null) {
+  const previous = progressSnapshot;
+  progressSnapshot = next;
+  if (
+    previous?.streamKey === next?.streamKey &&
+    previous?.seq === next?.seq &&
+    Math.abs((previous?.progressMs ?? 0) - (next?.progressMs ?? 0)) < 100
+  ) {
+    return;
+  }
+  for (const listener of progressListeners) listener();
+}
+
+function resolveMediaAnchorProgressMs(media: MediaProgressAnchor) {
+  const baseline = media.progressMs;
+  if (!Number.isFinite(baseline)) return null;
+  if (media.playbackState !== "playing") return baseline;
+  const updatedAtMs = Date.parse(media.updatedAt ?? "");
+  if (!Number.isFinite(updatedAtMs)) return baseline;
+  return baseline + Math.max(0, Date.now() - updatedAtMs);
 }

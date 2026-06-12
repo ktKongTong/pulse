@@ -106,6 +106,7 @@ swiftc \
   -framework AppKit \
   -framework AudioToolbox \
   -framework CoreAudio \
+  -framework Network \
   -framework SwiftUI \
   -framework Combine \
   -Xlinker -rpath \

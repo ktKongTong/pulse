@@ -66,7 +66,8 @@ type DeviceMediaConnection = {
 
 - device media WS `hello` 被接受后设置。
 - `deviceSessionId` 必须由 device common WS 签发且仍 active。
-- device media WS close/error 后清空 `device` 和 `pendingCommand`，并广播新的 media state。
+- device media WS close/error 后清空 `device` 和 `pendingCommand`，将已有 `deviceStreamState` / `currentMedia` 的 playback 归一为 `paused`，并广播新的 media state。
+- device common WS heartbeat lease 过期后，server 主动关闭 common WS，并按同一 `deviceSessionId` 撤销 media WS；media state 归一规则与 media WS close/error 相同。
 - 同一时间只保留一个 active device media WS；新 device media WS 会覆盖当前 socket。
 
 ## Device Stream State

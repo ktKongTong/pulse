@@ -9,6 +9,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +30,7 @@ internal class CommonWS(
     http: HttpClient,
     scope: CoroutineScope
 ) {
+    private val heartbeatInterval = 60.seconds
     internal val presenceOutbound = Channel<DeviceV2PresencePayload>(capacity = Channel.CONFLATED)
     internal var wsManager: WSManager = WSManager(http, scope)
     private val _state = MutableStateFlow(CommonRuntimeState())
@@ -79,6 +81,14 @@ internal class CommonWS(
                             transitionState(CommonRuntimeEvent.PresenceSent(it.seq))
                         }
                 }
+                val heartbeatJob = launch {
+                    while (wsManager.session.isActive) {
+                        delay(heartbeatInterval)
+                        if (wsManager.session.isActive) {
+                            wsManager.send(DeviceV2PresenceHeartbeatPayload())
+                        }
+                    }
+                }
                 wsManager.incomingFlow
 //                    .onEach { frame ->
 //                        if (frame is Frame.Close) {
@@ -90,6 +100,7 @@ internal class CommonWS(
 //                    }
                     .onCompletion {
                         outboundJob.cancel()
+                        heartbeatJob.cancel()
                         // log.w { "device.v2.common.inbound.end" }
                     }
                     .collect()

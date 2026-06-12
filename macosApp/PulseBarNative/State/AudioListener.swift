@@ -103,6 +103,25 @@ final class NowPlayingEventSource: @unchecked Sendable {
         }
     }
 
+    func snapshot() async -> Media? {
+        guard loadMediaRemote(),
+              let getNowPlayingInfo,
+              let getNowPlayingApplicationIsPlaying else {
+            return Self.readPlayerFallbackSnapshot()
+        }
+        return await withCheckedContinuation { continuation in
+            let queue = DispatchQueue.main
+            getNowPlayingApplicationIsPlaying(queue) { isPlaying in
+                getNowPlayingInfo(queue) { [weak self] info in
+                    let snapshot = Self.makeSnapshot(info: info, isPlaying: isPlaying)
+                        ?? Self.readPlayerFallbackSnapshot()
+                    self?.onChange?(snapshot)
+                    continuation.resume(returning: snapshot)
+                }
+            }
+        }
+    }
+
     private static func makeSnapshot(info: CFDictionary?, isPlaying: Bool) -> Media? {
         guard let raw = info as? [String: Any], !raw.isEmpty else {
             return nil

@@ -13,6 +13,8 @@ import io.github.kt.pulsebar.ws.connection.WsConnectionState
 
 
 internal sealed interface MediaRuntimeEvent {
+    data class RuntimeReset(val reason: String) : MediaRuntimeEvent
+    data class HelloAccepted(val deviceSessionId: String) : MediaRuntimeEvent
     data class StreamRequested(val streamId: String, val generation: Int) : MediaRuntimeEvent
     data class StreamRejected(val reason: StreamRejectedReason) : MediaRuntimeEvent
     data class StreamStopped(val reason: StreamStopReason) : MediaRuntimeEvent
@@ -80,6 +82,12 @@ data class MediaWSState(
 
 internal fun MediaRuntimeState.reduce(event: MediaRuntimeEvent): MediaRuntimeState =
     when (event) {
+        is MediaRuntimeEvent.RuntimeReset -> MediaRuntimeState()
+
+        is MediaRuntimeEvent.HelloAccepted -> copy(
+            deviceSessionId = event.deviceSessionId,
+        )
+
         is MediaRuntimeEvent.StreamRequested -> copy(
             activeStreamId = event.streamId,
             activeGeneration = event.generation,

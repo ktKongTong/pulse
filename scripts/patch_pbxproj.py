@@ -23,6 +23,11 @@ SOURCE_ROOT = MACOS / "PulseBarNative"
 def stable_id(key: str) -> str:
     return hashlib.sha1(key.encode()).hexdigest().upper()[:24]
 
+def quote_pbx_string(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_./-]+", value):
+        return value
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
 def collect_swift(path: Path) -> list[Path]:
     result = []
     for child in sorted(path.rglob("*.swift"), key=lambda p: p.name.lower()):
@@ -84,7 +89,7 @@ def main():
         lines = ["/* Begin PBXFileReference section */"]
         for f in sorted(current_files, key=lambda p: p.name.lower()):
             rid = file_ref_id[f]
-            lines.append(f"\t\t{rid} /* {f.name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {f.name}; sourceTree = \"<group>\"; }};")
+            lines.append(f"\t\t{rid} /* {f.name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {quote_pbx_string(f.name)}; sourceTree = \"<group>\"; }};")
         lines.append(f"\t\t{entitlements_id} /* PulseBarNative.entitlements */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PulseBarNative.entitlements; sourceTree = \"<group>\"; }};")
         lines.append(f"\t\t{app_ref_id} /* PulseBarNative.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseBarNative.app; sourceTree = BUILT_PRODUCTS_DIR; }};")
         lines.append("/* End PBXFileReference section */")

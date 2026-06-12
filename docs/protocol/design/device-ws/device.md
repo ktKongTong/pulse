@@ -154,6 +154,13 @@ type PresenceHeartbeatFrame = {
 };
 ```
 
+规则：
+
+- device common WS 每 60 秒发送一次 heartbeat。
+- server 使用 common WS heartbeat 作为整个 device session 的共享 lease；media WS 不单独定义心跳。
+- server 150 秒未观察到 heartbeat 后，主动关闭 device session，并释放同一 `deviceSessionId` 绑定的 media WS。
+- heartbeat 只用于 lease，不更新 presence/focus 业务状态。
+
 session end：
 
 ```ts

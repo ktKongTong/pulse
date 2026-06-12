@@ -125,6 +125,148 @@ describe("realtime-worker-v2 client ws", () => {
     await tick();
   });
 
+  it("keeps client now playing playback aligned with device stream state", async () => {
+    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
+    const { claim, common } = await connectCommon(env as Env, "media-playback-tab");
+    const device = await connectDevice(env as Env);
+    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    deviceMedia.send(JSON.stringify({
+      protocol: DEVICE_MEDIA_PROTOCOL,
+      type: "media.updated",
+      payload: {
+        sentAt: "2026-06-09T00:46:43.000Z",
+        media: {
+          providerId: "spotify",
+          itemType: "track",
+          trackId: "spotify:track:days-of-dash",
+          title: "DAYS of DASH",
+          artist: "Konomi Suzuki",
+          progressSeconds: 69,
+          durationSeconds: 251.879,
+          playbackState: "playing",
+        },
+      },
+    }));
+    deviceMedia.send(JSON.stringify({
+      protocol: DEVICE_MEDIA_PROTOCOL,
+      type: "stream.state.updated",
+      payload: {
+        sentAt: "2026-06-09T00:46:44.105Z",
+        state: {
+          permission: "allow",
+          playback: "paused",
+          capture: "no-capture",
+          streamFormat: { codec: "pcm16-wav", sampleRate: 44100, channels: 2, bitDepth: 16 },
+        },
+      },
+    }));
+    const clientMedia = await connectClientMedia(media, claim.sessionId, "media-playback-tab");
+    expect(await nextMessage(clientMedia)).toMatchObject({
+      type: "state",
+      media: {
+        playback: "paused",
+        current: { playbackState: "paused" },
+        updatedAt: "2026-06-09T00:46:44.105Z",
+      },
+      stream: { source: { state: "idle" } },
+    });
+    common.close();
+    clientMedia.close();
+    deviceMedia.close();
+    device.common.close();
+    await tick();
+  });
+
+  it("marks now playing paused when the device media socket disconnects", async () => {
+    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
+    const { claim, common } = await connectCommon(env as Env, "media-disconnect-tab");
+    const device = await connectDevice(env as Env);
+    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    deviceMedia.send(JSON.stringify({
+      protocol: DEVICE_MEDIA_PROTOCOL,
+      type: "media.updated",
+      payload: {
+        sentAt: "2026-06-09T01:00:00.000Z",
+        media: {
+          providerId: "spotify",
+          itemType: "track",
+          trackId: "spotify:track:disconnect",
+          title: "Disconnect",
+          artist: "Pulse",
+          progressSeconds: 42,
+          durationSeconds: 180,
+          playbackState: "playing",
+        },
+      },
+    }));
+    sendReadyStreamState(deviceMedia);
+
+    const clientMedia = await connectClientMedia(media, claim.sessionId, "media-disconnect-tab");
+    expect(await nextMessage(clientMedia)).toMatchObject({
+      type: "state",
+      media: { playback: "playing", current: { playbackState: "playing" } },
+      stream: { source: { state: "ready" } },
+    });
+
+    deviceMedia.close();
+    expect(await nextMessage(clientMedia)).toMatchObject({
+      type: "state",
+      media: { playback: "paused", current: { playbackState: "paused" } },
+      stream: { source: { state: "offline" } },
+    });
+
+    common.close();
+    clientMedia.close();
+    device.common.close();
+    await tick();
+  });
+
+  it("marks now playing paused when the shared device heartbeat lease expires", async () => {
+    const media = (env as Env).MEDIA_DO.getByName("owner");
+    const { claim, common } = await connectCommon(env as Env, "media-lease-tab");
+    const device = await connectDevice(env as Env);
+    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    deviceMedia.send(JSON.stringify({
+      protocol: DEVICE_MEDIA_PROTOCOL,
+      type: "media.updated",
+      payload: {
+        sentAt: "2026-06-09T01:10:00.000Z",
+        media: {
+          providerId: "spotify",
+          itemType: "track",
+          trackId: "spotify:track:lease",
+          title: "Lease",
+          artist: "Pulse",
+          progressSeconds: 30,
+          durationSeconds: 180,
+          playbackState: "playing",
+        },
+      },
+    }));
+    sendReadyStreamState(deviceMedia);
+
+    const clientMedia = await connectClientMedia(media, claim.sessionId, "media-lease-tab");
+    expect(await nextMessage(clientMedia)).toMatchObject({
+      type: "state",
+      media: { playback: "playing", current: { playbackState: "playing" } },
+      stream: { source: { state: "ready" } },
+    });
+
+    const offlineState = nextMessage(clientMedia);
+    await device.device.checkHeartbeatLease(Date.now() + 151_000);
+    expect(await offlineState).toMatchObject({
+      type: "state",
+      media: { playback: "paused", current: { playbackState: "paused" } },
+      stream: { source: { state: "offline" } },
+    });
+
+    common.close();
+    clientMedia.close();
+    device.common.close();
+    deviceMedia.close();
+    await tick();
+  });
+
   it("returns disabled source after device rejects requested stream", async () => {
     const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
     const { claim, common } = await connectCommon(env as Env, "reject-tab");
@@ -195,8 +337,10 @@ describe("realtime-worker-v2 client ws", () => {
         sentAt: new Date().toISOString(),
         durationMs: 20,
         byteLength: 4,
+        mediaStartPositionMs: 1_000,
       },
     }));
+    await tick();
     deviceMedia.send(new Uint8Array([1, 2, 3, 4]).buffer);
     expect(await audioFramePromise).toMatchObject({ type: "audio.chunk", seq: 2, byteLength: 4 });
     const raw = await rawAudioPromise;

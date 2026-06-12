@@ -270,6 +270,7 @@ export const DeviceMediaAudioChunkFrameSchema = z.object({
     sentAt: IsoDateTimeSchema,
     durationMs: z.number().int().positive(),
     byteLength: z.number().int().nonnegative(),
+    mediaStartPositionMs: z.number().int().nonnegative(),
     clock: MediaClockSchema.optional(),
   }),
 });

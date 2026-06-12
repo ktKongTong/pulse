@@ -5,7 +5,7 @@ import {
   type DeviceCommonConnectionHelloFrame,
 } from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
-import { globalStub } from "../env";
+import { globalStub, mediaStub } from "../env";
 import { parseFrame } from "../utils/frame";
 import { createAcceptedPair, upgradeResponse } from "../utils/pair";
 import { nowIso } from "../utils/time";
@@ -20,6 +20,22 @@ interface DeviceAttachment {
 }
 
 const SESSION_KEY = "device-session";
+const HEARTBEAT_REQUEST = JSON.stringify({
+  protocol: "presence.v2",
+  type: "heartbeat",
+  payload: {
+    eventId: "heartbeat",
+    seq: 0,
+    observedAt: "1970-01-01T00:00:00.000Z",
+    sentAt: "1970-01-01T00:00:00.000Z",
+  },
+});
+const HEARTBEAT_RESPONSE = JSON.stringify({
+  protocol: "device.connection.v1",
+  type: "heartbeat_ack",
+  payload: {},
+});
+const DEVICE_HEARTBEAT_LEASE_MS = 150_000;
 
 export class DeviceDO extends DurableObject<Env> {
   private deviceId = "owner";
@@ -27,6 +43,9 @@ export class DeviceDO extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair(HEARTBEAT_REQUEST, HEARTBEAT_RESPONSE),
+    );
     ctx.blockConcurrencyWhile(async () => {
       this.deviceSessionId = (await ctx.storage.get<string>(SESSION_KEY)) ?? null;
     });
@@ -68,6 +87,24 @@ export class DeviceDO extends DurableObject<Env> {
     await this.endSession(socket);
   }
 
+  async checkHeartbeatLease(now = Date.now()) {
+    const active = this.activeDeviceSocket();
+    if (!active || !this.deviceSessionId) return;
+    const lastHeartbeat = this.ctx.getWebSocketAutoResponseTimestamp(active.socket);
+    const fallback = Date.parse(active.attachment.connectedAt);
+    const lastSeen = lastHeartbeat?.getTime() ?? fallback;
+    if (Number.isFinite(lastSeen) && now - lastSeen < DEVICE_HEARTBEAT_LEASE_MS) {
+      await this.ctx.storage.setAlarm(lastSeen + DEVICE_HEARTBEAT_LEASE_MS);
+      return;
+    }
+    closeWith(active.socket, 4000, "device_lease_expired");
+    await this.endSession(active.socket);
+  }
+
+  async alarm() {
+    await this.checkHeartbeatLease();
+  }
+
   private async acceptHello(
     socket: WebSocket,
     frame: DeviceCommonConnectionHelloFrame,
@@ -83,6 +120,7 @@ export class DeviceDO extends DurableObject<Env> {
     this.deviceSessionId = deviceSessionId;
     await this.ctx.storage.put(SESSION_KEY, deviceSessionId);
     socket.serializeAttachment(attachment);
+    await this.ctx.storage.setAlarm(Date.now() + DEVICE_HEARTBEAT_LEASE_MS);
     safeSend(socket, {
       protocol: DEVICE_CONNECTION_PROTOCOL,
       type: "hello_ack",
@@ -126,6 +164,19 @@ export class DeviceDO extends DurableObject<Env> {
     if (!attachment || this.deviceSessionId !== attachment.deviceSessionId) return;
     this.deviceSessionId = null;
     await this.ctx.storage.delete(SESSION_KEY);
+    await this.ctx.storage.deleteAlarm();
     await globalStub(this.env).updateOwnerFocus(null);
+    await mediaStub(this.env).revokeDeviceSession(attachment.deviceSessionId);
+  }
+
+  private activeDeviceSocket() {
+    if (!this.deviceSessionId) return null;
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socketAttachment<DeviceAttachment>(socket);
+      if (attachment?.deviceSessionId === this.deviceSessionId) {
+        return { socket, attachment };
+      }
+    }
+    return null;
   }
 }

@@ -22,6 +22,7 @@ export function buildAudioChunk(
     seq: frame.seq,
     sentAt: frame.sentAt,
     durationMs: frame.durationMs,
+    mediaStartPositionMs: frame.mediaStartPositionMs,
     codec: frame.codec,
     replayed: frame.replayed,
     bytes,

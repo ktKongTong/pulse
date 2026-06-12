@@ -15,6 +15,7 @@ typealias NativeDeviceEvent = ExportedKotlinPackages.io.github.kt.pulsebar.evt.A
 typealias NativeFrontmostAppChanged = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeFrontmostAppChanged
 typealias NativeMediaStateChanged = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeMediaStateChanged
 typealias NativeMediaStreamStopped = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeMediaStreamStopped
+typealias NativeNetworkChanged = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeNetworkChanged
 typealias NativeRequestedCommandEvent = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeRequestedCommandEvent
 typealias NativeStoppedCommandEvent = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeStoppedCommandEvent
 typealias NativeStreamPcmChunk = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeStreamPcmChunk
@@ -78,8 +79,8 @@ extension UpdateConfigCommand {
 }
 
 extension NativeStreamPcmChunk {
-    convenience init(chunkBase64: String) {
-        self.init(chunkBase64: chunkBase64, observedAtMillis: pulseNowMillis())
+    convenience init(chunkBase64: String, mediaStartPositionMs: Int64) {
+        self.init(chunkBase64: chunkBase64, mediaStartPositionMs: mediaStartPositionMs, observedAtMillis: pulseNowMillis())
     }
 }
 
@@ -89,11 +90,23 @@ extension NativeMediaStreamStopped {
     }
 }
 
+extension NativeNetworkChanged {
+    convenience init(online: Bool, expensive: Bool, constrained: Bool) {
+        self.init(
+            online: online,
+            expensive: expensive,
+            constrained: constrained,
+            observedAtMillis: pulseNowMillis()
+        )
+    }
+}
+
 enum PulseBarStreamConnectionState {
     case IDLE
     case CONNECTING
     case CONNECTED
     case RECONNECTING
+    case OFFLINE
     case STOPPING
     case STOPPED
     case FAILED

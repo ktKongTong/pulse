@@ -33,11 +33,17 @@ export class MediaBase extends DurableObject<Env> {
     });
   }
 
-  protected acceptBinaryChunk(bytes: ArrayBuffer) {
-    if (!this.pendingChunk) return;
+  protected async acceptBinaryChunk(bytes: ArrayBuffer) {
+    if (!this.pendingChunk) {
+      console.log("[media-do] binary_chunk_without_meta", { byteLength: bytes.byteLength });
+      return this.closeDeviceFatal("invalid_audio_chunk");
+    }
     const meta = this.pendingChunk;
     this.pendingChunk = null;
-    if (!binaryMatchesMeta(bytes, meta)) return this.closeDeviceFatal("invalid_audio_chunk");
+    if (!binaryMatchesMeta(bytes, meta)) {
+      console.log("[media-do] binary_chunk_mismatch", { byteLength: bytes.byteLength, meta });
+      return this.closeDeviceFatal("invalid_audio_chunk");
+    }
     this.buffer.resize(maxBufferedChunks(this.env, meta.durationMs));
     this.buffer.push({ meta, bytes });
     if (this.state.streamContext) {
@@ -81,7 +87,7 @@ export class MediaBase extends DurableObject<Env> {
       context.generation,
     );
     if (!sent) {
-      this.closeDeviceFatal("command_conflict");
+      await this.closeDeviceFatal("command_conflict");
     }
     this.state.streamContext = null;
     this.buffer.clear();
@@ -134,6 +140,16 @@ export class MediaBase extends DurableObject<Env> {
     await this.stopIfNoStreamClients();
   }
 
+  protected async revokeDevice(deviceSessionId: string) {
+    const attachment = this.deviceSocket ? socketAttachment<DeviceAttachment>(this.deviceSocket) : null;
+    if (attachment?.deviceSessionId !== deviceSessionId) return;
+    const socket = this.deviceSocket;
+    this.deviceSocket = null;
+    this.markDeviceOffline(nowIso());
+    await this.stateChanged();
+    closeWith(socket, 4000, "device_lease_expired");
+  }
+
   protected broadcastState() {
     broadcastMediaState({ sockets: this.clients.values(), state: this.state });
   }
@@ -158,16 +174,32 @@ export class MediaBase extends DurableObject<Env> {
   private async cleanupDevice(socket: WebSocket) {
     if (!this.isActiveDeviceSocket(socket)) return;
     this.deviceSocket = null;
-    this.state.device = null;
-    this.state.pendingCommand = null;
+    this.markDeviceOffline(nowIso());
     return this.stateChanged();
   }
 
-  protected closeDeviceFatal(code: string) {
-    closeWith(this.deviceSocket, 4000, code);
+  protected async closeDeviceFatal(code: string) {
+    const socket = this.deviceSocket;
+    closeWith(socket, 4000, code);
     this.deviceSocket = null;
+    this.markDeviceOffline(nowIso());
+    await this.stateChanged();
+  }
+
+  private markDeviceOffline(updatedAt: string) {
     this.state.device = null;
     this.state.pendingCommand = null;
+    this.state.deviceStreamState = this.state.deviceStreamState
+      ? { ...this.state.deviceStreamState, playback: "paused", capture: "no-capture" }
+      : null;
+    if (this.state.currentMedia) {
+      this.state.currentMedia = {
+        ...this.state.currentMedia,
+        current: { ...this.state.currentMedia.current, playbackState: "paused" },
+        playback: "paused",
+        updatedAt,
+      };
+    }
   }
 
   protected consumePendingAck(
@@ -176,7 +208,7 @@ export class MediaBase extends DurableObject<Env> {
   ) {
     const pending = this.state.pendingCommand;
     if (!pending || pending.commandId !== commandId || pending.type !== type) {
-      this.closeDeviceFatal("command_mismatch");
+      void this.closeDeviceFatal("command_mismatch");
       return false;
     }
     this.state.pendingCommand = null;
@@ -196,8 +228,7 @@ export class MediaBase extends DurableObject<Env> {
       this.streamClients.clear();
     }
     this.state.pendingCommand = null;
-    this.closeDeviceFatal("command_timeout");
-    await this.stateChanged();
+    await this.closeDeviceFatal("command_timeout");
   }
 
   protected async stateChanged(broadcast = true) {

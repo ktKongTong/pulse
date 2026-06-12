@@ -35,6 +35,7 @@ data class NativeMediaStateChanged(
 
 data class NativeStreamPcmChunk(
     val chunkBase64: String,
+    val mediaStartPositionMs: Long,
     val observedAtMillis: Long = nowInMillis()
 ) : AppEvent
 

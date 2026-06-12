@@ -1,12 +1,11 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { MusicIcon } from "lucide-react";
 import {
-  mapCurrentMedia,
+  mapDisplayMedia,
   mediaTitle,
   resolveHeading,
   useClientMediaDisplayState,
   useMediaProgress,
-  type DisplayMedia,
   type MediaStatus,
 } from "@ktfun/pulse";
 import {
@@ -18,6 +17,11 @@ import { cn } from "../../lib/utils";
 import { StreamControl } from "./live-listen-control";
 import { AnimatedLyricStack } from "./lyric/animated-lyric";
 import { ProviderBadge } from "./provider-badge";
+import {
+  getStreamPlaybackProgress,
+  reconcileStreamPlaybackProgress,
+  subscribeStreamPlaybackProgress,
+} from "../../lib/audio-stream-player";
 
 export function MediaState({ className }: { className?: string }) {
   const mediaSession = useMediaSessionDisplayMedia();
@@ -64,11 +68,7 @@ export function MediaState({ className }: { className?: string }) {
 
 function useMediaSessionDisplayMedia() {
   const { loading, media } = useClientMediaDisplayState();
-  const currentMedia = mapCurrentMedia(media);
-  const data: DisplayMedia | null = currentMedia
-    ? { kind: "current", media: currentMedia }
-    : null;
-  return { data, loading };
+  return { data: mapDisplayMedia(media), loading };
 }
 
 function MediaArtwork(props: { media: MediaStatus | null; dimmed?: boolean }) {
@@ -158,14 +158,36 @@ function Lyric({ media, fallback }: { media: MediaStatus | null; fallback: React
   const lyrics = useMediaLyrics(lyricsQuery);
 
   const progress = useMediaProgress(media);
+  const streamProgress = useStreamPlaybackProgress();
+  useEffect(() => {
+    reconcileStreamPlaybackProgress(
+      media
+        ? {
+          progressMs: media.progressSeconds * 1_000,
+          updatedAt: media.updatedAt,
+          playbackState: media.playbackState,
+        }
+        : null,
+    );
+  }, [media]);
+  const progressSeconds = streamProgress?.progressMs != null
+    ? streamProgress.progressMs / 1_000
+    : progress.progressSeconds;
 
-  const lyricCue = resolveLyricCue(lyrics.lines, progress.progressSeconds);
-  console.log(lyricCue.previous?.text, lyricCue.current?.text, lyricCue.next?.text, progress.progressSeconds)
+  const lyricCue = resolveLyricCue(lyrics.lines, progressSeconds);
   if (!lyricsQuery) return fallback;
   if (lyrics.status === "loading") return <Skeleton className="h-7 w-72 max-w-full" />;
   if (lyrics.lines.length === 0) return fallback;
   if (!lyricCue.previous && !lyricCue.current && !lyricCue.next) return fallback;
   return <AnimatedLyricStack cue={lyricCue} />;
+}
+
+function useStreamPlaybackProgress() {
+  return useSyncExternalStore(
+    subscribeStreamPlaybackProgress,
+    getStreamPlaybackProgress,
+    () => null,
+  );
 }
 
 function Skeleton(props: { className?: string }) {

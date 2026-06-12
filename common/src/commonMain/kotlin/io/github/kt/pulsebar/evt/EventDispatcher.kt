@@ -12,6 +12,7 @@ import io.github.kt.pulsebar.export.event.ConnectEndpointCommand
 import io.github.kt.pulsebar.export.event.DisableEndpointCommand
 import io.github.kt.pulsebar.export.event.DisconnectEndpointCommand
 import io.github.kt.pulsebar.export.event.EnableEndpointCommand
+import io.github.kt.pulsebar.export.event.NativeNetworkChanged
 import io.github.kt.pulsebar.export.event.RemoveEndpointCommand
 import io.github.kt.pulsebar.export.event.UpdateConfigCommand
 import io.github.kt.pulsebar.model.FocusState
@@ -38,6 +39,7 @@ internal class EventDispatcher(
     private val updateConfig: suspend (PulseConfig) -> Unit,
     private val publishFocusChanged: suspend (NativeFrontmostAppChanged) -> Unit,
     private val handleMediaStreamStopped: (StreamStopReason) -> Unit,
+    private val handleNetworkChanged: (NativeNetworkChanged) -> Unit,
 ) {
     private val eventBus: EventBus = EventBus()
 
@@ -59,7 +61,9 @@ internal class EventDispatcher(
     }
 
     private suspend fun routeNativeEvent(event: AppEvent) {
-        log.i { event.toString() }
+        if (event !is NativeStreamPcmChunk) {
+            log.i { event.toString() }
+        }
         when (event) {
             is NativeFrontmostAppChanged ->
                 handleFrontmostAppChanged(event)
@@ -75,6 +79,9 @@ internal class EventDispatcher(
 
             is NativeMediaStreamStopped ->
                 handleMediaStreamStopped(event.reason)
+
+            is NativeNetworkChanged ->
+                handleNetworkChanged(event)
 
             is ConnectEndpointCommand ->
                 connectEndpoint(event.endpointId)
@@ -119,7 +126,7 @@ internal class EventDispatcher(
             log.w { "native.stream.pcm.invalid_base64 bytes=${event.chunkBase64.length}" }
             return
         }
-        if (!stream.submitPcm(bytes)) {
+        if (!stream.submitPcm(bytes, event.mediaStartPositionMs)) {
             log.w { "native.stream.pcm.dropped bytes=${bytes.size}" }
         }
     }

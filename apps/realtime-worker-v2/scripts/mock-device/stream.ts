@@ -43,6 +43,7 @@ export function publishAudioChunk(socket: JsonSocket, stream: ActiveStream) {
       sentAt,
       durationMs: chunkDurationMs,
       byteLength: bytes.byteLength,
+      mediaStartPositionMs: stream.seq * chunkDurationMs,
       clock: {
         mediaProgressSeconds: (stream.seq * chunkDurationMs) / 1000,
         durationSeconds: Math.ceil(sampleBytes.byteLength / bytesPerSecond),

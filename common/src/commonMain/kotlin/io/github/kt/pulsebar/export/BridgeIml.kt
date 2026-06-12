@@ -4,6 +4,7 @@ import io.github.kt.pulsebar.evt.AppEvent
 import io.github.kt.pulsebar.evt.EventDispatcher
 import io.github.kt.pulsebar.evt.Stream
 import io.github.kt.pulsebar.export.event.NativeFrontmostAppChanged
+import io.github.kt.pulsebar.export.event.NativeNetworkChanged
 import io.github.kt.pulsebar.export.event.ServerCommandEvent
 import io.github.kt.pulsebar.export.ui.AppStats
 import io.github.kt.pulsebar.export.ui.InitialMediaState
@@ -35,19 +36,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.isActive
@@ -74,11 +75,17 @@ class PulseBarBridge private constructor(
     private val stream: Stream = Stream(startup.initialMediaState)
     private val focusState: MutableStateFlow<FocusState?> = MutableStateFlow(null)
     private val endpointRuntimes: MutableStateFlow<Map<String, EndpointRuntime>> = MutableStateFlow(emptyMap())
+    private val networkOnline: MutableStateFlow<Boolean> = MutableStateFlow(true)
     private var activeFocusSpan: ActiveFocusSpan? = null
 
-    private val hostCommandFlow = MutableSharedFlow<ServerCommandEvent>()
-    override val serverCommands: Flow<ServerCommandEvent> = hostCommandFlow.asSharedFlow()
-    private val serverCommandHandler: (ServerCommandEvent) -> Unit = { command -> hostCommandFlow.tryEmit(command) }
+    private val hostCommandChannel = Channel<ServerCommandEvent>(capacity = Channel.BUFFERED)
+    override val serverCommands: Flow<ServerCommandEvent> = hostCommandChannel.receiveAsFlow()
+    private val serverCommandHandler: (ServerCommandEvent) -> Unit = { command ->
+        val result = hostCommandChannel.trySend(command)
+        if (result.isFailure) {
+            logger.w { "bridge.host.command.dropped command=${command::class.simpleName} reason=${result.exceptionOrNull()?.message ?: "channel_closed"}" }
+        }
+    }
 
     override val mediaFlow = stream.mediaFlowState
 
@@ -133,6 +140,7 @@ class PulseBarBridge private constructor(
         updateConfig = ::updateConfig,
         publishFocusChanged = ::publishFocusChanged,
         handleMediaStreamStopped = ::handleMediaStreamStopped,
+        handleNetworkChanged = ::handleNetworkChanged,
     )
 
     init {
@@ -163,6 +171,16 @@ class PulseBarBridge private constructor(
         runtimes.forEach { it.client.stopActiveStream(reason) }
     }
 
+    private fun handleNetworkChanged(event: NativeNetworkChanged) {
+        networkOnline.value = event.online
+        logger.i {
+            "network.changed online=${event.online} expensive=${event.expensive} constrained=${event.constrained}"
+        }
+        endpointRuntimes.value.values.forEach { runtime ->
+            runtime.client.setNetworkOnline(event.online)
+        }
+    }
+
     override fun connectionState(endpointId: String): Flow<ConnectionState> =
         endpointRuntimes.value[endpointId]?.connectionState
             ?: error("connection state for $endpointId not found")
@@ -180,8 +198,9 @@ class PulseBarBridge private constructor(
             )
             val existing = current[endpointId]
             if (existing != null) {
+                val wasEnabled = existing.config.value.endpoint.enabled
                 existing.config.value = item
-                if (!endpoint.enabled) existing.client.stop()
+                applyEndpointEnabledTransition(existing, wasEnabled = wasEnabled, isEnabled = endpoint.enabled)
                 next[endpointId] = existing
             } else {
                 val configFlow = MutableStateFlow(item)
@@ -189,6 +208,7 @@ class PulseBarBridge private constructor(
                     endpointId = endpointId,
                     configFlow = configFlow,
                     mediaStateFlow = stream.mediaState,
+                    networkOnline = networkOnline,
                     hostCommandSink = serverCommandHandler,
                 )
                 val connectionState = combine(client.deviceWsState, configFlow) { deviceWs, endpointConfig ->
@@ -198,12 +218,16 @@ class PulseBarBridge private constructor(
                         connection = deviceWs,
                     )
                 }
-                next[endpointId] = EndpointRuntime(
+                val runtime = EndpointRuntime(
                     endpointId = endpointId,
                     config = configFlow,
                     client = client,
                     connectionState = connectionState,
                 )
+                if (endpoint.enabled) {
+                    runtime.client.start()
+                }
+                next[endpointId] = runtime
             }
         }
 
@@ -216,6 +240,17 @@ class PulseBarBridge private constructor(
             }
 
         endpointRuntimes.value = next
+    }
+
+    private fun applyEndpointEnabledTransition(
+        runtime: EndpointRuntime,
+        wasEnabled: Boolean,
+        isEnabled: Boolean,
+    ) {
+        when {
+            !wasEnabled && isEnabled -> runtime.client.start()
+            wasEnabled && !isEnabled -> runtime.client.stop()
+        }
     }
 
     private fun connectEndpoint(endpointId: String) {

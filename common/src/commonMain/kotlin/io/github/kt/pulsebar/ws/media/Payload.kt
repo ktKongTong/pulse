@@ -89,6 +89,7 @@ internal data class DeviceV2AudioChunkPayload(
     val sentAt: String = nowInIso8601(),
     val durationMs: Int,
     val byteLength: Int,
+    val mediaStartPositionMs: Long,
 ): WSPayload
 
 @Serializable

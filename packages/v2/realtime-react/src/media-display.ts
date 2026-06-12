@@ -32,7 +32,7 @@ export function mapCurrentMedia(
   media: ClientMediaNowPlaying | null,
 ): MediaStatus | null {
   if (!media?.current || !hasRenderableMedia(media.current)) return null;
-  const playbackState = media.current.playbackState ?? media.playback;
+  const playbackState = media.playback;
   return {
     providerId: cleanText(media.current.providerId ?? media.current.provider),
     title: cleanText(media.current.title),
@@ -46,6 +46,17 @@ export function mapCurrentMedia(
     durationSeconds:
       media.clock?.durationSeconds ?? media.current.durationSeconds ?? 0,
     updatedAt: media.clock?.updatedAt ?? media.updatedAt,
+  };
+}
+
+export function mapDisplayMedia(
+  media: ClientMediaNowPlaying | null,
+): DisplayMedia | null {
+  const currentMedia = mapCurrentMedia(media);
+  if (!currentMedia) return null;
+  return {
+    kind: currentMedia.playbackState === "playing" ? "current" : "recent",
+    media: currentMedia,
   };
 }
 

@@ -29,6 +29,13 @@ data class ReconnectEndpointCommand(
     val sentAt: Long = nowInMillis(),
 ) : AppEvent
 
+data class NativeNetworkChanged(
+    val online: Boolean,
+    val expensive: Boolean,
+    val constrained: Boolean,
+    val observedAtMillis: Long = nowInMillis(),
+) : AppEvent
+
 data class RemoveEndpointCommand(
     val endpointId: String,
     val sentAt: Long = nowInMillis(),

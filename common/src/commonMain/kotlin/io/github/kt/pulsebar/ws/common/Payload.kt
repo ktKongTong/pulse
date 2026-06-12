@@ -28,6 +28,15 @@ internal data class DeviceV2PresencePayload(
 ) : WSPayload
 
 @Serializable
+@CommonMessage("heartbeat")
+internal data class DeviceV2PresenceHeartbeatPayload(
+    val eventId: String = "heartbeat",
+    val seq: Long = 0,
+    val observedAt: String = "1970-01-01T00:00:00.000Z",
+    val sentAt: String = "1970-01-01T00:00:00.000Z",
+) : WSPayload
+
+@Serializable
 internal data class DeviceV2PresenceState(val availability: DeviceV2Availability, val focus: DeviceV2Focus)
 
 @Serializable

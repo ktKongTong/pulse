@@ -26,6 +26,7 @@ export interface ClientAudioChunk {
   seq: number;
   sentAt: string;
   durationMs: number;
+  mediaStartPositionMs: number;
   codec: string;
   replayed: boolean;
   bytes: ArrayBuffer;

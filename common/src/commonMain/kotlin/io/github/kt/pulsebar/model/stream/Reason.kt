@@ -34,4 +34,5 @@ enum class StreamStopReason {
     @SerialName("capture_permission_missing") CAPTURE_PERMISSION_MISSING,
     @SerialName("capture_source_unavailable") CAPTURE_SOURCE_UNAVAILABLE,
     @SerialName("unsupported_app") UNSUPPORTED_APP,
+    @SerialName("connection_lost") CONNECTION_LOST,
 }

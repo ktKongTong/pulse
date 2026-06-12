@@ -17,10 +17,15 @@ data class StreamFormat(
 )
 
 internal data class MediaState(
-    val pcmChannel: Channel<ByteArray> = Channel(capacity = 256),
+    val pcmChannel: Channel<StreamPcmChunk> = Channel(capacity = 256),
     val streamState: StreamState,
     val chunkDuration: Duration = 0.5.seconds,
     val mediaFlow: StateFlow<Media?>,
+)
+
+internal data class StreamPcmChunk(
+    val bytes: ByteArray,
+    val mediaStartPositionMs: Long,
 )
 
 internal fun MediaState.getSnapshot(): MediaStateSnapshot = MediaStateSnapshot(

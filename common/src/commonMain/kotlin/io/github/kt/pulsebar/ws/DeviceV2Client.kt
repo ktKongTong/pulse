@@ -19,8 +19,9 @@ import io.github.kt.pulsebar.ws.common.DeviceV2PresenceState
 import io.github.kt.pulsebar.ws.common.epochMillisToIso8601
 import io.github.kt.pulsebar.ws.connection.DeviceWsState
 import io.github.kt.pulsebar.ws.connection.ConnectionStatus
-import io.github.kt.pulsebar.ws.connection.deriveDevicePhase
 import io.github.kt.pulsebar.ws.media.MediaWS
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -32,6 +33,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -46,6 +48,7 @@ import kotlinx.coroutines.sync.withLock
 internal class DeviceV2Client(
     val configFlow: StateFlow<PulseConfigItem>,
     mediaStateFlow: StateFlow<MediaState>,
+    private val networkOnline: StateFlow<Boolean>,
     val endpointId: String,
     hostCommandSink: (ServerCommandEvent) -> Unit,
 ) {
@@ -58,14 +61,16 @@ internal class DeviceV2Client(
     private val mutex = Mutex()
     private var connectionJob: Job? = null
     private var stopRequested = false
+    private var networkPaused = !networkOnline.value
     var connectedMediaWS: MediaWS = MediaWS(http, scope, mediaStateFlow, endpointId, hostCommandSink)
     var connectedCommonWS: CommonWS = CommonWS(http, scope)
     var reconnectAttempts = 0
+    private val devicePhase = MutableStateFlow(ConnectionStatus.Idle)
 
     val deviceWsState: StateFlow<DeviceWsState> by lazy {
-        combine(connectedCommonWS.state, connectedMediaWS.state) { common, media ->
+        combine(connectedCommonWS.state, connectedMediaWS.state, devicePhase) { common, media, phase ->
             DeviceWsState(
-                phase = deriveDevicePhase(common, media),
+                phase = phase,
                 common = common,
                 media = media,
                 reconnectAttempt = reconnectAttempts,
@@ -84,28 +89,63 @@ internal class DeviceV2Client(
                     log.w { "device.v2.config.invalid endpointId=$endpointId reason=$configError" }
                     return@withLock
                 }
+                if (!networkOnline.value) {
+                    networkPaused = true
+                    devicePhase.value = ConnectionStatus.Offline
+                    log.i { "device.v2.start.deferred.offline endpointId=$endpointId" }
+                    return@withLock
+                }
                 log.d { "start ${this@DeviceV2Client::class.simpleName}" }
                 if (connectionJob?.isActive == true) return@withLock
                 reconnectAttempts = 0
                 connectionJob?.cancelAndJoin()
                 log.d { "connecting to endpoint ${config.endpoint.url}" }
+                devicePhase.value = ConnectionStatus.Connecting
                 connectionJob = scope.launch { connect(config, onReady) }
+            }
+        }
+    }
+
+    fun setNetworkOnline(online: Boolean) {
+        scope.launch {
+            mutex.withLock {
+                if (online) {
+                    if (!networkPaused && connectionJob?.isActive == true) return@withLock
+                    networkPaused = false
+                    if (stopRequested || !configFlow.value.endpoint.enabled) return@withLock
+                    reconnectAttempts = 0
+                    connectionJob?.cancelAndJoin()
+                    devicePhase.value = ConnectionStatus.Connecting
+                    connectionJob = scope.launch { connect(configFlow.value) }
+                    return@withLock
+                }
+                if (networkPaused) return@withLock
+                networkPaused = true
+                log.i { "device.v2.network.offline endpointId=$endpointId cancel connection" }
+                connectedMediaWS.stopActiveStream(StreamStopReason.CONNECTION_LOST)
+                connectionJob?.cancelAndJoin()
+                connectionJob = null
+                reconnectAttempts = 0
+                devicePhase.value = ConnectionStatus.Offline
             }
         }
     }
 
     fun stop() {
         stopRequested = true
+        devicePhase.value = ConnectionStatus.Closing
         scope.launch {
             mutex.withLock {
                 connectionJob?.cancelAndJoin()
                 connectionJob = null
+                devicePhase.value = ConnectionStatus.Closed
             }
         }
     }
 
     fun dispose() {
         stopRequested = true
+        devicePhase.value = ConnectionStatus.Closed
         scope.cancel("device client disposed")
     }
 
@@ -135,8 +175,23 @@ internal class DeviceV2Client(
 
     private suspend fun connect(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {
         while (scope.isActive && !stopRequested) {
-            if (reconnectAttempts > 0) sleepBeforeReconnect()
+            if (!networkOnline.value) {
+                networkPaused = true
+                devicePhase.value = ConnectionStatus.Offline
+                return
+            }
+            if (reconnectAttempts > 0) {
+                devicePhase.value = ConnectionStatus.Reconnecting
+                sleepBeforeReconnect()
+            } else {
+                devicePhase.value = ConnectionStatus.Connecting
+            }
             if (stopRequested) return
+            if (!networkOnline.value) {
+                networkPaused = true
+                devicePhase.value = ConnectionStatus.Offline
+                return
+            }
             log.d { "connecting ${config.endpoint.url}" }
 //            updateStats { it.connecting() }
             val result = runCatching { initConnection(config, onReady) }
@@ -150,37 +205,56 @@ internal class DeviceV2Client(
             }
             when {
                 err != null -> log.w(err) { "device.v2.failed reason=$reason" }
-                expectedClose != null -> log.d { "device.v2.closed reason=$reason" }
+                expectedClose != null -> log.i { "device.v2.closed reason=$reason" }
+                failure == null -> log.i { "device.v2.closed reason=$reason" }
             }
             if (!scope.isActive || stopRequested) {
                 log.d { "scope not active anymore" }
                 return
             }
+            if (!networkOnline.value) {
+                networkPaused = true
+                devicePhase.value = ConnectionStatus.Offline
+                return
+            }
             if (shouldFailPermanently(reason, reconnectAttempts)) {
                 log.d { "failed to connect permanently" }
 //                updateStats { it.failed(reason) }
+                devicePhase.value = ConnectionStatus.Failed
                 return
             }
 //            updateStats { it.disconnected(reason) }
 
+            devicePhase.value = ConnectionStatus.Reconnecting
             reconnectAttempts = (reconnectAttempts + 1).coerceAtMost(6)
         }
     }
 
 
     private suspend fun initConnection(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {
+        connectedCommonWS.wsManager.reset("connect")
+        connectedMediaWS.resetConnection("connect")
         log.d { "connecting to common ws" }
         val deviceSessionId = connectedCommonWS.connect(config.endpoint.getEndpoint())
         log.d { "common ws connected:$deviceSessionId" }
         log.d { "connecting to media ws" }
         connectedMediaWS.connect(deviceSessionId, config, onReady)
+        if (!isConnectionStable(500.milliseconds)) {
+            log.i { "device.v2.connect.unstable endpointId=$endpointId socket=${inactiveSocketName()}" }
+            return
+        }
+        devicePhase.value = ConnectionStatus.Connected
         log.d { "connected" }
         coroutineScope {
             try {
                 log.d { "listen on ws" }
                 select {
-                    connectedCommonWS.wsManager.listenJob.onJoin {}
-                    connectedMediaWS.wsManager.listenJob.onJoin {}
+                    connectedCommonWS.wsManager.listenJob.onJoin {
+                        log.i { "device.v2.listen.ended endpointId=$endpointId socket=common" }
+                    }
+                    connectedMediaWS.wsManager.listenJob.onJoin {
+                        log.i { "device.v2.listen.ended endpointId=$endpointId socket=media" }
+                    }
                 }
             } finally {
                 log.d { "cancelled" }
@@ -189,6 +263,19 @@ internal class DeviceV2Client(
             }
         }
     }
+
+    private suspend fun isConnectionStable(duration: Duration): Boolean {
+        delay(duration)
+        return connectedCommonWS.wsManager.listenJob.isActive &&
+            connectedMediaWS.wsManager.listenJob.isActive
+    }
+
+    private fun inactiveSocketName(): String =
+        when {
+            !connectedCommonWS.wsManager.listenJob.isActive -> "common"
+            !connectedMediaWS.wsManager.listenJob.isActive -> "media"
+            else -> "unknown"
+        }
 
     private fun shouldFailPermanently(reason: String, attempt: Int): Boolean {
         if (attempt >= 6) return true

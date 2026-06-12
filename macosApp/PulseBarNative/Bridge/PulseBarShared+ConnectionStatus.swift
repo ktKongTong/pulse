@@ -8,7 +8,7 @@ extension PulseBarStreamConnectionState {
         case .CONNECTED: return .green
         case .CONNECTING, .RECONNECTING, .STOPPING: return .yellow
         case .FAILED: return .red
-        case .IDLE, .STOPPED: return .gray
+        case .IDLE, .OFFLINE, .STOPPED: return .gray
         }
     }
 
@@ -18,6 +18,7 @@ extension PulseBarStreamConnectionState {
         case .CONNECTING: return "connecting"
         case .CONNECTED: return "connected"
         case .RECONNECTING: return "reconnecting"
+        case .OFFLINE: return "offline"
         case .STOPPING: return "stopping"
         case .STOPPED: return "stopped"
         case .FAILED: return "failed"
@@ -38,6 +39,8 @@ extension PulseBarConnectionState {
             return .CONNECTING
         case "Reconnecting":
             return .RECONNECTING
+        case "Offline":
+            return .OFFLINE
         case "Closing":
             return .STOPPING
         case "Closed":
@@ -64,6 +67,8 @@ extension PulseBarConnectionState {
             return "Connecting"
         case .RECONNECTING:
             return "Reconnecting"
+        case .OFFLINE:
+            return "Offline"
         case .STOPPING:
             return "Stopping"
         case .STOPPED:

@@ -46,11 +46,17 @@ final class MonitorStore: ObservableObject {
     private var mediaStateTask: Task<Void, Never>?
     private var appUsageTask: Task<Void, Never>?
     private let nowPlayingEventSource = NowPlayingEventSource()
+    private let networkStateMonitor = NetworkStateMonitor()
     private var connectedMediaEndpointIDs: Set<String> = []
 
     init() {
         self.bridge = PulseBarBridge(initialMedia: NowPlayingEventSource.startupSnapshot())
-        self.streamStore = StreamCaptureStore(bridge: bridge)
+        self.streamStore = StreamCaptureStore(
+            bridge: bridge,
+            currentMediaSnapshot: { [nowPlayingEventSource] in
+                await nowPlayingEventSource.snapshot()
+            }
+        )
     }
 
     deinit {
@@ -64,6 +70,7 @@ final class MonitorStore: ObservableObject {
             }
         }
         nowPlayingEventSource.stop()
+        networkStateMonitor.stop()
     }
 
     // MARK: - Lifecycle
@@ -96,6 +103,12 @@ final class MonitorStore: ObservableObject {
         nowPlayingEventSource.start { [weak self] snapshot in
             Task { @MainActor in
                 self?.handleNowPlayingChange(snapshot)
+            }
+        }
+
+        networkStateMonitor.start { [weak self] snapshot in
+            Task { @MainActor in
+                self?.handleNetworkChange(snapshot)
             }
         }
 
@@ -181,6 +194,21 @@ final class MonitorStore: ObservableObject {
             let label = snapshot?.title ?? "nil"
             PulseNativeLog.info(.streamSession, "native.media.changed title=\(label) playing=\(snapshot?.isPlaying == true)")
         }
+    }
+
+    private func handleNetworkChange(_ snapshot: NetworkSnapshot) {
+        guard isMonitoring else { return }
+        PulseNativeLog.info(
+            .streamSession,
+            "native.network.changed online=\(snapshot.online) expensive=\(snapshot.expensive) constrained=\(snapshot.constrained)"
+        )
+        bridge.emitNativeEvent(
+            event: NativeNetworkChanged(
+                online: snapshot.online,
+                expensive: snapshot.expensive,
+                constrained: snapshot.constrained
+            )
+        )
     }
 
     private func nowMillis() -> Int64 {

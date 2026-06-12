@@ -5,6 +5,7 @@ import io.github.kt.pulsebar.model.stream.Media
 import io.github.kt.pulsebar.model.stream.MediaFlowState
 import io.github.kt.pulsebar.model.stream.MediaState
 import io.github.kt.pulsebar.model.stream.MediaStateSnapshot
+import io.github.kt.pulsebar.model.stream.StreamPcmChunk
 import io.github.kt.pulsebar.model.stream.StreamState
 import io.github.kt.pulsebar.model.stream.getSnapshot
 import io.github.kt.pulsebar.model.stream.toMediaFlowState
@@ -25,7 +26,7 @@ internal class Stream(
 ) {
 
     val mediaFlow = MutableStateFlow(initialMediaState.media)
-    val audioChannel: Channel<ByteArray> = Channel(capacity = 256)
+    val audioChannel: Channel<StreamPcmChunk> = Channel(capacity = 256)
     private val _mediaState: MutableStateFlow<MediaState> = MutableStateFlow(MediaState(
         pcmChannel = audioChannel,
         streamState = initialMediaState.streamState,
@@ -60,6 +61,6 @@ internal class Stream(
         }
     }
 
-    fun submitPcm(bytes: ByteArray): Boolean =
-        audioChannel.trySend(bytes).isSuccess
+    fun submitPcm(bytes: ByteArray, mediaStartPositionMs: Long): Boolean =
+        audioChannel.trySend(StreamPcmChunk(bytes, mediaStartPositionMs)).isSuccess
 }

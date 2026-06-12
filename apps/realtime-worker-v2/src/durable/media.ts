@@ -27,6 +27,10 @@ import { closeWith, safeSend, socketAttachment } from "../utils/ws";
 export class MediaDO extends MediaBase {
   private pendingDeviceAccepts = new WeakMap<WebSocket, Promise<boolean>>();
 
+  async revokeDeviceSession(deviceSessionId: string) {
+    await this.revokeDevice(deviceSessionId);
+  }
+
   async revokeClient(sessionId: string, tabId: string) {
     const key = tabKey(sessionId, tabId);
     closeWith(this.clients.get(key), 401, "invalid_session");
@@ -164,7 +168,7 @@ export class MediaDO extends MediaBase {
     const sent = await this.sendDeviceCommand("stream.requested", context.streamId, context.generation);
     if (!sent) {
       this.streamClients.delete(tabKey(attachment.sessionId, attachment.tabId));
-      this.closeDeviceFatal("command_conflict");
+      await this.closeDeviceFatal("command_conflict");
       safeSend(socket, {
         protocol: CLIENT_MEDIA_WS_PROTOCOL,
         type: "stream.rejected",
@@ -192,6 +196,15 @@ export class MediaDO extends MediaBase {
     }
     if (frame.type === "stream.state.updated") {
       this.state.deviceStreamState = frame.payload.state;
+      if (this.state.currentMedia) {
+        const playback = frame.payload.state.playback;
+        this.state.currentMedia = {
+          ...this.state.currentMedia,
+          current: { ...this.state.currentMedia.current, playbackState: playback },
+          playback,
+          updatedAt: frame.payload.sentAt,
+        };
+      }
       this.state.streamRequestRejectedAt = undefined;
       return this.stateChanged();
     }

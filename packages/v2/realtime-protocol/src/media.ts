@@ -105,6 +105,7 @@ export const ClientMediaAudioChunkFrameSchema = z.object({
   durationMs: z.number().int().positive(),
   codec: StreamCodecSchema,
   byteLength: z.number().int().nonnegative(),
+  mediaStartPositionMs: z.number().int().nonnegative(),
   replayed: z.boolean(),
 });
 

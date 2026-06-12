@@ -2,6 +2,7 @@ package io.github.kt.pulsebar.ws.connection
 
 
 import io.github.kt.pulsebar.ws.common.DeviceV2CommonHelloPayload
+import io.github.kt.pulsebar.ws.common.DeviceV2PresenceHeartbeatPayload
 import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
 import io.github.kt.pulsebar.ws.DEVICE_CONNECTION_PROTOCOL_V1
 import io.github.kt.pulsebar.ws.DEVICE_MEDIA_CONNECTION_PROTOCOL_V1
@@ -89,6 +90,7 @@ internal fun deviceV2Frame(payload: WSPayload): String =
     when (payload) {
         is DeviceV2CommonHelloPayload -> deviceV2FrameTyped(payload)
         is DeviceV2PresencePayload -> deviceV2FrameTyped(payload)
+        is DeviceV2PresenceHeartbeatPayload -> deviceV2FrameTyped(payload)
         is DeviceV2MediaHelloPayload -> deviceV2FrameTyped(payload)
         is DeviceV2StreamStatePayload -> deviceV2FrameTyped(payload)
         is DeviceV2MediaUpdatePayload -> deviceV2FrameTyped(payload)

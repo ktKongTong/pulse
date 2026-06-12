@@ -48,12 +48,18 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
     internal lateinit var session: ClientWebSocketSession
     internal lateinit var incomingFlow: Flow<Frame>
     private val connectMutex = Mutex()
+    private val sendMutex = Mutex()
     private val _state = MutableStateFlow(WsConnectionState())
     internal val state: StateFlow<WsConnectionState> = _state.asStateFlow()
 
     private fun transition(event: WsConnectionEvent) {
         _state.update { it.reduce(event) }
     }
+
+    internal fun reset(reason: String) {
+        transition(WsConnectionEvent.Reset(reason))
+    }
+
     internal suspend fun <T>connect(
         config: WSConfig,
         getHelloMsg: (session: ClientWebSocketSession) -> WSPayload,
@@ -97,22 +103,40 @@ internal class WSManager(internal val http: HttpClient, internal val scope: Coro
     }
 
     internal suspend fun send(payload: WSPayload) {
-        try {
-            session.send(deviceV2Frame(payload))
-            transition(WsConnectionEvent.MessageSent())
-        } catch (t: Throwable) {
-            transition(WsConnectionEvent.Failed(t.message ?: "unknown error"))
-            throw t
+        sendMutex.withLock {
+            try {
+                session.send(deviceV2Frame(payload))
+                transition(WsConnectionEvent.MessageSent())
+            } catch (t: Throwable) {
+                transition(WsConnectionEvent.Failed(t.message ?: "unknown error"))
+                throw t
+            }
         }
     }
 
     internal suspend fun send(bytes: ByteArray) {
-        try {
-            session.send(bytes)
-            transition(WsConnectionEvent.MessageSent(binary = true))
-        } catch (t: Throwable) {
-            transition(WsConnectionEvent.Failed(t.message ?: "unknown error"))
-            throw t
+        sendMutex.withLock {
+            try {
+                session.send(bytes)
+                transition(WsConnectionEvent.MessageSent(binary = true))
+            } catch (t: Throwable) {
+                transition(WsConnectionEvent.Failed(t.message ?: "unknown error"))
+                throw t
+            }
+        }
+    }
+
+    internal suspend fun sendBinaryPair(payload: WSPayload, bytes: ByteArray) {
+        sendMutex.withLock {
+            try {
+                session.send(deviceV2Frame(payload))
+                transition(WsConnectionEvent.MessageSent())
+                session.send(bytes)
+                transition(WsConnectionEvent.MessageSent(binary = true))
+            } catch (t: Throwable) {
+                transition(WsConnectionEvent.Failed(t.message ?: "unknown error"))
+                throw t
+            }
         }
     }
 
