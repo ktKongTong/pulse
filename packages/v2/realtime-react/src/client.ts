@@ -10,6 +10,7 @@ import {
   type PageUpdateInput,
 } from "./transports/page";
 import { MediaWsTransport } from "./transports/media";
+import { RetryBudget } from "./reconnect";
 import type {
   ClientIdentity,
   PulseRealtimeV2Config,
@@ -21,11 +22,25 @@ export class PulseRealtimeV2Client {
   private readonly pages: PageWsTransport;
   private readonly media: MediaWsTransport;
   private sessionPromise: Promise<ClientIdentity> | null = null;
+  private connectPromise: Promise<void> | null = null;
+  private readonly commonRetry: RetryBudget;
+  private readonly mediaRetry: RetryBudget;
+  private disposed = false;
 
   constructor(readonly config: PulseRealtimeV2Config) {
     this.common = new CommonWsTransport(config, this.store);
     this.pages = new PageWsTransport(config, this.store);
     this.media = new MediaWsTransport(config, this.store);
+    this.commonRetry = new RetryBudget(
+      this.store,
+      "common",
+      "common_ws_reconnect_exhausted",
+    );
+    this.mediaRetry = new RetryBudget(
+      this.store,
+      "media",
+      "media_ws_reconnect_exhausted",
+    );
   }
 
   getSnapshot = () => {
@@ -58,12 +73,20 @@ export class PulseRealtimeV2Client {
     return this.sessionPromise;
   }
 
-  async connectCommon() {
-    this.common.connect(await this.ensureSession());
+  connect() {
+    if (this.connectPromise) return this.connectPromise;
+    this.disposed = false;
+    this.commonRetry.reset();
+    this.mediaRetry.reset();
+    this.connectPromise = this.connectOnce().finally(() => {
+      this.connectPromise = null;
+    });
+    return this.connectPromise;
   }
 
   async connectPage(canonicalUrl: string, page?: ClientPageMetadata) {
-    this.pages.connect(canonicalUrl, await this.ensureSession(), page);
+    const identity = await this.connectCommonStage();
+    this.pages.connect(canonicalUrl, identity, page);
   }
 
   updatePage(canonicalUrl: string, frame: PageUpdateInput) {
@@ -76,10 +99,6 @@ export class PulseRealtimeV2Client {
 
   closePage(canonicalUrl: string) {
     this.pages.close(canonicalUrl);
-  }
-
-  async connectMedia() {
-    this.media.connect(await this.ensureSession());
   }
 
   requestStream() {
@@ -96,9 +115,56 @@ export class PulseRealtimeV2Client {
   }
 
   dispose() {
+    this.disposed = true;
+    this.connectPromise = null;
+    this.commonRetry.dispose();
+    this.mediaRetry.dispose();
     this.common.close();
     this.media.close();
     this.pages.closeAll();
     this.store.clearListeners();
+  }
+
+  private async connectOnce() {
+    const identity = await this.connectCommonStage();
+    await this.connectMediaStage(identity);
+  }
+
+  private async connectCommonStage() {
+    const identity = await this.ensureSession();
+    return this.common.connect(identity, {
+      onUnexpectedClose: () => this.handleCommonClosed(),
+    }).then((acceptedIdentity) => {
+      this.commonRetry.reset();
+      return acceptedIdentity;
+    });
+  }
+
+  private async connectMediaStage(identity: ClientIdentity) {
+    return this.media.connect(identity, {
+      onUnexpectedClose: () => this.handleMediaClosed(),
+    }).then(() => {
+      this.mediaRetry.reset();
+    });
+  }
+
+  private handleCommonClosed() {
+    if (this.disposed) return;
+    this.media.close();
+    this.commonRetry.schedule(() => {
+      void this.connectCommonStage()
+        .catch(() => this.handleCommonClosed());
+    });
+  }
+
+  private handleMediaClosed() {
+    if (this.disposed) return;
+    this.mediaRetry.schedule(() => {
+      void this.connectCommonStage()
+        .then((identity) => {
+          void this.connectMediaStage(identity).catch(() => undefined);
+        })
+        .catch(() => this.handleCommonClosed());
+    });
   }
 }

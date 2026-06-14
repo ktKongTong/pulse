@@ -7,7 +7,6 @@ console.log(baseURL)
 export const realtimeConfig: PulseRealtimeV2Config = {
   baseUrl: baseURL,
   sdkVersion: "example-v2",
-  autoConnectCommon: true,
-  autoConnectMedia: true,
+  autoConnect: true,
   onAudioChunk: pushAudioChunk,
 };

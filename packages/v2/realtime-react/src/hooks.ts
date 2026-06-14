@@ -165,7 +165,7 @@ export function useClientStreamControlState() {
 export function useMediaControls() {
   const client = usePulseRealtimeV2Client();
   return {
-    connect: () => client.connectMedia(),
+    connect: () => client.connect(),
     requestStream: () => client.requestStream(),
     stopStream: () => client.stopStream(),
     ackStream: (streamId: string, generation: number, seq: number) =>

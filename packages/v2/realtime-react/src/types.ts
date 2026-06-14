@@ -11,9 +11,11 @@ export type ConnectionStatus =
   | "idle"
   | "claiming_session"
   | "connecting"
+  | "retrying"
   | "connected"
   | "closed"
-  | "error";
+  | "error"
+  | "failed";
 
 export type StreamRuntimeState =
   | { state: "observer" }
@@ -37,8 +39,7 @@ export interface PulseRealtimeV2Config {
   sdkVersion?: string;
   sessionStorageKey?: string;
   tabStorageKey?: string;
-  autoConnectCommon?: boolean;
-  autoConnectMedia?: boolean;
+  autoConnect?: boolean;
   onAudioChunk?: (chunk: ClientAudioChunk) => void;
 }
 

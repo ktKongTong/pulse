@@ -20,19 +20,15 @@ export function PulseRealtimeV2Provider(props: {
     props.config.sdkVersion,
     props.config.sessionStorageKey,
     props.config.tabStorageKey,
-    props.config.autoConnectCommon,
-    props.config.autoConnectMedia,
+    props.config.autoConnect,
   ]);
 
   useEffect(() => {
-    if (props.config.autoConnectCommon !== false) {
-      void client.connectCommon();
-    }
-    if (props.config.autoConnectMedia) {
-      void client.connectMedia();
+    if (props.config.autoConnect !== false) {
+      void client.connect();
     }
     return () => client.dispose();
-  }, [client, props.config.autoConnectCommon, props.config.autoConnectMedia]);
+  }, [client, props.config.autoConnect]);
 
   return (
     <PulseRealtimeV2Context.Provider value={client}>

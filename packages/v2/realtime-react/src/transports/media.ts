@@ -17,14 +17,29 @@ export class MediaWsTransport {
   private socket: WebSocket | null = null;
   private lastRevision = -1;
   private pendingAudio: Extract<MediaServerFrame, { type: "audio.chunk" }> | null = null;
+  private connectPromise: Promise<void> | null = null;
+  private resolveConnect: (() => void) | null = null;
+  private rejectConnect: ((error: Error) => void) | null = null;
+  private closing = false;
+  private onUnexpectedClose: (() => void) | null = null;
 
   constructor(
     private readonly config: PulseRealtimeV2Config,
     private readonly store: RealtimeV2StateStore,
   ) { }
 
-  connect(identity: ClientIdentity) {
-    if (isSocketOpenOrConnecting(this.socket)) return;
+  connect(
+    identity: ClientIdentity,
+    options: { onUnexpectedClose?: () => void } = {},
+  ): Promise<void> {
+    if (this.store.getSnapshot().media.connection.connected) {
+      return Promise.resolve();
+    }
+    if (isSocketOpenOrConnecting(this.socket) && this.connectPromise) {
+      return this.connectPromise;
+    }
+    this.onUnexpectedClose = options.onUnexpectedClose ?? null;
+    this.closing = false;
     closeSocket(this.socket);
     this.socket = null;
     this.store.patch((draft) => {
@@ -32,11 +47,16 @@ export class MediaWsTransport {
     });
     const socket = new WebSocket(resolveWsUrl(this.config.baseUrl, "/api/v1/client/media/ws"));
     this.socket = socket;
+    this.connectPromise = new Promise<void>((resolve, reject) => {
+      this.resolveConnect = resolve;
+      this.rejectConnect = reject;
+    });
     socket.addEventListener("open", () => this.sendHello(socket, identity));
     socket.binaryType = "arraybuffer";
     socket.addEventListener("message", (event) => this.handleMessage(event.data));
     socket.addEventListener("close", () => this.handleClose(socket));
     socket.addEventListener("error", () => this.handleError());
+    return this.connectPromise;
   }
 
   requestStream() {
@@ -65,8 +85,10 @@ export class MediaWsTransport {
   }
 
   close() {
+    this.closing = true;
     closeSocket(this.socket);
     this.socket = null;
+    this.rejectPendingConnect("media_ws_closed");
   }
 
   private sendHello(socket: WebSocket, identity: ClientIdentity) {
@@ -120,6 +142,8 @@ export class MediaWsTransport {
     this.store.patch((draft) => {
       draft.media.connection = nextConnection("connected");
     });
+    this.resolveConnect?.();
+    this.clearPendingConnect();
   }
 
   private applyState(frame: Extract<MediaServerFrame, { type: "state" }>) {
@@ -167,12 +191,30 @@ export class MediaWsTransport {
       draft.media.connection = nextConnection("closed");
       draft.media.stream = { state: "observer" };
     });
+    if (!this.closing) this.rejectPendingConnect("media_ws_closed");
+    if (!this.closing) this.scheduleReconnect();
   }
 
   private handleError() {
     this.store.patch((draft) => {
       draft.media.connection = nextConnection("error", "media_ws_error");
     });
+    this.rejectPendingConnect("media_ws_error");
+  }
+
+  private scheduleReconnect() {
+    this.onUnexpectedClose?.();
+  }
+
+  private rejectPendingConnect(code: string) {
+    this.rejectConnect?.(new Error(code));
+    this.clearPendingConnect();
+  }
+
+  private clearPendingConnect() {
+    this.connectPromise = null;
+    this.resolveConnect = null;
+    this.rejectConnect = null;
   }
 }
 
