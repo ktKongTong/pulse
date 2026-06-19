@@ -1,7 +1,7 @@
 'use client'
 import {
-  CLIENT_MEDIA_WS_PROTOCOL,
-  ClientMediaServerFrameSchema,
+  CLIENT_WS_PROTOCOL,
+  ClientWsServerFrameSchema,
 } from "@ktfun/pulse-protocol";
 import { nextConnection } from "../connection";
 import { resolveSdkVersion } from "../session";
@@ -13,12 +13,15 @@ import { closeSocket, isSocketOpenOrConnecting } from "../utils/socket";
 import { resolveWsUrl } from "../utils/url";
 import { buildAudioChunk, validChunkForStream } from "./media-audio";
 
-export class MediaWsTransport {
+type ClientWsServerFrame = ReturnType<typeof ClientWsServerFrameSchema.parse>;
+
+export class ClientWsTransport {
   private socket: WebSocket | null = null;
-  private lastRevision = -1;
-  private pendingAudio: Extract<MediaServerFrame, { type: "audio.chunk" }> | null = null;
-  private connectPromise: Promise<void> | null = null;
-  private resolveConnect: (() => void) | null = null;
+  private lastSnapshotRevision = -1;
+  private lastStateRevision = -1;
+  private pendingAudio: Extract<ClientWsServerFrame, { type: "audio.chunk" }> | null = null;
+  private connectPromise: Promise<ClientIdentity> | null = null;
+  private resolveConnect: ((identity: ClientIdentity) => void) | null = null;
   private rejectConnect: ((error: Error) => void) | null = null;
   private closing = false;
   private onUnexpectedClose: (() => void) | null = null;
@@ -31,23 +34,26 @@ export class MediaWsTransport {
   connect(
     identity: ClientIdentity,
     options: { onUnexpectedClose?: () => void } = {},
-  ): Promise<void> {
-    if (this.store.getSnapshot().media.connection.connected) {
-      return Promise.resolve();
+  ): Promise<ClientIdentity> {
+    const current = this.store.getSnapshot();
+    if (current.common.connection.connected && current.identity) {
+      return Promise.resolve(current.identity);
     }
     if (isSocketOpenOrConnecting(this.socket) && this.connectPromise) {
       return this.connectPromise;
     }
     this.onUnexpectedClose = options.onUnexpectedClose ?? null;
-    this.closing = false;
     closeSocket(this.socket);
     this.socket = null;
+    this.closing = false;
     this.store.patch((draft) => {
+      draft.common.connection = nextConnection("connecting");
       draft.media.connection = nextConnection("connecting");
     });
-    const socket = new WebSocket(resolveWsUrl(this.config.baseUrl, "/api/v1/client/media/ws"));
+
+    const socket = new WebSocket(resolveWsUrl(this.config.baseUrl, "/api/v1/client/ws"));
     this.socket = socket;
-    this.connectPromise = new Promise<void>((resolve, reject) => {
+    this.connectPromise = new Promise<ClientIdentity>((resolve, reject) => {
       this.resolveConnect = resolve;
       this.rejectConnect = reject;
     });
@@ -61,7 +67,7 @@ export class MediaWsTransport {
 
   requestStream() {
     const requestId = createClientId("stream-request");
-    if (!this.send({ protocol: CLIENT_MEDIA_WS_PROTOCOL, type: "stream.request", requestId })) {
+    if (!this.send({ protocol: CLIENT_WS_PROTOCOL, type: "stream.request", requestId })) {
       return null;
     }
     this.store.patch((draft) => {
@@ -71,12 +77,12 @@ export class MediaWsTransport {
   }
 
   stopStream() {
-    return this.send({ protocol: CLIENT_MEDIA_WS_PROTOCOL, type: "stream.stop" });
+    return this.send({ protocol: CLIENT_WS_PROTOCOL, type: "stream.stop" });
   }
 
   ackStream(streamId: string, generation: number, seq: number) {
     return this.send({
-      protocol: CLIENT_MEDIA_WS_PROTOCOL,
+      protocol: CLIENT_WS_PROTOCOL,
       type: "ack",
       streamId,
       generation,
@@ -88,14 +94,14 @@ export class MediaWsTransport {
     this.closing = true;
     closeSocket(this.socket);
     this.socket = null;
-    this.rejectPendingConnect("media_ws_closed");
+    this.rejectPendingConnect("client_ws_closed");
   }
 
   private sendHello(socket: WebSocket, identity: ClientIdentity) {
     socket.send(JSON.stringify({
-      protocol: CLIENT_MEDIA_WS_PROTOCOL,
+      protocol: CLIENT_WS_PROTOCOL,
       type: "hello",
-      supportedProtocols: [CLIENT_MEDIA_WS_PROTOCOL],
+      supportedProtocols: [CLIENT_WS_PROTOCOL],
       sdkVersion: resolveSdkVersion(this.config),
       sessionId: identity.sessionId,
       tabId: identity.tabId,
@@ -112,10 +118,11 @@ export class MediaWsTransport {
     if (raw instanceof ArrayBuffer) return this.handleAudioBytes(raw);
     const parsedJson = parseTextFrame(raw);
     if (!parsedJson) return;
-    const parsed = ClientMediaServerFrameSchema.safeParse(parsedJson);
+    const parsed = ClientWsServerFrameSchema.safeParse(parsedJson);
     if (!parsed.success) return;
     const frame = parsed.data;
-    if (frame.type === "hello_ack") this.markConnected();
+    if (frame.type === "hello_ack") this.applyHelloAck(frame);
+    else if (frame.type === "snapshot") this.applySnapshot(frame);
     else if (frame.type === "state") this.applyState(frame);
     else if (frame.type === "stream.accepted") this.applyAccepted(frame.stream);
     else if (frame.type === "stream.transition") this.applyTransition(frame);
@@ -123,6 +130,8 @@ export class MediaWsTransport {
     else if (frame.type === "audio.chunk") this.pendingAudio = frame;
     else if (["stream.stopped", "stream.ended", "stream.error"].includes(frame.type)) {
       this.clearStream();
+    } else if (frame.type === "error") {
+      this.applyErrorFrame(frame.code);
     }
   }
 
@@ -138,17 +147,32 @@ export class MediaWsTransport {
     this.ackStream(frame.streamId, frame.generation, frame.seq);
   }
 
-  private markConnected() {
+  private applyHelloAck(frame: Extract<ClientWsServerFrame, { type: "hello_ack" }>) {
+    const identity = {
+      sessionId: frame.session.sessionId,
+      tabId: frame.session.tabId,
+      user: frame.session.user,
+    };
     this.store.patch((draft) => {
+      draft.identity = identity;
+      draft.common.connection = nextConnection("connected");
       draft.media.connection = nextConnection("connected");
     });
-    this.resolveConnect?.();
+    this.resolveConnect?.(identity);
     this.clearPendingConnect();
   }
 
-  private applyState(frame: Extract<MediaServerFrame, { type: "state" }>) {
-    if (frame.revision <= this.lastRevision) return;
-    this.lastRevision = frame.revision;
+  private applySnapshot(frame: Extract<ClientWsServerFrame, { type: "snapshot" }>) {
+    if (frame.snapshot.revision <= this.lastSnapshotRevision) return;
+    this.lastSnapshotRevision = frame.snapshot.revision;
+    this.store.patch((draft) => {
+      draft.common.snapshot = frame.snapshot;
+    });
+  }
+
+  private applyState(frame: Extract<ClientWsServerFrame, { type: "state" }>) {
+    if (frame.revision <= this.lastStateRevision) return;
+    this.lastStateRevision = frame.revision;
     this.store.patch((draft) => {
       draft.media.media = frame.media;
       draft.media.source = frame.stream.source;
@@ -161,7 +185,7 @@ export class MediaWsTransport {
     });
   }
 
-  private applyTransition(frame: Extract<MediaServerFrame, { type: "stream.transition" }>) {
+  private applyTransition(frame: Extract<ClientWsServerFrame, { type: "stream.transition" }>) {
     this.store.patch((draft) => {
       if (draft.media.stream.state !== "active") return;
       draft.media.stream = {
@@ -172,7 +196,7 @@ export class MediaWsTransport {
     });
   }
 
-  private applyRejected(source: Extract<MediaServerFrame, { type: "stream.rejected" }>["source"]) {
+  private applyRejected(source: Extract<ClientWsServerFrame, { type: "stream.rejected" }>["source"]) {
     this.store.patch((draft) => {
       draft.media.stream = { state: "observer" };
       draft.media.source = source;
@@ -185,25 +209,31 @@ export class MediaWsTransport {
     });
   }
 
+  private applyErrorFrame(code: string) {
+    this.store.patch((draft) => {
+      draft.common.connection = nextConnection("error", code);
+      draft.media.connection = nextConnection("error", code);
+    });
+    this.rejectPendingConnect(code);
+  }
+
   private handleClose(socket: WebSocket) {
     if (this.socket === socket) this.socket = null;
     this.store.patch((draft) => {
+      draft.common.connection = nextConnection("closed");
       draft.media.connection = nextConnection("closed");
       draft.media.stream = { state: "observer" };
     });
-    if (!this.closing) this.rejectPendingConnect("media_ws_closed");
-    if (!this.closing) this.scheduleReconnect();
+    if (!this.closing) this.rejectPendingConnect("client_ws_closed");
+    if (!this.closing) this.onUnexpectedClose?.();
   }
 
   private handleError() {
     this.store.patch((draft) => {
-      draft.media.connection = nextConnection("error", "media_ws_error");
+      draft.common.connection = nextConnection("error", "client_ws_error");
+      draft.media.connection = nextConnection("error", "client_ws_error");
     });
-    this.rejectPendingConnect("media_ws_error");
-  }
-
-  private scheduleReconnect() {
-    this.onUnexpectedClose?.();
+    this.rejectPendingConnect("client_ws_error");
   }
 
   private rejectPendingConnect(code: string) {
@@ -217,5 +247,3 @@ export class MediaWsTransport {
     this.rejectConnect = null;
   }
 }
-
-type MediaServerFrame = ReturnType<typeof ClientMediaServerFrameSchema.parse>;

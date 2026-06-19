@@ -5,7 +5,7 @@
 状态：draft
 验证：协议 schema、worker typecheck、worker WS 测试
 
-本文描述 v2 `MediaDO` 的当前目标状态。`MediaDO` 接收 device media WS 的媒体事实，接收 client media WS 的 stream request，并把 audio chunk fanout 给已 accepted 的 client tabs。
+本文描述 v2 `MediaDO` 的当前目标状态。`MediaDO` 接收 device media WS 的媒体事实，接收 `GlobalDO` 路由过来的 client `stream.request` / `stream.stop` / `ack`，并通过 `GlobalDO` 把 media `state`、stream runtime 帧和 `audio.chunk` 转发给 client tabs。`MediaDO` 不再持有 client WebSocket；client socket 由 `GlobalDO` 唯一持有。
 
 ## MediaDO Properties
 
@@ -22,8 +22,7 @@ type MediaDOState = {
 };
 
 type MediaDORuntime = {
-  clientSockets: Map<ClientTabKey, WebSocket>;
-  streamClients: Map<ClientTabKey, WebSocket>;
+  streamClients: Map<ClientTabKey, StreamClientMeta>;
   deviceSocket: WebSocket | null;
   pendingDeviceSessions: Map<WebSocket, string>;
   pendingChunk: AudioChunkMeta | null;
@@ -108,37 +107,24 @@ type ClientMediaNowPlaying = {
 
 ## Client Connections
 
-`clientSockets` 表示已连接且通过 session 校验的 client media WS。
-
-```ts
-type MediaClientConnection = {
-  connectionId: string;
-  sessionId: string;
-  tabId: string;
-  connectedAt: string;
-  lastSeenAt: string;
-};
-```
+MediaDO 不持有 client WebSocket。client socket 由 GlobalDO 唯一持有，MediaDO 只维护 stream client 的 tab 元数据。
 
 `streamClients` 表示已被 server accepted 的 client tab。只有 `streamClients` 接收 audio chunk。
 
 ```ts
-type StreamClient = {
-  connectionId: string;
+type StreamClientMeta = {
   sessionId: string;
   tabId: string;
-  acceptedAt: string;
   lastAckSeq?: number;
 };
 ```
 
 规则：
 
-- `(sessionId, tabId)` 必须有 active common WS，client media WS 才能 accepted。
-- 同 `(sessionId, tabId)` 同时只允许一条 active client media WS；新连接替换旧连接。
-- client media WS close/error 后移除 `clientSockets` 和 `streamClients`。
-- common WS close/error 后，GlobalDO 调用 MediaDO revoke，对应 client media WS 被关闭并移除。
-- 不保留 client media grace；断开就不再贡献 stream requested。
+- `(sessionId, tabId)` 必须有 active client WS（由 GlobalDO 校验），MediaDO 才接受其 `stream.request`。
+- client WS close/error 后，GlobalDO 调用 MediaDO `removeClientStream(sessionId, tabId)` 移除该 tab 的 stream client 身份；若已无 stream client，MediaDO 停止 device stream。
+- device media WS close/error 后，MediaDO 清空 `streamClients`、`streamContext` 和 buffer，并通过 GlobalDO 广播新的 media state。
+- 不保留 client stream grace；断开就不再贡献 stream requested。
 
 ## Stream Context
 
@@ -168,7 +154,7 @@ type StreamContext = {
 
 - `streamContext` 不是 client-visible failed/stalled 状态机。
 - 当最后一个 `streamClient` 离开时，MediaDO 发送 `stream.stop` command，清空 `streamContext` 和 buffer。
-- device `stream.stopped` 或 `error` 结束当前 stream，通知 stream clients `stream.ended`，清空 `streamClients`、`streamContext` 和 buffer。
+- device `stream.stopped` 或 `error` 结束当前 stream，MediaDO 通过 GlobalDO 向 stream clients 投递 `stream.ended` / `stream.error`，清空 `streamClients`、`streamContext` 和 buffer。
 
 ## Pending Device Command
 
@@ -242,6 +228,6 @@ type AudioChunkMeta = {
 
 - device 必须先发 JSON `audio.chunk` metadata，再紧跟 binary frame。
 - binary `byteLength` 必须等于 metadata `byteLength`；不匹配时关闭 device media WS。
-- MediaDO 只向 `streamClients` fanout audio chunk。
+- MediaDO 通过 `GlobalDO.sendAudioChunk(targets, frame, bytes)` 把 audio chunk 投递给 `streamClients` 对应的 client socket；MediaDO 自身不持有 client socket。
 - MediaDO 维护 ring buffer，并用实际 `durationMs` 计算容量。
 - client ack 只更新对应 stream client 的消费位置；ack 不改变 stream source。

@@ -254,6 +254,7 @@ v2 client -> v2 adapter -> canonical
 - `snapshot` 改成 delta patch
 - `presenceState` 从字符串改成对象
 - `roomId` 命名从 `page:<url>` 改成 `presence:page:<url>`
+- 合并 `client.common.ws.v1` 与 `client.media.ws.v1` 为单条 `client.ws.v2`，删除 `/api/v1/client/media/ws` endpoint：握手表改变、client 帧与 server 帧合并、旧 endpoint 不保留，属于 wire-level breaking change
 
 ## 7. Recommended version policy for Pulse
 

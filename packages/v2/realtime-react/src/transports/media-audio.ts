@@ -1,9 +1,9 @@
 'use client'
-import type { ClientMediaAudioChunkFrame } from "@ktfun/pulse-protocol";
+import type { ClientWsAudioChunkFrame } from "@ktfun/pulse-protocol";
 import type { ClientAudioChunk, StreamRuntimeState } from "../types";
 
 export function validChunkForStream(
-  frame: ClientMediaAudioChunkFrame,
+  frame: ClientWsAudioChunkFrame,
   stream: StreamRuntimeState,
 ) {
   return stream.state === "active" &&
@@ -12,7 +12,7 @@ export function validChunkForStream(
 }
 
 export function buildAudioChunk(
-  frame: ClientMediaAudioChunkFrame,
+  frame: ClientWsAudioChunkFrame,
   bytes: ArrayBuffer,
 ): ClientAudioChunk | null {
   if (bytes.byteLength !== frame.byteLength) return null;

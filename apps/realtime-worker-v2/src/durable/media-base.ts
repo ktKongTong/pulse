@@ -1,25 +1,25 @@
 import { DurableObject } from "cloudflare:workers";
-import { CLIENT_MEDIA_WS_PROTOCOL, DeviceMediaClientFrameSchema } from "@ktfun/pulse-protocol";
+import { CLIENT_WS_PROTOCOL, DeviceMediaClientFrameSchema } from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
-import { emptyMediaState, type AudioChunkMeta, type BufferedAudioChunk, type ClientAttachment, type DeviceAttachment, type MediaStoredState, type PendingDeviceAttachment } from "../state/media";
+import { globalStub } from "../env";
+import { emptyMediaState, type AudioChunkMeta, type BufferedAudioChunk, type DeviceAttachment, type MediaStoredState, type PendingDeviceAttachment, type StreamClientMeta } from "../state/media";
+import { mediaStateFrame } from "../state/media";
 import { tabKey } from "../state/keys";
-import { fatalError } from "../utils/error";
 import { RingBuffer } from "../utils/ring-buffer";
 import { nowIso } from "../utils/time";
 import { closeWith, safeSend, socketAttachment } from "../utils/ws";
 import { binaryMatchesMeta, commandExpired, commandTimeoutMs, maxBufferedChunks } from "./media-command";
-import { broadcastMediaState, deviceCommandFrame, restoreMediaSockets, sendAudioChunk, sendStreamEnded } from "./media-sockets";
+import { deviceCommandFrame, restoreMediaSockets } from "./media-sockets";
 import { applyStreamRequestTimeout, bumpMediaState } from "./media-state-ops";
-import { applyAcceptedStream, ensureStreamContext, notifyStreamStopped } from "./media-stream";
+import { applyAcceptedStream, ensureStreamContext } from "./media-stream";
 
-export type MediaAttachment = ClientAttachment | DeviceAttachment | PendingDeviceAttachment;
+export type MediaAttachment = DeviceAttachment | PendingDeviceAttachment;
 
 const STATE_KEY = "media-state";
 
 export class MediaBase extends DurableObject<Env> {
   protected state: MediaStoredState = emptyMediaState(nowIso());
-  protected clients = new Map<string, WebSocket>();
-  protected streamClients = new Map<string, WebSocket>();
+  protected streamClients = new Map<string, StreamClientMeta>();
   protected deviceSocket: WebSocket | null = null;
   protected pendingChunk: AudioChunkMeta | null = null;
   protected buffer: RingBuffer<BufferedAudioChunk>;
@@ -51,8 +51,11 @@ export class MediaBase extends DurableObject<Env> {
       this.state.streamContext.availableFromSeq = this.buffer.values()[0]?.meta.seq ?? meta.seq;
       this.state.streamContext.updatedAt = nowIso();
     }
-    const frame = { protocol: CLIENT_MEDIA_WS_PROTOCOL, type: "audio.chunk", ...meta, replayed: false };
-    sendAudioChunk({ sockets: this.streamClients.values(), frame, bytes });
+    const frame = { protocol: CLIENT_WS_PROTOCOL, type: "audio.chunk", ...meta, replayed: false };
+    const targets = Array.from(this.streamClients.values());
+    if (targets.length > 0) {
+      await globalStub(this.env).sendAudioChunk(targets, frame, bytes);
+    }
   }
 
   protected async applyDeviceAck(frame: Extract<ReturnType<typeof DeviceMediaClientFrameSchema.parse>, { type: "ack" }>) {
@@ -71,10 +74,13 @@ export class MediaBase extends DurableObject<Env> {
     await this.stateChanged(false);
   }
 
-  protected async stopClientStream(attachment: ClientAttachment) {
-    const key = tabKey(attachment.sessionId, attachment.tabId);
+  protected async stopClientStream(meta: StreamClientMeta) {
+    const key = tabKey(meta.sessionId, meta.tabId);
     this.streamClients.delete(key);
-    notifyStreamStopped(this.clients, attachment);
+    await globalStub(this.env).sendClientFrame(meta.sessionId, meta.tabId, {
+      protocol: CLIENT_WS_PROTOCOL,
+      type: "stream.stopped",
+    });
     await this.stopIfNoStreamClients();
   }
 
@@ -123,7 +129,14 @@ export class MediaBase extends DurableObject<Env> {
   protected endStreamForClients() {
     const context = this.state.streamContext;
     if (!context) return;
-    sendStreamEnded(this.streamClients.values(), context.streamId, context.generation);
+    for (const meta of this.streamClients.values()) {
+      void globalStub(this.env).sendClientFrame(meta.sessionId, meta.tabId, {
+        protocol: CLIENT_WS_PROTOCOL,
+        type: "stream.ended",
+        streamId: context.streamId,
+        generation: context.generation,
+      });
+    }
     this.streamClients.clear();
     this.state.streamContext = null;
     this.buffer.clear();
@@ -133,11 +146,7 @@ export class MediaBase extends DurableObject<Env> {
     const attachment = socketAttachment<MediaAttachment>(socket);
     if (!attachment) return;
     if (attachment.kind === "pending-device") return;
-    if (attachment.kind === "device") return this.cleanupDevice(socket);
-    const key = tabKey(attachment.sessionId, attachment.tabId);
-    this.clients.delete(key);
-    this.streamClients.delete(key);
-    await this.stopIfNoStreamClients();
+    return this.cleanupDevice(socket);
   }
 
   protected async revokeDevice(deviceSessionId: string) {
@@ -151,24 +160,18 @@ export class MediaBase extends DurableObject<Env> {
   }
 
   protected broadcastState() {
-    broadcastMediaState({ sockets: this.clients.values(), state: this.state });
+    void globalStub(this.env).broadcastClientFrame(mediaStateFrame(this.state));
+  }
+
+  protected isActiveDeviceSocket(socket: WebSocket) {
+    return socket === this.deviceSocket;
   }
 
   private restoreSockets() {
     restoreMediaSockets({
       sockets: this.ctx.getWebSockets(),
-      clients: this.clients,
       setDeviceSocket: (socket) => { this.deviceSocket = socket; },
     });
-  }
-
-  protected closeClientFatal(socket: WebSocket, code: string) {
-    safeSend(socket, fatalError("media", code));
-    closeWith(socket, 4000, code);
-  }
-
-  protected isActiveDeviceSocket(socket: WebSocket) {
-    return socket === this.deviceSocket;
   }
 
   private async cleanupDevice(socket: WebSocket) {
@@ -189,6 +192,9 @@ export class MediaBase extends DurableObject<Env> {
   private markDeviceOffline(updatedAt: string) {
     this.state.device = null;
     this.state.pendingCommand = null;
+    this.state.streamContext = null;
+    this.streamClients.clear();
+    this.buffer.clear();
     this.state.deviceStreamState = this.state.deviceStreamState
       ? { ...this.state.deviceStreamState, playback: "paused", capture: "no-capture" }
       : null;

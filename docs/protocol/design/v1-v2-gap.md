@@ -21,7 +21,7 @@ v2 的目标主路径是：
 
 | v1 设计 | v1 位置 | v2 状态 | 处理 |
 | --- | --- | --- | --- |
-| `realtime.ws.v2` 泛 room websocket | `apps/realtime-worker/src/api/routes/realtime.ts`、`packages/realtime-react/src/room-subscription-manager.ts` | 被 `client.common.ws.v1`、`client.page.ws.v1`、`client.media.ws.v1` 拆分替代 | 删除 v1 generic room transport |
+| `realtime.ws.v2` 泛 room websocket | `apps/realtime-worker/src/api/routes/realtime.ts`、`packages/realtime-react/src/room-subscription-manager.ts` | 被 `client.ws.v2`、`client.page.ws.v1` 拆分替代（`client.common.ws.v1` 与 `client.media.ws.v1` 已合并为 `client.ws.v2`） | 删除 v1 generic room transport |
 | `roomKind` 统一 snapshot | `packages/realtime-protocol/src/realtime-v2.ts` | v2 endpoint 按职责拆分，不再用一个 snapshot 承载 global/page/chat/media | 删除 |
 | `chat:*` room | `apps/realtime-worker/src/api/do/room/chat-room.ts`、`packages/realtime-react/src/hooks.ts` | v2 当前不设计 chat | 删除 |
 | HTTP web ingest | `apps/realtime-worker/src/api/routes/ingest.ts`、`packages/realtime-react/src/realtime-client.ts` | v2 common/page WS 承载客户端实时状态，不保留旧 HTTP ingest 兼容层 | 删除 |

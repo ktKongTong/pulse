@@ -1,6 +1,5 @@
 import {
-  CLIENT_COMMON_WS_PROTOCOL,
-  CLIENT_MEDIA_WS_PROTOCOL,
+  CLIENT_WS_PROTOCOL,
   DEVICE_CONNECTION_PROTOCOL,
   DEVICE_MEDIA_CONNECTION_PROTOCOL,
   DEVICE_MEDIA_PROTOCOL,
@@ -40,25 +39,26 @@ export function tick(ms = 20) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function connectCommon(
+export async function connectClient(
   env: Env,
   tabId: string,
 ) {
   const global = env.GLOBAL_DO.getByName("global");
-  const claim = await global.claimSession({ protocol: CLIENT_COMMON_WS_PROTOCOL, sdkVersion: "test" });
-  const common = (await global.fetch(wsRequest("https://pulse.test/api/v1/client/ws"))).webSocket!;
-  common.accept();
-  common.send(JSON.stringify({
-    protocol: CLIENT_COMMON_WS_PROTOCOL,
+  const claim = await global.claimSession({ protocol: CLIENT_WS_PROTOCOL, sdkVersion: "test" });
+  const client = (await global.fetch(wsRequest("https://pulse.test/api/v1/client/ws"))).webSocket!;
+  client.accept();
+  client.send(JSON.stringify({
+    protocol: CLIENT_WS_PROTOCOL,
     type: "hello",
-    supportedProtocols: [CLIENT_COMMON_WS_PROTOCOL],
+    supportedProtocols: [CLIENT_WS_PROTOCOL],
     sdkVersion: "test",
     sessionId: claim.sessionId,
     tabId,
   }));
-  await nextMessage(common);
-  await nextMessage(common);
-  return { global, claim, common };
+  await nextMessage(client); // hello_ack
+  await nextMessage(client); // snapshot
+  const state = await nextMessage(client); // state
+  return { global, claim, client, state };
 }
 
 export async function connectDevice(env: Env, deviceId = "owner") {
@@ -89,25 +89,6 @@ export async function connectDeviceMedia(env: Env, media: DurableObjectStub, dev
       audio: { codecs: ["pcm16-wav"] },
       supportedProtocols: [DEVICE_MEDIA_PROTOCOL],
     },
-  }));
-  await nextMessage(socket);
-  return socket;
-}
-
-export async function connectClientMedia(
-  media: DurableObjectStub,
-  sessionId: string,
-  tabId: string,
-) {
-  const socket = (await media.fetch(wsRequest("https://pulse.test/api/v1/client/media/ws"))).webSocket!;
-  socket.accept();
-  socket.send(JSON.stringify({
-    protocol: CLIENT_MEDIA_WS_PROTOCOL,
-    type: "hello",
-    supportedProtocols: [CLIENT_MEDIA_WS_PROTOCOL],
-    sdkVersion: "test",
-    sessionId,
-    tabId,
   }));
   await nextMessage(socket);
   return socket;

@@ -1,16 +1,15 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import {
-  CLIENT_COMMON_WS_PROTOCOL,
-  CLIENT_MEDIA_WS_PROTOCOL,
   CLIENT_PAGE_WS_PROTOCOL,
+  CLIENT_WS_PROTOCOL,
   DEVICE_MEDIA_PROTOCOL,
   PRESENCE_PROTOCOL,
 } from "@ktfun/pulse-protocol";
+import app from "../src/index";
 import type { Env } from "../src/env";
 import {
-  connectClientMedia,
-  connectCommon,
+  connectClient,
   connectDevice,
   connectDeviceMedia,
   nextBinaryMessage,
@@ -20,17 +19,24 @@ import {
   wsRequest,
 } from "./ws-helpers";
 
+const ownerMedia = (env as Env).MEDIA_DO.getByName("owner");
+
 describe("realtime-worker-v2 client ws", () => {
-  it("claims a session and connects common ws", async () => {
-    const { common } = await connectCommon(env as Env, "tab-1");
-    common.close();
+  it("claims a session and connects the single client ws", async () => {
+    const { client } = await connectClient(env as Env, "tab-1");
+    client.close();
     await tick();
+  });
+
+  it("removed the legacy /api/v1/client/media/ws endpoint", async () => {
+    const res = await app.fetch(new Request("https://pulse.test/api/v1/client/media/ws"), {} as Env);
+    expect(res.status).toBe(404);
   });
 
   it("publishes page snapshots through PageDO", async () => {
     const suffix = crypto.randomUUID();
     const page = (env as Env).PAGE_DO.getByName(`page:${suffix}`);
-    const { claim, common } = await connectCommon(env as Env, "tab-1");
+    const { claim, client } = await connectClient(env as Env, "tab-1");
     const pageResponse = await page.fetch(wsRequest("https://pulse.test/api/v1/client/page/ws?canonicalUrl=https%3A%2F%2Fexample.com%2Fa"));
     const pageSocket = pageResponse.webSocket!;
     pageSocket.accept();
@@ -48,13 +54,13 @@ describe("realtime-worker-v2 client ws", () => {
       type: "snapshot",
       snapshot: { sessions: { totalCount: 1 } },
     });
-    common.close();
+    client.close();
     pageSocket.close();
     await tick();
   });
 
   it("does not rebroadcast unchanged device focus just because presence timestamps changed", async () => {
-    const { common } = await connectCommon(env as Env, `presence-tab-${crypto.randomUUID()}`);
+    const { client } = await connectClient(env as Env, `presence-tab-${crypto.randomUUID()}`);
     const device = await connectDevice(env as Env);
 
     const presence = (sentAt: string) => ({
@@ -73,63 +79,52 @@ describe("realtime-worker-v2 client ws", () => {
     });
 
     device.common.send(JSON.stringify(presence("2026-05-24T14:53:56.340Z")));
-    expect(await nextMessage(common)).toMatchObject({
+    expect(await nextMessage(client)).toMatchObject({
       type: "snapshot",
       snapshot: { owner: { focus: { app: { id: "com.microsoft.edgemac" } } } },
     });
 
     device.common.send(JSON.stringify(presence("2026-05-24T14:54:12.397Z")));
     await expect(Promise.race([
-      nextMessage(common),
+      nextMessage(client),
       tick(50).then(() => "no-message"),
     ])).resolves.toBe("no-message");
 
-    common.close();
+    client.close();
     device.common.close();
     await tick();
   });
 
-  it("accepts client media stream requests when device source is ready", async () => {
-    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
-    const { claim, common } = await connectCommon(env as Env, "media-tab");
+  it("accepts client media stream requests on the single client ws when device source is ready", async () => {
     const device = await connectDevice(env as Env);
-    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    const deviceMedia = await connectDeviceMedia(env as Env, ownerMedia, device.deviceSessionId);
     sendReadyStreamState(deviceMedia);
-    const clientMedia = await connectClientMedia(media, claim.sessionId, "media-tab");
-    expect(await nextMessage(clientMedia)).toMatchObject({ type: "state", stream: { source: { state: "ready" } } });
-    clientMedia.send(JSON.stringify({ protocol: CLIENT_MEDIA_WS_PROTOCOL, type: "stream.request", requestId: "req-1" }));
-    expect(await nextMessage(clientMedia)).toMatchObject({ type: "stream.accepted", requestId: "req-1" });
+    const { client, state } = await connectClient(env as Env, "media-tab");
+    expect(state).toMatchObject({ type: "state", stream: { source: { state: "ready" } } });
+    client.send(JSON.stringify({ protocol: CLIENT_WS_PROTOCOL, type: "stream.request", requestId: "req-1" }));
+    expect(await nextMessage(client)).toMatchObject({ type: "stream.accepted", requestId: "req-1" });
     expect(await nextMessage(deviceMedia)).toMatchObject({ type: "command", payload: { command: { type: "stream.requested" } } });
-    common.close();
-    clientMedia.close();
+    client.close();
     deviceMedia.close();
     device.common.close();
     await tick();
   });
 
-  it("binds media ws to the same non-default device id as common ws", async () => {
-    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
-    const { claim, common } = await connectCommon(env as Env, "named-device-tab");
+  it("reflects named device media state on the single client ws", async () => {
     const device = await connectDevice(env as Env, "pulse");
-    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId, device.deviceId);
+    const deviceMedia = await connectDeviceMedia(env as Env, ownerMedia, device.deviceSessionId, device.deviceId);
     sendReadyStreamState(deviceMedia);
-    const clientMedia = await connectClientMedia(media, claim.sessionId, "named-device-tab");
-    expect(await nextMessage(clientMedia)).toMatchObject({
-      type: "state",
-      stream: { source: { state: "ready" } },
-    });
-    common.close();
-    clientMedia.close();
+    const { client, state } = await connectClient(env as Env, "named-device-tab");
+    expect(state).toMatchObject({ type: "state", stream: { source: { state: "ready" } } });
+    client.close();
     deviceMedia.close();
     device.common.close();
     await tick();
   });
 
   it("keeps client now playing playback aligned with device stream state", async () => {
-    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
-    const { claim, common } = await connectCommon(env as Env, "media-playback-tab");
     const device = await connectDevice(env as Env);
-    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    const deviceMedia = await connectDeviceMedia(env as Env, ownerMedia, device.deviceSessionId);
     deviceMedia.send(JSON.stringify({
       protocol: DEVICE_MEDIA_PROTOCOL,
       type: "media.updated",
@@ -160,8 +155,8 @@ describe("realtime-worker-v2 client ws", () => {
         },
       },
     }));
-    const clientMedia = await connectClientMedia(media, claim.sessionId, "media-playback-tab");
-    expect(await nextMessage(clientMedia)).toMatchObject({
+    const { client, state } = await connectClient(env as Env, "media-playback-tab");
+    expect(state).toMatchObject({
       type: "state",
       media: {
         playback: "paused",
@@ -170,18 +165,15 @@ describe("realtime-worker-v2 client ws", () => {
       },
       stream: { source: { state: "idle" } },
     });
-    common.close();
-    clientMedia.close();
+    client.close();
     deviceMedia.close();
     device.common.close();
     await tick();
   });
 
   it("marks now playing paused when the device media socket disconnects", async () => {
-    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
-    const { claim, common } = await connectCommon(env as Env, "media-disconnect-tab");
     const device = await connectDevice(env as Env);
-    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    const deviceMedia = await connectDeviceMedia(env as Env, ownerMedia, device.deviceSessionId);
     deviceMedia.send(JSON.stringify({
       protocol: DEVICE_MEDIA_PROTOCOL,
       type: "media.updated",
@@ -200,32 +192,28 @@ describe("realtime-worker-v2 client ws", () => {
       },
     }));
     sendReadyStreamState(deviceMedia);
-
-    const clientMedia = await connectClientMedia(media, claim.sessionId, "media-disconnect-tab");
-    expect(await nextMessage(clientMedia)).toMatchObject({
+    const { client, state } = await connectClient(env as Env, "media-disconnect-tab");
+    expect(state).toMatchObject({
       type: "state",
       media: { playback: "playing", current: { playbackState: "playing" } },
       stream: { source: { state: "ready" } },
     });
 
     deviceMedia.close();
-    expect(await nextMessage(clientMedia)).toMatchObject({
+    expect(await nextMessage(client)).toMatchObject({
       type: "state",
       media: { playback: "paused", current: { playbackState: "paused" } },
       stream: { source: { state: "offline" } },
     });
 
-    common.close();
-    clientMedia.close();
+    client.close();
     device.common.close();
     await tick();
   });
 
   it("marks now playing paused when the shared device heartbeat lease expires", async () => {
-    const media = (env as Env).MEDIA_DO.getByName("owner");
-    const { claim, common } = await connectCommon(env as Env, "media-lease-tab");
     const device = await connectDevice(env as Env);
-    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    const deviceMedia = await connectDeviceMedia(env as Env, ownerMedia, device.deviceSessionId);
     deviceMedia.send(JSON.stringify({
       protocol: DEVICE_MEDIA_PROTOCOL,
       type: "media.updated",
@@ -244,15 +232,14 @@ describe("realtime-worker-v2 client ws", () => {
       },
     }));
     sendReadyStreamState(deviceMedia);
-
-    const clientMedia = await connectClientMedia(media, claim.sessionId, "media-lease-tab");
-    expect(await nextMessage(clientMedia)).toMatchObject({
+    const { client, state } = await connectClient(env as Env, "media-lease-tab");
+    expect(state).toMatchObject({
       type: "state",
       media: { playback: "playing", current: { playbackState: "playing" } },
       stream: { source: { state: "ready" } },
     });
 
-    const offlineState = nextMessage(clientMedia);
+    const offlineState = nextMessage(client);
     await device.device.checkHeartbeatLease(Date.now() + 151_000);
     expect(await offlineState).toMatchObject({
       type: "state",
@@ -260,23 +247,19 @@ describe("realtime-worker-v2 client ws", () => {
       stream: { source: { state: "offline" } },
     });
 
-    common.close();
-    clientMedia.close();
+    client.close();
     device.common.close();
     deviceMedia.close();
     await tick();
   });
 
   it("returns disabled source after device rejects requested stream", async () => {
-    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
-    const { claim, common } = await connectCommon(env as Env, "reject-tab");
     const device = await connectDevice(env as Env);
-    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    const deviceMedia = await connectDeviceMedia(env as Env, ownerMedia, device.deviceSessionId);
     sendReadyStreamState(deviceMedia);
-    const clientMedia = await connectClientMedia(media, claim.sessionId, "reject-tab");
-    await nextMessage(clientMedia);
-    clientMedia.send(JSON.stringify({ protocol: CLIENT_MEDIA_WS_PROTOCOL, type: "stream.request", requestId: "req-reject" }));
-    await nextMessage(clientMedia);
+    const { client } = await connectClient(env as Env, "reject-tab");
+    client.send(JSON.stringify({ protocol: CLIENT_WS_PROTOCOL, type: "stream.request", requestId: "req-reject" }));
+    await nextMessage(client);
     const command = await nextMessage(deviceMedia) as { payload: { commandId: string } };
     deviceMedia.send(JSON.stringify({
       protocol: DEVICE_MEDIA_PROTOCOL,
@@ -289,27 +272,23 @@ describe("realtime-worker-v2 client ws", () => {
         sentAt: new Date().toISOString(),
       },
     }));
-    expect(await nextMessage(clientMedia)).toMatchObject({
+    expect(await nextMessage(client)).toMatchObject({
       type: "state",
       stream: { source: { state: "disabled" } },
     });
-    common.close();
-    clientMedia.close();
+    client.close();
     deviceMedia.close();
     device.common.close();
     await tick();
   });
 
-  it("forwards binary audio chunks and accepts client ack", async () => {
-    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
-    const { claim, common } = await connectCommon(env as Env, "audio-tab");
+  it("forwards binary audio chunks on the single client ws and accepts client ack", async () => {
     const device = await connectDevice(env as Env);
-    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    const deviceMedia = await connectDeviceMedia(env as Env, ownerMedia, device.deviceSessionId);
     sendReadyStreamState(deviceMedia);
-    const clientMedia = await connectClientMedia(media, claim.sessionId, "audio-tab");
-    await nextMessage(clientMedia);
-    clientMedia.send(JSON.stringify({ protocol: CLIENT_MEDIA_WS_PROTOCOL, type: "stream.request", requestId: "req-audio" }));
-    const accepted = await nextMessage(clientMedia) as { stream: { streamId: string; generation: number } };
+    const { client } = await connectClient(env as Env, "audio-tab");
+    client.send(JSON.stringify({ protocol: CLIENT_WS_PROTOCOL, type: "stream.request", requestId: "req-audio" }));
+    const accepted = await nextMessage(client) as { stream: { streamId: string; generation: number } };
     const command = await nextMessage(deviceMedia) as { payload: { commandId: string } };
     deviceMedia.send(JSON.stringify({
       protocol: DEVICE_MEDIA_PROTOCOL,
@@ -325,8 +304,8 @@ describe("realtime-worker-v2 client ws", () => {
         sentAt: new Date().toISOString(),
       },
     }));
-    const audioFramePromise = nextMessage(clientMedia);
-    const rawAudioPromise = nextBinaryMessage(clientMedia);
+    const audioFramePromise = nextMessage(client);
+    const rawAudioPromise = nextBinaryMessage(client);
     deviceMedia.send(JSON.stringify({
       protocol: DEVICE_MEDIA_PROTOCOL,
       type: "audio.chunk",
@@ -345,25 +324,22 @@ describe("realtime-worker-v2 client ws", () => {
     expect(await audioFramePromise).toMatchObject({ type: "audio.chunk", seq: 2, byteLength: 4 });
     const raw = await rawAudioPromise;
     expect(raw instanceof ArrayBuffer || ArrayBuffer.isView(raw) || raw instanceof Blob).toBe(true);
-    clientMedia.send(JSON.stringify({
-      protocol: CLIENT_MEDIA_WS_PROTOCOL,
+    client.send(JSON.stringify({
+      protocol: CLIENT_WS_PROTOCOL,
       type: "ack",
       streamId: accepted.stream.streamId,
       generation: accepted.stream.generation,
       seq: 2,
     }));
-    common.close();
-    clientMedia.close();
+    client.close();
     deviceMedia.close();
     device.common.close();
     await tick();
   });
 
   it("does not let unsupported stream sources appear disabled", async () => {
-    const media = (env as Env).MEDIA_DO.getByName(`media:${crypto.randomUUID()}`);
-    const { claim, common } = await connectCommon(env as Env, "idle-tab");
     const device = await connectDevice(env as Env);
-    const deviceMedia = await connectDeviceMedia(env as Env, media, device.deviceSessionId);
+    const deviceMedia = await connectDeviceMedia(env as Env, ownerMedia, device.deviceSessionId);
     deviceMedia.send(JSON.stringify({
       protocol: DEVICE_MEDIA_PROTOCOL,
       type: "stream.state.updated",
@@ -372,13 +348,12 @@ describe("realtime-worker-v2 client ws", () => {
         state: { permission: "disallow", playback: "playing", capture: "no-capture" },
       },
     }));
-    const clientMedia = await connectClientMedia(media, claim.sessionId, "idle-tab");
-    expect(await nextMessage(clientMedia)).toMatchObject({
+    const { client, state } = await connectClient(env as Env, "idle-tab");
+    expect(state).toMatchObject({
       type: "state",
       stream: { source: { state: "idle" } },
     });
-    common.close();
-    clientMedia.close();
+    client.close();
     deviceMedia.close();
     device.common.close();
     await tick();

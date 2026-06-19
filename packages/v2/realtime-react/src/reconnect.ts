@@ -4,13 +4,15 @@ import { nextConnection } from "./connection";
 
 export const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000] as const;
 
+export type RetryTarget = "common" | "media";
+
 export class RetryBudget {
   private failures = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly store: RealtimeV2StateStore,
-    private readonly target: "common" | "media",
+    private readonly targets: ReadonlyArray<RetryTarget>,
     private readonly exhaustedCode: string,
   ) { }
 
@@ -23,7 +25,9 @@ export class RetryBudget {
     const delay = RECONNECT_DELAYS_MS[this.failures]!;
     this.failures += 1;
     this.store.patch((draft) => {
-      draft[this.target].connection = nextConnection("retrying");
+      for (const target of this.targets) {
+        draft[target].connection = nextConnection("retrying");
+      }
     });
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -49,10 +53,12 @@ export class RetryBudget {
 
   private markFailed() {
     this.store.patch((draft) => {
-      draft[this.target].connection = nextConnection(
-        "failed" satisfies ConnectionStatus,
-        this.exhaustedCode,
-      );
+      for (const target of this.targets) {
+        draft[target].connection = nextConnection(
+          "failed" satisfies ConnectionStatus,
+          this.exhaustedCode,
+        );
+      }
     });
   }
 }

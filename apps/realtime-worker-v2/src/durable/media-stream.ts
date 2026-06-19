@@ -1,8 +1,5 @@
-import { CLIENT_MEDIA_WS_PROTOCOL } from "@ktfun/pulse-protocol";
-import type { ClientAttachment, MediaStoredState, StreamContext } from "../state/media";
-import { tabKey } from "../state/keys";
+import type { MediaStoredState, StreamContext } from "../state/media";
 import { nowIso } from "../utils/time";
-import { safeSend } from "../utils/ws";
 
 export function ensureStreamContext(
   state: MediaStoredState,
@@ -19,16 +16,6 @@ export function ensureStreamContext(
     };
   }
   return state.streamContext;
-}
-
-export function notifyStreamStopped(
-  clients: Map<string, WebSocket>,
-  attachment: ClientAttachment,
-) {
-  safeSend(clients.get(tabKey(attachment.sessionId, attachment.tabId)), {
-    protocol: CLIENT_MEDIA_WS_PROTOCOL,
-    type: "stream.stopped",
-  });
 }
 
 export function applyAcceptedStream(

@@ -2,8 +2,15 @@
 
 归属：`packages/v2/realtime-protocol`、`apps/realtime-worker-v2`、`packages/v2/realtime-react`
 代码范围：web client ClientWS/MediaWS 合并；device/native 侧暂不合并
-状态：active
+状态：completed（2026-06-19）
 验证：protocol schema、worker WS tests、web SDK tests、typecheck
+
+完成验证：
+
+- `pnpm --filter @ktfun/pulse-protocol typecheck/test` 通过。
+- `pnpm --filter @pulse/realtime-worker-v2 typecheck/test` 通过（12 个 client-ws 测试，含 `/api/v1/client/media/ws` 已删除断言）。
+- `pnpm --filter @ktfun/pulse typecheck/test` 通过（7 个 SDK 测试，覆盖单 socket hello/stream/audio/retry）。
+- `pnpm --filter @pulse/example typecheck` 通过。
 
 ## Summary
 

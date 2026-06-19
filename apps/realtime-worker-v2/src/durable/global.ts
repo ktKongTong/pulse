@@ -1,5 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
-import { CLIENT_COMMON_WS_PROTOCOL, ClientCommonClientFrameSchema, ClientSessionClaimRequestSchema, type ClientSessionClaimResponse, type ClientUser, type OwnerFocus } from "@ktfun/pulse-protocol";
+import {
+  CLIENT_WS_PROTOCOL,
+  ClientSessionClaimRequestSchema,
+  ClientWsClientFrameSchema,
+  type ClientSessionClaimResponse,
+  type ClientUser,
+  type OwnerFocus,
+} from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
 import { mediaStub, pageStub } from "../env";
 import { buildGlobalSnapshot, emptyGlobalState, type CommonConnectionMeta, type GlobalStoredState, type PageAggregate } from "../state/client";
@@ -11,8 +18,8 @@ import { createAcceptedPair, upgradeResponse } from "../utils/pair";
 import { nowIso } from "../utils/time";
 import { closeWith, safeSend, socketAttachment } from "../utils/ws";
 
-interface CommonAttachment extends CommonConnectionMeta {
-  protocol: typeof CLIENT_COMMON_WS_PROTOCOL;
+interface ClientAttachment extends CommonConnectionMeta {
+  protocol: typeof CLIENT_WS_PROTOCOL;
 }
 
 const STATE_KEY = "global-state";
@@ -38,7 +45,7 @@ export class GlobalDO extends DurableObject<Env> {
       this.state.users[sessionId] = user;
       await this.persist();
     }
-    return { protocol: CLIENT_COMMON_WS_PROTOCOL, sessionId, user };
+    return { protocol: CLIENT_WS_PROTOCOL, sessionId, user };
   }
 
   async isTabActive(sessionId: string, tabId: string) {
@@ -76,6 +83,27 @@ export class GlobalDO extends DurableObject<Env> {
     this.broadcastSnapshot();
   }
 
+  async broadcastClientFrame(frame: unknown) {
+    for (const socket of this.connections.values()) safeSend(socket, frame);
+  }
+
+  async sendClientFrame(sessionId: string, tabId: string, frame: unknown) {
+    safeSend(this.connections.get(tabKey(sessionId, tabId)), frame);
+  }
+
+  async sendAudioChunk(
+    targets: ReadonlyArray<{ sessionId: string; tabId: string }>,
+    frame: unknown,
+    bytes: ArrayBuffer,
+  ) {
+    for (const target of targets) {
+      const socket = this.connections.get(tabKey(target.sessionId, target.tabId));
+      if (!socket) continue;
+      if (!safeSend(socket, frame)) continue;
+      try { socket.send(bytes); } catch {}
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected websocket", { status: 426 });
     const { client, server } = createAcceptedPair();
@@ -84,13 +112,26 @@ export class GlobalDO extends DurableObject<Env> {
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-    const attachment = socketAttachment<CommonAttachment>(socket);
-    const frame = parseFrame(ClientCommonClientFrameSchema, message);
+    const attachment = socketAttachment<ClientAttachment>(socket);
+    const frame = parseFrame(ClientWsClientFrameSchema, message);
     if (!frame) return this.closeFatal(socket, "invalid_frame");
-    if (frame.type !== "hello") return this.closeFatal(socket, "hello_required");
-    if (!frame.supportedProtocols.includes(CLIENT_COMMON_WS_PROTOCOL)) return this.closeFatal(socket, "unsupported_protocol");
-    if (attachment) return;
-    await this.acceptHello(socket, frame.sessionId, frame.tabId);
+    if (frame.type === "hello") {
+      if (attachment) return;
+      if (!frame.supportedProtocols.includes(CLIENT_WS_PROTOCOL)) return this.closeFatal(socket, "unsupported_protocol");
+      return this.acceptHello(socket, frame.sessionId, frame.tabId);
+    }
+    if (!attachment) return this.closeFatal(socket, "hello_required");
+    if (frame.type === "stream.request") {
+      await mediaStub(this.env).handleStreamRequest(attachment.sessionId, attachment.tabId, frame.requestId);
+      return;
+    }
+    if (frame.type === "stream.stop") {
+      await mediaStub(this.env).handleStreamStop(attachment.sessionId, attachment.tabId);
+      return;
+    }
+    if (frame.type === "ack") {
+      await mediaStub(this.env).handleClientAck(attachment.sessionId, attachment.tabId, frame.streamId, frame.generation, frame.seq);
+    }
   }
 
   async webSocketClose(socket: WebSocket) { await this.removeSocket(socket); }
@@ -100,12 +141,12 @@ export class GlobalDO extends DurableObject<Env> {
     const key = tabKey(sessionId, tabId);
     const previous = this.connections.get(key);
     if (previous && previous !== socket) {
-      safeSend(previous, fatalError("common", "connection_superseded"));
+      safeSend(previous, fatalError("client", "connection_superseded"));
       closeWith(previous, 4000, "connection_superseded");
     }
     const now = nowIso();
-    const connection: CommonAttachment = {
-      protocol: CLIENT_COMMON_WS_PROTOCOL, connectionId: crypto.randomUUID(),
+    const connection: ClientAttachment = {
+      protocol: CLIENT_WS_PROTOCOL, connectionId: crypto.randomUUID(),
       sessionId, tabId, connectedAt: now, lastSeenAt: now,
       user: this.state.users[sessionId],
     };
@@ -114,15 +155,16 @@ export class GlobalDO extends DurableObject<Env> {
     this.bump();
     await this.persist();
     safeSend(socket, {
-      protocol: CLIENT_COMMON_WS_PROTOCOL, type: "hello_ack",
-      selectedProtocol: CLIENT_COMMON_WS_PROTOCOL, connectionId: connection.connectionId,
+      protocol: CLIENT_WS_PROTOCOL, type: "hello_ack",
+      selectedProtocol: CLIENT_WS_PROTOCOL, connectionId: connection.connectionId,
       session: { sessionId, tabId, user: connection.user },
     });
     this.broadcastSnapshot();
+    await mediaStub(this.env).sendCurrentState(sessionId, tabId);
   }
 
   private async removeSocket(socket: WebSocket) {
-    const attachment = socketAttachment<CommonAttachment>(socket);
+    const attachment = socketAttachment<ClientAttachment>(socket);
     if (!attachment) return;
     const key = tabKey(attachment.sessionId, attachment.tabId);
     if (this.connections.get(key) !== socket) return;
@@ -140,30 +182,30 @@ export class GlobalDO extends DurableObject<Env> {
     for (const canonicalUrl of pages) {
       await pageStub(this.env, canonicalUrl).revokeTab(sessionId, tabId);
     }
-    await mediaStub(this.env).revokeClient(sessionId, tabId);
+    await mediaStub(this.env).removeClientStream(sessionId, tabId);
   }
 
   private broadcastSnapshot() {
     const snapshot = buildGlobalSnapshot({ state: this.state, connections: this.connectionMetas() });
-    const frame = { protocol: CLIENT_COMMON_WS_PROTOCOL, type: "snapshot", snapshot };
+    const frame = { protocol: CLIENT_WS_PROTOCOL, type: "snapshot", snapshot };
     for (const socket of this.connections.values()) safeSend(socket, frame);
   }
 
   private connectionMetas(): CommonConnectionMeta[] {
     return Array.from(this.connections.values())
-      .map((socket) => socketAttachment<CommonAttachment>(socket))
-      .filter((item): item is CommonAttachment => Boolean(item));
+      .map((socket) => socketAttachment<ClientAttachment>(socket))
+      .filter((item): item is ClientAttachment => Boolean(item));
   }
 
   private restoreSockets() {
     for (const socket of this.ctx.getWebSockets()) {
-      const attachment = socketAttachment<CommonAttachment>(socket);
-      if (attachment?.protocol === CLIENT_COMMON_WS_PROTOCOL) this.connections.set(tabKey(attachment.sessionId, attachment.tabId), socket);
+      const attachment = socketAttachment<ClientAttachment>(socket);
+      if (attachment?.protocol === CLIENT_WS_PROTOCOL) this.connections.set(tabKey(attachment.sessionId, attachment.tabId), socket);
     }
   }
 
   private closeFatal(socket: WebSocket, code: string) {
-    safeSend(socket, fatalError("common", code));
+    safeSend(socket, fatalError("client", code));
     closeWith(socket, 4000, code);
   }
 

@@ -1,5 +1,5 @@
 import {
-  CLIENT_COMMON_WS_PROTOCOL,
+  CLIENT_WS_PROTOCOL,
   ClientSessionClaimResponseSchema,
 } from "@ktfun/pulse-protocol";
 import {
@@ -27,7 +27,7 @@ export async function claimSession(
     headers: { "Content-Type": "application/json" },
     method: "POST",
     body: JSON.stringify({
-      protocol: CLIENT_COMMON_WS_PROTOCOL,
+      protocol: CLIENT_WS_PROTOCOL,
       sdkVersion: resolveSdkVersion(config),
     }),
   });

@@ -5,11 +5,11 @@
 状态：draft
 验证：状态设计；落地时需要同步 protocol schema、SDK selector、worker/browser 测试和端到端验证
 
-本文描述 client 能从 `client.common.ws.v1`、`client.page.ws.v1` 和 `client.media.ws.v1` 看到的状态，以及 SDK 应该如何裁剪成组件可消费的 view。
+本文描述 client 能从 `client.ws.v2` 和 `client.page.ws.v1` 看到的状态，以及 SDK 应该如何裁剪成组件可消费的 view。
 
 ## Common Snapshot State
 
-`client.common.ws.v1` 下发站点全局状态：
+`client.ws.v2` 下发站点全局状态：
 
 ```ts
 type ClientCommonGlobalSnapshot = {
@@ -96,7 +96,7 @@ type ClientOwnerFocus = {
 };
 ```
 
-`owner.focus` 属于 common 状态。Owner media / stream 状态由 media 协议定义。
+`owner.focus` 属于 common 状态。Owner media / stream 状态由同一条 client WS 的 `state` 帧定义。
 
 ## Page Snapshot State
 
@@ -137,11 +137,11 @@ type ClientPageSessionDetail = {
 
 ## Media State
 
-`client.media.ws.v1` 下发当前 tab 可见的 media state：
+`client.ws.v2` 下发当前 tab 可见的 media state：
 
 ```ts
-type ClientMediaStateFrame = {
-  protocol: "client.media.ws.v1";
+type ClientWsStateFrame = {
+  protocol: "client.ws.v2";
   type: "state";
   revision: number;
   updatedAt: string;

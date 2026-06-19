@@ -1,9 +1,10 @@
-import type {
-  ClientMediaNowPlaying,
-  ClientMediaStreamSource,
-  DeviceStreamState,
-  StreamCodec,
-  StreamFormat,
+import {
+  CLIENT_WS_PROTOCOL,
+  type ClientMediaNowPlaying,
+  type ClientMediaStreamSource,
+  type DeviceStreamState,
+  type StreamCodec,
+  type StreamFormat,
 } from "@ktfun/pulse-protocol";
 
 export interface DeviceMediaConnection {
@@ -14,19 +15,10 @@ export interface DeviceMediaConnection {
   capabilities: { streaming: boolean };
 }
 
-export interface MediaClientConnection {
-  connectionId: string;
+export interface StreamClientMeta {
   sessionId: string;
   tabId: string;
-  connectedAt: string;
-  lastSeenAt: string;
-}
-
-export interface ClientAttachment {
-  kind: "client";
-  connectionId: string;
-  sessionId: string;
-  tabId: string;
+  lastAckSeq?: number;
 }
 
 export interface DeviceAttachment {
@@ -40,14 +32,6 @@ export interface PendingDeviceAttachment {
   kind: "pending-device";
   deviceId: string;
   deviceSessionId: string;
-}
-
-export interface StreamClient {
-  connectionId: string;
-  sessionId: string;
-  tabId: string;
-  acceptedAt: string;
-  lastAckSeq?: number;
 }
 
 export interface StreamContext {
@@ -121,7 +105,7 @@ export function sourceFromState(state: MediaStoredState): ClientMediaStreamSourc
 
 export function mediaStateFrame(state: MediaStoredState) {
   return {
-    protocol: "client.media.ws.v1" as const,
+    protocol: CLIENT_WS_PROTOCOL,
     type: "state" as const,
     revision: state.revision,
     updatedAt: state.updatedAt,

@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  CLIENT_COMMON_WS_PROTOCOL,
-  CLIENT_MEDIA_WS_PROTOCOL,
   CLIENT_PAGE_WS_PROTOCOL,
+  CLIENT_WS_PROTOCOL,
 } from "@ktfun/pulse-protocol";
 import { PulseRealtimeV2Client } from "./client";
 
@@ -12,7 +11,7 @@ class MockWebSocket {
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
 
-  readonly sent: string[] = [];
+  readonly sent: Array<string | ArrayBuffer> = [];
   binaryType: BinaryType = "blob";
   readyState = MockWebSocket.CONNECTING;
   private readonly listeners = new Map<string, Set<(event: any) => void>>();
@@ -46,6 +45,10 @@ class MockWebSocket {
     this.emit("message", { data: JSON.stringify(frame) });
   }
 
+  receiveBinary(bytes: ArrayBuffer) {
+    this.emit("message", { data: bytes });
+  }
+
   failClosed() {
     this.readyState = MockWebSocket.CLOSED;
     this.emit("close", {});
@@ -65,7 +68,7 @@ describe("PulseRealtimeV2Client unified connection", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({
       ok: true,
       json: async () => ({
-        protocol: CLIENT_COMMON_WS_PROTOCOL,
+        protocol: CLIENT_WS_PROTOCOL,
         sessionId: "session-1",
       }),
     })));
@@ -76,7 +79,7 @@ describe("PulseRealtimeV2Client unified connection", () => {
     vi.unstubAllGlobals();
   });
 
-  it("connect() opens common first and opens media only after common hello_ack", async () => {
+  it("connect() opens a single client ws and resolves after hello_ack", async () => {
     const client = new PulseRealtimeV2Client({ baseUrl: "https://pulse.test" });
     const connecting = client.connect();
     await flushPromises();
@@ -85,34 +88,22 @@ describe("PulseRealtimeV2Client unified connection", () => {
     expect(sockets[0]?.url).toBe("wss://pulse.test/api/v1/client/ws");
 
     sockets[0]!.open();
-    expect(JSON.parse(sockets[0]!.sent[0]!)).toMatchObject({
-      protocol: CLIENT_COMMON_WS_PROTOCOL,
-      type: "hello",
-      sessionId: "session-1",
-    });
-    expect(sockets).toHaveLength(1);
-
-    acceptCommon(sockets[0]!);
-    await flushPromises();
-
-    expect(sockets).toHaveLength(2);
-    expect(sockets[1]?.url).toBe("wss://pulse.test/api/v1/client/media/ws");
-    sockets[1]!.open();
-    expect(JSON.parse(sockets[1]!.sent[0]!)).toMatchObject({
-      protocol: CLIENT_MEDIA_WS_PROTOCOL,
+    expect(JSON.parse(sockets[0]!.sent[0] as string)).toMatchObject({
+      protocol: CLIENT_WS_PROTOCOL,
       type: "hello",
       sessionId: "session-1",
       tabId: "ssr-tab",
     });
+    expect(sockets).toHaveLength(1);
+
     let resolved = false;
-    connecting.then(() => {
-      resolved = true;
-    });
+    connecting.then(() => { resolved = true; });
+    acceptClient(sockets[0]!);
     await flushPromises();
-    expect(resolved).toBe(false);
-    acceptMedia(sockets[1]!);
-    await connecting;
     expect(resolved).toBe(true);
+    await connecting;
+    expect(client.getSnapshot().common.connection.connected).toBe(true);
+    expect(client.getSnapshot().media.connection.connected).toBe(true);
   });
 
   it("connect() is idempotent while a connection is in progress", async () => {
@@ -125,16 +116,13 @@ describe("PulseRealtimeV2Client unified connection", () => {
     expect(sockets).toHaveLength(1);
 
     sockets[0]!.open();
-    acceptCommon(sockets[0]!);
-    await flushPromises();
-    sockets[1]!.open();
-    acceptMedia(sockets[1]!);
+    acceptClient(sockets[0]!);
     await first;
 
-    expect(sockets).toHaveLength(2);
+    expect(sockets).toHaveLength(1);
   });
 
-  it("stops retrying common after six failed attempts and never opens media", async () => {
+  it("stops retrying after six failed attempts and marks both common and media failed", async () => {
     vi.useFakeTimers();
     const client = new PulseRealtimeV2Client({ baseUrl: "https://pulse.test" });
     void client.connect().catch(() => undefined);
@@ -151,37 +139,12 @@ describe("PulseRealtimeV2Client unified connection", () => {
     await flushPromises();
     expect(client.getSnapshot().common.connection).toMatchObject({
       status: "failed",
-      error: "common_ws_reconnect_exhausted",
+      error: "client_ws_reconnect_exhausted",
       connected: false,
     });
-    expect(client.getSnapshot().media.connection.status).toBe("idle");
-  });
-
-  it("stops retrying media after six failed attempts while common stays connected", async () => {
-    vi.useFakeTimers();
-    const client = new PulseRealtimeV2Client({ baseUrl: "https://pulse.test" });
-    void connectFully(client);
-    await flushPromises();
-    sockets[0]!.open();
-    acceptCommon(sockets[0]!);
-    await flushPromises();
-    sockets[1]!.open();
-    acceptMedia(sockets[1]!);
-    await flushPromises();
-
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      sockets[attempt + 1]!.failClosed();
-      await vi.advanceTimersByTimeAsync(delayForAttempt(attempt));
-      await flushPromises();
-    }
-
-    expect(sockets).toHaveLength(8);
-    sockets[7]!.failClosed();
-    await flushPromises();
-    expect(client.getSnapshot().common.connection.status).toBe("connected");
     expect(client.getSnapshot().media.connection).toMatchObject({
       status: "failed",
-      error: "media_ws_reconnect_exhausted",
+      error: "client_ws_reconnect_exhausted",
       connected: false,
     });
   });
@@ -192,20 +155,17 @@ describe("PulseRealtimeV2Client unified connection", () => {
     void connectFully(client);
     await flushPromises();
     sockets[0]!.open();
-    acceptCommon(sockets[0]!);
-    await flushPromises();
-    sockets[1]!.open();
-    acceptMedia(sockets[1]!);
+    acceptClient(sockets[0]!);
     await flushPromises();
 
-    sockets[1]!.failClosed();
+    sockets[0]!.failClosed();
     client.dispose();
     await vi.advanceTimersByTimeAsync(500);
 
-    expect(sockets).toHaveLength(2);
+    expect(sockets).toHaveLength(1);
   });
 
-  it("connectPage() establishes common before opening page ws", async () => {
+  it("connectPage() establishes client ws before opening page ws", async () => {
     const client = new PulseRealtimeV2Client({ baseUrl: "https://pulse.test" });
     const connectingPage = client.connectPage("https://example.com/a", {
       title: "A",
@@ -216,7 +176,7 @@ describe("PulseRealtimeV2Client unified connection", () => {
     expect(sockets).toHaveLength(1);
     expect(sockets[0]?.url).toBe("wss://pulse.test/api/v1/client/ws");
     sockets[0]!.open();
-    acceptCommon(sockets[0]!);
+    acceptClient(sockets[0]!);
     await connectingPage;
 
     expect(sockets).toHaveLength(2);
@@ -224,7 +184,7 @@ describe("PulseRealtimeV2Client unified connection", () => {
       "wss://pulse.test/api/v1/client/page/ws?canonicalUrl=https%3A%2F%2Fexample.com%2Fa",
     );
     sockets[1]!.open();
-    expect(JSON.parse(sockets[1]!.sent[0]!)).toMatchObject({
+    expect(JSON.parse(sockets[1]!.sent[0] as string)).toMatchObject({
       protocol: CLIENT_PAGE_WS_PROTOCOL,
       type: "hello",
       sessionId: "session-1",
@@ -232,35 +192,110 @@ describe("PulseRealtimeV2Client unified connection", () => {
       page: { title: "A", url: "https://example.com/a" },
     });
   });
+
+  it("sends stream.request, stream.stop and ack on the same client socket", async () => {
+    const client = new PulseRealtimeV2Client({ baseUrl: "https://pulse.test" });
+    await connectFully(client);
+    const socket = sockets[0]!;
+
+    socket.receive({
+      protocol: CLIENT_WS_PROTOCOL,
+      type: "state",
+      revision: 1,
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      media: null,
+      stream: { source: { state: "ready" } },
+    });
+    await flushPromises();
+    expect(client.getSnapshot().media.source.state).toBe("ready");
+
+    client.requestStream();
+    client.stopStream();
+    client.ackStream("stream-1", 1, 2);
+    await flushPromises();
+
+    const sentTypes = socket.sent
+      .map((entry) => (typeof entry === "string" ? JSON.parse(entry).type : null));
+    expect(sentTypes).toContain("stream.request");
+    expect(sentTypes).toContain("stream.stop");
+    expect(sentTypes).toContain("ack");
+    expect(sockets).toHaveLength(1);
+  });
+
+  it("delivers media state and audio chunks on the same client socket", async () => {
+    const onAudioChunk = vi.fn();
+    const client = new PulseRealtimeV2Client({
+      baseUrl: "https://pulse.test",
+      onAudioChunk,
+    });
+    await connectFully(client);
+    const socket = sockets[0]!;
+
+    socket.receive({
+      protocol: CLIENT_WS_PROTOCOL,
+      type: "state",
+      revision: 1,
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      media: {
+        current: { title: "DAYS of DASH" },
+        playback: "playing",
+        updatedAt: "2026-06-19T00:00:00.000Z",
+      },
+      stream: { source: { state: "ready" } },
+    });
+    await flushPromises();
+    expect(client.getSnapshot().media.media?.current.title).toBe("DAYS of DASH");
+
+    client.requestStream();
+    socket.receive({
+      protocol: CLIENT_WS_PROTOCOL,
+      type: "stream.accepted",
+      requestId: "req-1",
+      stream: { streamId: "stream-1", generation: 1 },
+    });
+    await flushPromises();
+    expect(client.getSnapshot().media.stream.state).toBe("active");
+
+    socket.receive({
+      protocol: CLIENT_WS_PROTOCOL,
+      type: "audio.chunk",
+      streamId: "stream-1",
+      generation: 1,
+      seq: 1,
+      sentAt: "2026-06-19T00:00:01.000Z",
+      durationMs: 20,
+      codec: "pcm16-wav",
+      byteLength: 4,
+      mediaStartPositionMs: 0,
+      replayed: false,
+    });
+    socket.receiveBinary(new Uint8Array([1, 2, 3, 4]).buffer);
+    await flushPromises();
+
+    expect(onAudioChunk).toHaveBeenCalledTimes(1);
+    const chunk = onAudioChunk.mock.calls[0]![0];
+    expect(chunk.seq).toBe(1);
+    expect(chunk.bytes.byteLength).toBe(4);
+    expect(client.getSnapshot().media.stream.state).toBe("active");
+    expect(sockets).toHaveLength(1);
+  });
 });
 
 async function connectFully(client: PulseRealtimeV2Client) {
   const connecting = client.connect();
   await flushPromises();
   sockets[0]!.open();
-  acceptCommon(sockets[0]!);
-  await flushPromises();
-  sockets[1]!.open();
-  acceptMedia(sockets[1]!);
+  acceptClient(sockets[0]!);
   await connecting;
 }
 
-function acceptCommon(socket: MockWebSocket) {
+function acceptClient(socket: MockWebSocket) {
   socket.receive({
-    protocol: CLIENT_COMMON_WS_PROTOCOL,
+    protocol: CLIENT_WS_PROTOCOL,
     type: "hello_ack",
-    selectedProtocol: CLIENT_COMMON_WS_PROTOCOL,
-    connectionId: "common-1",
+    selectedProtocol: CLIENT_WS_PROTOCOL,
+    connectionId: "client-1",
     session: { sessionId: "session-1", tabId: "ssr-tab" },
-  });
-}
-
-function acceptMedia(socket: MockWebSocket) {
-  socket.receive({
-    protocol: CLIENT_MEDIA_WS_PROTOCOL,
-    type: "hello_ack",
-    selectedProtocol: CLIENT_MEDIA_WS_PROTOCOL,
-    connectionId: "media-1",
   });
 }
 
