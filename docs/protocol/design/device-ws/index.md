@@ -1,18 +1,19 @@
 # Device WebSocket 协议草案
 
-归属：`packages/realtime-protocol`
-代码范围：`packages/realtime-protocol`、`apps/realtime-worker`、`common`、`macosApp`
+归属：`packages/v2/realtime-protocol`
+代码范围：`packages/v2/realtime-protocol`、`apps/realtime-worker-v2`、`common`、`macosApp`
 状态：draft
-验证：协议草案；实现前需要补 schema、worker/native 测试和端到端验证
+验证：协议 schema、worker WS tests、KMP common compile、native/worker local integration
 
 ## Transport
 
-Device 与 server 建立两条长期 WebSocket：
+Device 与 server 建立单条长期 WebSocket：
 
-| WS | 职责 |
-| --- | --- |
-| `common WS` | device connection、presence、interaction、diagnostics、settings 等非 media 通信 |
-| `media WS` | media connection、media state、stream command、audio streaming |
+| WS | 协议 | 职责 |
+| --- | --- | --- |
+| `device WS` | `device.ws.v2`（连接生命周期）+ `presence.v2` + `device.media.v1`（业务） | device connection、presence、focus、media state、stream command、audio streaming |
+
+`device.ws.v2` 合并并替代了旧 `device.connection.v1`（common WS 连接协议）与 `device.media.connection.v1`（media WS 连接协议）；旧 `/api/v1/device/media/ws` endpoint 已删除（breaking change，不保留兼容桥）。`presence.v2` 和 `device.media.v1` 业务帧保持现有 shape，只是承载在统一 device WS 上。
 
 协议文件：
 
@@ -36,23 +37,18 @@ type DeviceServerConnectionState =
 
 | 状态 | 条件 |
 | --- | --- |
-| `disconnected` | app 未启动连接，或两条 WS 都被主动关闭 |
-| `connecting` | 正在建立、鉴权或重连任一必要 WS |
-| `connected` | `common WS` 和 `media WS` 都已建立并完成鉴权 |
-| `failed` | 任一必要 WS 建立/鉴权失败，或重连超过策略门槛 |
+| `disconnected` | app 未启动连接，或 device WS 被主动关闭 |
+| `connecting` | 正在建立、鉴权或重连 device WS |
+| `connected` | device WS 已建立、完成 hello/hello_ack 且 listen job stable |
+| `failed` | device WS 建立/鉴权失败，或重连超过策略门槛 |
 
 启动规则：
 
-1. native app 启动后建立 `common WS`。
-2. `common WS` 完成 upgrade 后，device 发送 `device.connection.v1` hello。
-3. server 返回 `device.connection.v1` hello ack，确认连接级 metadata/capability/protocol negotiation，并返回 `deviceSessionId`。
-4. device 建立 `media WS`。
-5. `media WS` 使用与 common WS 相同的 `workspaceId/siteId/deviceId` endpoint 参数，并携带 common WS hello ack 返回的 `deviceSessionId` 建立连接。
-6. `media WS` 完成 upgrade 后，device 发送 `device.media.connection.v1` hello。
-7. `media WS` 完成 hello/auth/ack 后，对外状态才进入 `connected`。
-8. 进入 `connected` 前，不发送正常业务 message，不启动 streaming。
-
-允许 native 提前打开 `media WS` transport，但 `media WS` 的 hello 不能早于 common WS hello ack。
+1. native app 启动后建立 device WS（`/api/v1/device/ws?deviceId=...`）。
+2. device WS 完成 upgrade 后，device 发送 `device.ws.v2` hello，同时携带 device metadata、presence capabilities、media capabilities、audio capabilities 和 supported protocols。
+3. server 返回 `device.ws.v2` hello ack，确认连接级 metadata/capability/protocol negotiation，返回 `deviceSessionId` 和 media streaming capability。
+4. hello ack 后，device 立即发送当前 `stream.state.updated` snapshot；如果当前存在 now playing item，也立即发送 `media.updated` snapshot。
+5. device 进入 `connected` 状态后，开始 single listen job，处理 presence outbound、heartbeat、media outbound、PCM 和 server inbound command。
 
 ## Frame Envelope
 
@@ -68,8 +64,7 @@ type DeviceWsTextFrame = {
 
 规则：
 
-- `protocol` 是业务协议或连接生命周期协议。
+- `protocol` 是业务协议或连接生命周期协议（`device.ws.v2` / `presence.v2` / `device.media.v1`）。
 - `type` 是该 protocol 内的消息类型。
 - `payload` 只放该 `protocol/type` 的数据。
-- 不使用 `family` 字段。
-- 不定义 `device.common.ws.v1` 作为统一业务协议。
+- server 按 `protocol` 字段分发：`presence.v2` 走 presence 逻辑，`device.media.v1` 走 media 逻辑，binary frame 走 audio 逻辑。

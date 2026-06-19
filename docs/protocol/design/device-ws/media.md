@@ -1,78 +1,17 @@
-# Device Media WS 协议
+# Device Media 协议
 
-归属：`packages/realtime-protocol`
-代码范围：`packages/realtime-protocol`、`apps/realtime-worker`、`common`、`macosApp`
+归属：`packages/v2/realtime-protocol`
+代码范围：`packages/v2/realtime-protocol`、`apps/realtime-worker-v2`、`common`、`macosApp`
 状态：draft
-验证：协议草案；实现前需要补 schema、worker/native 测试和端到端验证
+验证：协议 schema、worker WS tests、KMP common compile
 
 ## Connection
 
-media WS 连接生命周期使用：
+media 业务帧承载在统一 device WS（`device.ws.v2`）上，不再有独立的 media connection hello。device WS hello ack 后，device 必须立即发送当前 `stream.state.updated` snapshot；如果当前存在 now playing item，也必须立即发送 `media.updated` snapshot。后续同类 frame 只在状态变化、media 变化或诊断需要时发送。
 
-```ts
-type MediaConnectionProtocol = "device.media.connection.v1";
-```
+Media capability 规则：
 
-hello：
-
-```ts
-type MediaConnectionHello = {
-  protocol: "device.media.connection.v1";
-  type: "hello";
-  payload: {
-    capabilities: {
-      media: boolean;
-      localPlayback: boolean;
-      remotePlayback: boolean;
-      binaryAudio?: boolean;
-      localRingBuffer?: boolean;
-      localRingBufferSeconds?: number;
-    };
-    audio: {
-      codecs: Array<"pcm16-wav" | "opus" | "aac">;
-      chunkDurationMs?: number;
-    };
-    supportedProtocols: string[];
-  };
-};
-```
-
-`workspaceId/siteId/deviceId/deviceSessionId` 是 media WS 连接建立时的 endpoint 参数，不通过 media hello frame 传递。`deviceSessionId` 必须来自 common WS 的 `device.connection.v1` hello ack。server 使用这些 endpoint 参数把 `media WS` 绑定到已鉴权的同一台 device 和同一次 device session；如果收到非预期的 `deviceSessionId`，server 必须拒绝并关闭 media WS。未完成 common WS hello ack 的 device 不得发送 media WS hello，也不应建立 media WS 业务会话。
-
-hello ack：
-
-```ts
-type MediaConnectionHelloAck = {
-  protocol: "device.media.connection.v1";
-  type: "hello_ack";
-  payload:
-    | {
-        accepted: true;
-        serverTime: string;
-        connectionId: string;
-        selectedProtocols: string[];
-        capabilities: {
-          streaming: boolean;
-        };
-      }
-    | {
-        accepted: false;
-        serverTime: string;
-        error: {
-          code: string;
-          message: string;
-        };
-      };
-};
-```
-
-`accepted = false` 后，server 必须立即关闭 media WS。
-
-`accepted = true` 后，device 必须立即发送当前 `stream.state.updated` snapshot；如果当前存在 now playing item，也必须立即发送 `media.updated` snapshot。后续同类 frame 只在状态变化、media 变化或诊断需要时发送。
-
-Media connection capability 规则：
-
-- `capabilities.streaming = false` 表示当前 media WS 保持连接，但 server 不会发送 `stream.requested` / `stream.resume` / `stream.stop`，device 只上报 media state 和 now playing。
+- `media.capabilities.media = false` 表示 device WS 保持连接，但 server 不会发送 `stream.requested` / `stream.resume` / `stream.stop`，device 只上报 media state 和 now playing。
 - codec 是 device 输出音频事实，server 不做重编码，也不以 codec 作为是否允许 streaming 的判断条件。
 
 ## Media

@@ -1,16 +1,14 @@
 package io.github.kt.pulsebar.ws.connection
 
 
-import io.github.kt.pulsebar.ws.common.DeviceV2CommonHelloPayload
+import io.github.kt.pulsebar.ws.common.DeviceV2HelloPayload
 import io.github.kt.pulsebar.ws.common.DeviceV2PresenceHeartbeatPayload
 import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
-import io.github.kt.pulsebar.ws.DEVICE_CONNECTION_PROTOCOL_V1
-import io.github.kt.pulsebar.ws.DEVICE_MEDIA_CONNECTION_PROTOCOL_V1
+import io.github.kt.pulsebar.ws.DEVICE_WS_PROTOCOL_V2
 import io.github.kt.pulsebar.ws.DEVICE_MEDIA_PROTOCOL_V1
 import io.github.kt.pulsebar.ws.PRESENCE_PROTOCOL_V2
 import io.github.kt.pulsebar.ws.media.DeviceV2AcceptedAckPayload
 import io.github.kt.pulsebar.ws.media.DeviceV2AudioChunkPayload
-import io.github.kt.pulsebar.ws.media.DeviceV2MediaHelloPayload
 import io.github.kt.pulsebar.ws.media.DeviceV2MediaUpdatePayload
 import io.github.kt.pulsebar.ws.media.DeviceV2RejectedAckPayload
 import io.github.kt.pulsebar.ws.media.DeviceV2StoppedAckPayload
@@ -47,19 +45,9 @@ internal annotation class CommonMessage(
 @SerialInfo
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.BINARY)
-internal annotation class CommonConnectionMessage(
+internal annotation class DeviceWsConnectionMessage(
     val type: String,
-    val protocol: String = DEVICE_CONNECTION_PROTOCOL_V1,
-)
-
-
-@OptIn(ExperimentalSerializationApi::class)
-@SerialInfo
-@Target(AnnotationTarget.CLASS)
-@Retention(AnnotationRetention.BINARY)
-internal annotation class MediaConnectionMessage(
-    val type: String,
-    val protocol: String = DEVICE_MEDIA_CONNECTION_PROTOCOL_V1,
+    val protocol: String = DEVICE_WS_PROTOCOL_V2,
 )
 @PublishedApi
 internal data class DeviceV2MessageMeta(
@@ -80,18 +68,16 @@ internal fun List<Annotation>.deviceV2MessageMeta(): DeviceV2MessageMeta? =
         when (annotation) {
             is MediaMessage -> DeviceV2MessageMeta(annotation.protocol, annotation.type)
             is CommonMessage -> DeviceV2MessageMeta(annotation.protocol, annotation.type)
-            is CommonConnectionMessage -> DeviceV2MessageMeta(annotation.protocol, annotation.type)
-            is MediaConnectionMessage -> DeviceV2MessageMeta(annotation.protocol, annotation.type)
+            is DeviceWsConnectionMessage -> DeviceV2MessageMeta(annotation.protocol, annotation.type)
             else -> null
         }
     }
 
 internal fun deviceV2Frame(payload: WSPayload): String =
     when (payload) {
-        is DeviceV2CommonHelloPayload -> deviceV2FrameTyped(payload)
+        is DeviceV2HelloPayload -> deviceV2FrameTyped(payload)
         is DeviceV2PresencePayload -> deviceV2FrameTyped(payload)
         is DeviceV2PresenceHeartbeatPayload -> deviceV2FrameTyped(payload)
-        is DeviceV2MediaHelloPayload -> deviceV2FrameTyped(payload)
         is DeviceV2StreamStatePayload -> deviceV2FrameTyped(payload)
         is DeviceV2MediaUpdatePayload -> deviceV2FrameTyped(payload)
         is DeviceV2AcceptedAckPayload -> deviceV2FrameTyped(payload)
@@ -109,8 +95,7 @@ private inline fun <reified P: WSPayload> deviceV2FrameTyped(payload: P): String
         .deviceV2MessageMeta()
         ?: error(
             "Missing message annotation on ${payloadSerializer.descriptor.serialName}. " +
-                    "Expected one of @MediaMessage, @CommonMessage, " +
-                    "@CommonConnectionMessage, @MediaConnectionMessage."
+                    "Expected one of @MediaMessage, @CommonMessage, @DeviceWsConnectionMessage."
         )
 
     return deviceV2Json.encodeToString(

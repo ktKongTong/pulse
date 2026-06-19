@@ -1,22 +1,5 @@
 import { DEVICE_MEDIA_PROTOCOL } from "@ktfun/pulse-protocol";
-import type { MediaAttachment } from "./media-base";
 import { nowIso } from "../utils/time";
-import { closeWith, socketAttachment } from "../utils/ws";
-
-export function restoreMediaSockets(input: {
-  sockets: WebSocket[];
-  setDeviceSocket: (socket: WebSocket) => void;
-}) {
-  let activeDevice: WebSocket | null = null;
-  for (const socket of input.sockets) {
-    const attachment = socketAttachment<MediaAttachment>(socket);
-    if (attachment?.kind === "device") {
-      if (activeDevice) closeWith(activeDevice, 4000, "connection_superseded");
-      activeDevice = socket;
-      input.setDeviceSocket(socket);
-    }
-  }
-}
 
 export function deviceCommandFrame(input: {
   commandId: string;

@@ -1,39 +1,34 @@
 import { DurableObject } from "cloudflare:workers";
-import { CLIENT_WS_PROTOCOL, DeviceMediaClientFrameSchema } from "@ktfun/pulse-protocol";
+import { CLIENT_WS_PROTOCOL, DeviceMediaFrameSchema } from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
-import { globalStub } from "../env";
-import { emptyMediaState, type AudioChunkMeta, type BufferedAudioChunk, type DeviceAttachment, type MediaStoredState, type PendingDeviceAttachment, type StreamClientMeta } from "../state/media";
+import { deviceStub, globalStub } from "../env";
+import { emptyMediaState, type AudioChunkMeta, type BufferedAudioChunk, type MediaStoredState, type StreamClientMeta } from "../state/media";
 import { mediaStateFrame } from "../state/media";
 import { tabKey } from "../state/keys";
 import { RingBuffer } from "../utils/ring-buffer";
 import { nowIso } from "../utils/time";
-import { closeWith, safeSend, socketAttachment } from "../utils/ws";
 import { binaryMatchesMeta, commandExpired, commandTimeoutMs, maxBufferedChunks } from "./media-command";
-import { deviceCommandFrame, restoreMediaSockets } from "./media-sockets";
+import { deviceCommandFrame } from "./media-sockets";
 import { applyStreamRequestTimeout, bumpMediaState } from "./media-state-ops";
 import { applyAcceptedStream, ensureStreamContext } from "./media-stream";
-
-export type MediaAttachment = DeviceAttachment | PendingDeviceAttachment;
 
 const STATE_KEY = "media-state";
 
 export class MediaBase extends DurableObject<Env> {
   protected state: MediaStoredState = emptyMediaState(nowIso());
   protected streamClients = new Map<string, StreamClientMeta>();
-  protected deviceSocket: WebSocket | null = null;
   protected pendingChunk: AudioChunkMeta | null = null;
   protected buffer: RingBuffer<BufferedAudioChunk>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.buffer = new RingBuffer(maxBufferedChunks(env, null));
-    this.restoreSockets();
     ctx.blockConcurrencyWhile(async () => {
       this.state = (await ctx.storage.get<MediaStoredState>(STATE_KEY)) ?? emptyMediaState(nowIso());
     });
   }
 
-  protected async acceptBinaryChunk(bytes: ArrayBuffer) {
+  protected async acceptDeviceBytes(bytes: ArrayBuffer) {
     if (!this.pendingChunk) {
       console.log("[media-do] binary_chunk_without_meta", { byteLength: bytes.byteLength });
       return this.closeDeviceFatal("invalid_audio_chunk");
@@ -58,7 +53,7 @@ export class MediaBase extends DurableObject<Env> {
     }
   }
 
-  protected async applyDeviceAck(frame: Extract<ReturnType<typeof DeviceMediaClientFrameSchema.parse>, { type: "ack" }>) {
+  protected async applyDeviceAck(frame: Extract<ReturnType<typeof DeviceMediaFrameSchema.parse>, { type: "ack" }>) {
     if (frame.payload.status === "rejected") {
       if (!this.consumePendingAck(frame.payload.commandId, "stream.requested")) return;
       this.state.streamRequestRejectedAt = frame.payload.sentAt;
@@ -105,19 +100,20 @@ export class MediaBase extends DurableObject<Env> {
   }
 
   protected async sendDeviceCommand(type: "stream.requested" | "stream.stop", streamId: string, generation: number) {
-    const attachment = this.deviceSocket ? socketAttachment<DeviceAttachment>(this.deviceSocket) : null;
-    console.log("[media-do] device_command.prepare", { type, streamId, generation, device: attachment });
-    if (!this.deviceSocket) return false;
+    const device = this.state.device;
+    console.log("[media-do] device_command.prepare", { type, streamId, generation, device });
+    if (!device) return false;
     if (this.state.pendingCommand) {
-      console.log("[media-do] device_command.blocked", { type, pending: this.state.pendingCommand, device: attachment });
+      console.log("[media-do] device_command.blocked", { type, pending: this.state.pendingCommand, device });
       return false;
     }
     const commandId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + commandTimeoutMs(this.env)).toISOString();
     const frame = deviceCommandFrame({ commandId, type, streamId, generation, expiresAt });
-    console.log("[media-do] device_command.send", { commandId, type, streamId, generation, device: attachment });
-    if (!safeSend(this.deviceSocket, frame)) {
-      console.log("[media-do] device_command.send_failed", { commandId, type, device: attachment });
+    console.log("[media-do] device_command.send", { commandId, type, streamId, generation, device });
+    const sent = await deviceStub(this.env, device.deviceId).sendDeviceFrame(frame);
+    if (!sent) {
+      console.log("[media-do] device_command.send_failed", { commandId, type, device });
       return false;
     }
     this.state.pendingCommand = { commandId, type, streamId, generation, expiresAt };
@@ -142,54 +138,25 @@ export class MediaBase extends DurableObject<Env> {
     this.buffer.clear();
   }
 
-  protected async cleanup(socket: WebSocket) {
-    const attachment = socketAttachment<MediaAttachment>(socket);
-    if (!attachment) return;
-    if (attachment.kind === "pending-device") return;
-    return this.cleanupDevice(socket);
-  }
-
-  protected async revokeDevice(deviceSessionId: string) {
-    const attachment = this.deviceSocket ? socketAttachment<DeviceAttachment>(this.deviceSocket) : null;
-    if (attachment?.deviceSessionId !== deviceSessionId) return;
-    const socket = this.deviceSocket;
-    this.deviceSocket = null;
+  protected async endDeviceSession(deviceSessionId: string) {
+    if (this.state.device?.deviceSessionId !== deviceSessionId) return;
     this.markDeviceOffline(nowIso());
     await this.stateChanged();
-    closeWith(socket, 4000, "device_lease_expired");
   }
 
   protected broadcastState() {
     void globalStub(this.env).broadcastClientFrame(mediaStateFrame(this.state));
   }
 
-  protected isActiveDeviceSocket(socket: WebSocket) {
-    return socket === this.deviceSocket;
-  }
-
-  private restoreSockets() {
-    restoreMediaSockets({
-      sockets: this.ctx.getWebSockets(),
-      setDeviceSocket: (socket) => { this.deviceSocket = socket; },
-    });
-  }
-
-  private async cleanupDevice(socket: WebSocket) {
-    if (!this.isActiveDeviceSocket(socket)) return;
-    this.deviceSocket = null;
-    this.markDeviceOffline(nowIso());
-    return this.stateChanged();
-  }
-
   protected async closeDeviceFatal(code: string) {
-    const socket = this.deviceSocket;
-    closeWith(socket, 4000, code);
-    this.deviceSocket = null;
+    const device = this.state.device;
+    if (!device) return;
     this.markDeviceOffline(nowIso());
     await this.stateChanged();
+    await deviceStub(this.env, device.deviceId).closeDeviceSocket(code);
   }
 
-  private markDeviceOffline(updatedAt: string) {
+  protected markDeviceOffline(updatedAt: string) {
     this.state.device = null;
     this.state.pendingCommand = null;
     this.state.streamContext = null;

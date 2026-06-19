@@ -7,19 +7,8 @@ import io.ktor.http.URLProtocol
 import io.ktor.http.Url
 import io.ktor.http.path
 
-internal fun Endpoint.getCommonWSUrl(): Url {
+internal fun Endpoint.getDeviceWsUrl(): Url {
     return deviceV2Url(this, "/api/v1/device/ws", listOf("deviceId" to this.deviceId))
-}
-
-internal fun Endpoint.getMediaWSUrl(deviceSessionId: String): Url {
-    return deviceV2Url(
-        this,
-        "/api/v1/device/media/ws",
-        listOf(
-            "deviceId" to this.deviceId,
-            "deviceSessionId" to deviceSessionId,
-        ),
-    )
 }
 
 private fun deviceV2Url(

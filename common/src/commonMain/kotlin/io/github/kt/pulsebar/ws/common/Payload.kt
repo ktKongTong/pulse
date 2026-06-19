@@ -3,17 +3,21 @@ package io.github.kt.pulsebar.ws.common
 import io.github.kt.pulsebar.model.Endpoint
 import io.github.kt.pulsebar.utils.nowInIso8601
 import io.github.kt.pulsebar.ws.connection.CommonMessage
-import io.github.kt.pulsebar.ws.DEVICE_CONNECTION_PROTOCOL_V1
-import io.github.kt.pulsebar.ws.connection.CommonConnectionMessage
+import io.github.kt.pulsebar.ws.DEVICE_WS_PROTOCOL_V2
+import io.github.kt.pulsebar.ws.connection.DeviceWsConnectionMessage
 import io.github.kt.pulsebar.ws.connection.WSPayload
+import io.github.kt.pulsebar.ws.media.DEVICE_V2_AUDIO_CHUNK_DURATION_MS
+import io.github.kt.pulsebar.ws.media.DeviceV2AudioCapabilities
+import io.github.kt.pulsebar.ws.media.DeviceV2MediaCapabilities
 import kotlinx.serialization.Serializable
 import kotlin.time.Instant
 
 @Serializable
-@CommonConnectionMessage("hello")
-internal data class DeviceV2CommonHelloPayload(
+@DeviceWsConnectionMessage("hello")
+internal data class DeviceV2HelloPayload(
     val device: DeviceV2DeviceInfo,
     val capabilities: DeviceV2PresenceCapabilities,
+    val media: DeviceV2MediaHelloCapabilities,
     val supportedProtocols: List<String>,
 ) : WSPayload
 
@@ -52,7 +56,7 @@ data class App(
     val category: String? = null,
 )
 
-internal fun deviceV2CommonHello(config: Endpoint) = DeviceV2CommonHelloPayload(
+internal fun deviceV2Hello(config: Endpoint) = DeviceV2HelloPayload(
     device = DeviceV2DeviceInfo(
         name = config.url,
         platform = "macos",
@@ -64,7 +68,20 @@ internal fun deviceV2CommonHello(config: Endpoint) = DeviceV2CommonHelloPayload(
         pageTitle = false,
         pageUrl = false,
     ),
-    supportedProtocols = listOf(DEVICE_CONNECTION_PROTOCOL_V1),
+    media = DeviceV2MediaHelloCapabilities(
+        capabilities = DeviceV2MediaCapabilities(
+            media = true,
+            localPlayback = true,
+            remotePlayback = false,
+            binaryAudio = true,
+            localRingBuffer = false,
+        ),
+        audio = DeviceV2AudioCapabilities(
+            codecs = listOf("pcm16-wav"),
+            chunkDurationMs = DEVICE_V2_AUDIO_CHUNK_DURATION_MS,
+        ),
+    ),
+    supportedProtocols = listOf(DEVICE_WS_PROTOCOL_V2),
 )
 
 
@@ -85,6 +102,12 @@ internal data class DeviceV2PresenceCapabilities(
     val windowTitle: Boolean,
     val pageTitle: Boolean,
     val pageUrl: Boolean,
+)
+
+@Serializable
+internal data class DeviceV2MediaHelloCapabilities(
+    val capabilities: DeviceV2MediaCapabilities,
+    val audio: DeviceV2AudioCapabilities,
 )
 
 

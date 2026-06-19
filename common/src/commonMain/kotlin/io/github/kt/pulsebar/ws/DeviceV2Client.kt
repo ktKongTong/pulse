@@ -10,16 +10,14 @@ import io.github.kt.pulsebar.model.stream.MediaState
 import io.github.kt.pulsebar.model.stream.StreamStopReason
 import io.github.kt.pulsebar.platform.getHttpClient
 import io.github.kt.pulsebar.utils.newPulseUuid
-import io.github.kt.pulsebar.ws.common.CommonWS
-import io.github.kt.pulsebar.ws.common.App
 import io.github.kt.pulsebar.ws.common.DeviceV2Availability
 import io.github.kt.pulsebar.ws.common.DeviceV2Focus
 import io.github.kt.pulsebar.ws.common.DeviceV2PresencePayload
 import io.github.kt.pulsebar.ws.common.DeviceV2PresenceState
+import io.github.kt.pulsebar.ws.common.App
 import io.github.kt.pulsebar.ws.common.epochMillisToIso8601
 import io.github.kt.pulsebar.ws.connection.DeviceWsState
 import io.github.kt.pulsebar.ws.connection.ConnectionStatus
-import io.github.kt.pulsebar.ws.media.MediaWS
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -62,13 +60,12 @@ internal class DeviceV2Client(
     private var connectionJob: Job? = null
     private var stopRequested = false
     private var networkPaused = !networkOnline.value
-    var connectedMediaWS: MediaWS = MediaWS(http, scope, mediaStateFlow, endpointId, hostCommandSink)
-    var connectedCommonWS: CommonWS = CommonWS(http, scope)
+    var connectedDeviceWS: DeviceWS = DeviceWS(http, scope, mediaStateFlow, endpointId, hostCommandSink)
     var reconnectAttempts = 0
     private val devicePhase = MutableStateFlow(ConnectionStatus.Idle)
 
     val deviceWsState: StateFlow<DeviceWsState> by lazy {
-        combine(connectedCommonWS.state, connectedMediaWS.state, devicePhase) { common, media, phase ->
+        combine(connectedDeviceWS.commonState, connectedDeviceWS.mediaState, devicePhase) { common, media, phase ->
             DeviceWsState(
                 phase = phase,
                 common = common,
@@ -122,7 +119,7 @@ internal class DeviceV2Client(
                 if (networkPaused) return@withLock
                 networkPaused = true
                 log.i { "device.v2.network.offline endpointId=$endpointId cancel connection" }
-                connectedMediaWS.stopActiveStream(StreamStopReason.CONNECTION_LOST)
+                connectedDeviceWS.stopActiveStream(StreamStopReason.CONNECTION_LOST)
                 connectionJob?.cancelAndJoin()
                 connectionJob = null
                 reconnectAttempts = 0
@@ -152,7 +149,7 @@ internal class DeviceV2Client(
     suspend fun publishFocusChanged(event: NativeFrontmostAppChanged) {
         if (deviceWsState.value.phase != ConnectionStatus.Connected) return
         runCatching {
-            connectedCommonWS.presenceOutbound.send(
+            connectedDeviceWS.presenceOutbound.send(
                 DeviceV2PresencePayload(
                     eventId = newPulseUuid(),
                     seq = 1,
@@ -170,7 +167,7 @@ internal class DeviceV2Client(
     }
 
     fun stopActiveStream(reason: StreamStopReason) {
-        connectedMediaWS.stopActiveStream(reason)
+        connectedDeviceWS.stopActiveStream(reason)
     }
 
     private suspend fun connect(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {
@@ -193,7 +190,6 @@ internal class DeviceV2Client(
                 return
             }
             log.d { "connecting ${config.endpoint.url}" }
-//            updateStats { it.connecting() }
             val result = runCatching { initConnection(config, onReady) }
             val failure = result.exceptionOrNull()
             val expectedClose = failure?.takeIf { it.isExpectedSocketCloseNoise() }
@@ -219,11 +215,9 @@ internal class DeviceV2Client(
             }
             if (shouldFailPermanently(reason, reconnectAttempts)) {
                 log.d { "failed to connect permanently" }
-//                updateStats { it.failed(reason) }
                 devicePhase.value = ConnectionStatus.Failed
                 return
             }
-//            updateStats { it.disconnected(reason) }
 
             devicePhase.value = ConnectionStatus.Reconnecting
             reconnectAttempts = (reconnectAttempts + 1).coerceAtMost(6)
@@ -232,50 +226,35 @@ internal class DeviceV2Client(
 
 
     private suspend fun initConnection(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {
-        connectedCommonWS.wsManager.reset("connect")
-        connectedMediaWS.resetConnection("connect")
-        log.d { "connecting to common ws" }
-        val deviceSessionId = connectedCommonWS.connect(config.endpoint.getEndpoint())
-        log.d { "common ws connected:$deviceSessionId" }
-        log.d { "connecting to media ws" }
-        connectedMediaWS.connect(deviceSessionId, config, onReady)
+        connectedDeviceWS.resetConnection("connect")
+        log.d { "connecting to unified device ws" }
+        val deviceSessionId = connectedDeviceWS.connect(config.endpoint.getEndpoint(), onReady)
+        log.d { "device ws connected:$deviceSessionId" }
         if (!isConnectionStable(500.milliseconds)) {
-            log.i { "device.v2.connect.unstable endpointId=$endpointId socket=${inactiveSocketName()}" }
+            log.i { "device.v2.connect.unstable endpointId=$endpointId" }
             return
         }
         devicePhase.value = ConnectionStatus.Connected
         log.d { "connected" }
         coroutineScope {
             try {
-                log.d { "listen on ws" }
+                log.d { "listen on unified device ws" }
                 select {
-                    connectedCommonWS.wsManager.listenJob.onJoin {
-                        log.i { "device.v2.listen.ended endpointId=$endpointId socket=common" }
-                    }
-                    connectedMediaWS.wsManager.listenJob.onJoin {
-                        log.i { "device.v2.listen.ended endpointId=$endpointId socket=media" }
+                    connectedDeviceWS.wsManager.listenJob.onJoin {
+                        log.i { "device.v2.listen.ended endpointId=$endpointId" }
                     }
                 }
             } finally {
                 log.d { "cancelled" }
-                connectedCommonWS.wsManager.listenJob.cancelAndJoin()
-                connectedMediaWS.wsManager.listenJob.cancelAndJoin()
+                connectedDeviceWS.wsManager.listenJob.cancelAndJoin()
             }
         }
     }
 
     private suspend fun isConnectionStable(duration: Duration): Boolean {
         delay(duration)
-        return connectedCommonWS.wsManager.listenJob.isActive &&
-            connectedMediaWS.wsManager.listenJob.isActive
+        return connectedDeviceWS.wsManager.listenJob.isActive
     }
-
-    private fun inactiveSocketName(): String =
-        when {
-            !connectedCommonWS.wsManager.listenJob.isActive -> "common"
-            !connectedMediaWS.wsManager.listenJob.isActive -> "media"
-            else -> "unknown"
-        }
 
     private fun shouldFailPermanently(reason: String, attempt: Int): Boolean {
         if (attempt >= 6) return true
@@ -288,15 +267,6 @@ internal class DeviceV2Client(
     private suspend fun sleepBeforeReconnect() {
         val seconds = reconnectDelaySeconds(reconnectAttempts)
         log.d { "reconnect after $seconds" }
-//        updateStats {
-//            it.copy(
-//                connectionState = StreamStats.ConnectionState.Reconnecting,
-//                reconnectAttempt = reconnectAttempts,
-//                reconnectDelaySeconds = seconds.toDouble(),
-//                nextReconnectAtMillis = nowInMillis() + seconds * 1_000L,
-//                statusText = "Reconnecting in ${seconds}s",
-//            )
-//        }
         delay(seconds.seconds)
     }
 }

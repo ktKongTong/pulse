@@ -1,6 +1,5 @@
 import {
-  DEVICE_CONNECTION_PROTOCOL,
-  DEVICE_MEDIA_CONNECTION_PROTOCOL,
+  DEVICE_WS_PROTOCOL,
   DEVICE_MEDIA_PROTOCOL,
 } from "@ktfun/pulse-protocol";
 import {
@@ -33,9 +32,10 @@ main().catch((error) => {
 });
 
 async function main() {
-  const common = await connectJsonSocket(deviceWsUrl());
-  common.sendJson({
-    protocol: DEVICE_CONNECTION_PROTOCOL,
+  const socket = await connectJsonSocket(deviceWsUrl());
+  socket.onJson((frame) => handleServerFrame(socket, frame));
+  socket.sendJson({
+    protocol: DEVICE_WS_PROTOCOL,
     type: "hello",
     payload: {
       device: {
@@ -51,57 +51,47 @@ async function main() {
         pageTitle: true,
         pageUrl: true,
       },
-      supportedProtocols: [DEVICE_CONNECTION_PROTOCOL],
-    },
-  });
-
-  const deviceSessionId = readDeviceSessionId(await common.nextJson());
-  console.log(`device common connected: ${deviceSessionId}`);
-
-  const media = await connectJsonSocket(mediaWsUrl(deviceSessionId));
-  media.onJson((frame) => handleMediaServerFrame(media, frame));
-  media.sendJson({
-    protocol: DEVICE_MEDIA_CONNECTION_PROTOCOL,
-    type: "hello",
-    payload: {
-      capabilities: {
-        media: true,
-        localPlayback: true,
-        remotePlayback: false,
-        binaryAudio: true,
-        localRingBuffer: true,
-        localRingBufferSeconds: 30,
+      media: {
+        capabilities: {
+          media: true,
+          localPlayback: true,
+          remotePlayback: false,
+          binaryAudio: true,
+          localRingBuffer: true,
+          localRingBufferSeconds: 30,
+        },
+        audio: { codecs: ["mp3"], chunkDurationMs: 200 },
       },
-      audio: { codecs: ["mp3"], chunkDurationMs: 200 },
       supportedProtocols: [DEVICE_MEDIA_PROTOCOL],
     },
   });
 
-  await media.nextJson();
-  console.log("device media connected");
-  media.sendJson(buildStreamReady());
-  publishTick(common, media);
-  setInterval(() => publishTick(common, media), 60_000);
+  const ack = await socket.nextJson();
+  const deviceSessionId = readDeviceSessionId(ack);
+  console.log(`device connected: ${deviceSessionId}`);
+  socket.sendJson(buildStreamReady());
+  publishTick(socket);
+  setInterval(() => publishTick(socket), 60_000);
 }
 
-function publishTick(common: JsonSocket, media: JsonSocket) {
+function publishTick(socket: JsonSocket) {
   const seq = tickSeq;
   tickSeq += 1;
   const index = seq % tracks.length;
   const now = new Date().toISOString();
-  common.sendJson(buildPresenceSnapshot({
+  socket.sendJson(buildPresenceSnapshot({
     seq,
     sentAt: now,
     focus: focusApps[index % focusApps.length],
   }));
-  media.sendJson(buildMediaUpdate({
+  socket.sendJson(buildMediaUpdate({
     seq,
     sentAt: now,
     track: tracks[index],
   }));
 }
 
-function handleMediaServerFrame(socket: JsonSocket, frame: JsonObject) {
+function handleServerFrame(socket: JsonSocket, frame: JsonObject) {
   if (frame.type !== "command") return;
   const payload = frame.payload as JsonObject;
   const command = payload.command as JsonObject;
@@ -131,16 +121,6 @@ function readDeviceSessionId(frame: JsonObject) {
 function deviceWsUrl() {
   const url = new URL("/api/v1/device/ws", baseUrl);
   url.searchParams.set("deviceId", deviceId);
-  return toWsUrl(url);
-}
-
-function mediaWsUrl(deviceSessionId: string) {
-  const url = new URL("/api/v1/device/media/ws", baseUrl);
-  url.searchParams.set("deviceSessionId", deviceSessionId);
-  return toWsUrl(url);
-}
-
-function toWsUrl(url: URL) {
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }

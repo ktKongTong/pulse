@@ -255,6 +255,7 @@ v2 client -> v2 adapter -> canonical
 - `presenceState` 从字符串改成对象
 - `roomId` 命名从 `page:<url>` 改成 `presence:page:<url>`
 - 合并 `client.common.ws.v1` 与 `client.media.ws.v1` 为单条 `client.ws.v2`，删除 `/api/v1/client/media/ws` endpoint：握手表改变、client 帧与 server 帧合并、旧 endpoint 不保留，属于 wire-level breaking change
+- 合并 `device.connection.v1` 与 `device.media.connection.v1` 为单条 `device.ws.v2`，删除 `/api/v1/device/media/ws` endpoint：统一 hello 携带 device + presence + media capabilities，`presence.v2` / `device.media.v1` 业务帧 shape 不变但承载在统一 device WS 上，属于 wire-level breaking change
 
 ## 7. Recommended version policy for Pulse
 

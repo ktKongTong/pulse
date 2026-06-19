@@ -1,6 +1,5 @@
 package io.github.kt.pulsebar.ws.media
 
-import io.github.kt.pulsebar.ws.connection.MediaConnectionMessage
 import io.github.kt.pulsebar.ws.connection.MediaMessage
 import io.github.kt.pulsebar.ws.connection.WSPayload
 import io.github.kt.pulsebar.model.stream.CaptureInfo
@@ -11,17 +10,7 @@ import io.github.kt.pulsebar.model.stream.StreamState
 import io.github.kt.pulsebar.model.stream.StreamStopReason
 
 import io.github.kt.pulsebar.utils.nowInIso8601
-import io.github.kt.pulsebar.ws.DEVICE_MEDIA_PROTOCOL_V1
-import kotlinx.serialization.SerialInfo
 import kotlinx.serialization.Serializable
-
-@Serializable
-@MediaConnectionMessage("hello")
-internal data class DeviceV2MediaHelloPayload(
-    val capabilities: DeviceV2MediaCapabilities,
-    val audio: DeviceV2AudioCapabilities,
-    val supportedProtocols: List<String>,
-): WSPayload
 
 @Serializable
 @MediaMessage("stream.state.updated")
@@ -103,22 +92,6 @@ internal data class DeviceV2StreamStoppedPayload(
 
 
 internal const val DEVICE_V2_AUDIO_CHUNK_DURATION_MS: Int = 1000
-
-internal fun deviceV2MediaHello() = DeviceV2MediaHelloPayload(
-    capabilities = DeviceV2MediaCapabilities(
-        media = true,
-        localPlayback = true,
-        remotePlayback = false,
-        binaryAudio = true,
-        localRingBuffer = false,
-    ),
-    audio = DeviceV2AudioCapabilities(
-        codecs = listOf("pcm16-wav"),
-        chunkDurationMs = DEVICE_V2_AUDIO_CHUNK_DURATION_MS,
-    ),
-    supportedProtocols = listOf(DEVICE_MEDIA_PROTOCOL_V1),
-)
-
 
 
 @Serializable

@@ -21,19 +21,6 @@ export interface StreamClientMeta {
   lastAckSeq?: number;
 }
 
-export interface DeviceAttachment {
-  kind: "device";
-  connectionId: string;
-  deviceId: string;
-  deviceSessionId: string;
-}
-
-export interface PendingDeviceAttachment {
-  kind: "pending-device";
-  deviceId: string;
-  deviceSessionId: string;
-}
-
 export interface StreamContext {
   streamId: string;
   generation: number;

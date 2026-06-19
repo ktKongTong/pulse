@@ -10,13 +10,12 @@ import {
   StreamFormatSchema,
 } from "./shared";
 
-export const DEVICE_CONNECTION_PROTOCOL = "device.connection.v1";
-export const DEVICE_MEDIA_CONNECTION_PROTOCOL = "device.media.connection.v1";
-export const DEVICE_MEDIA_PROTOCOL = "device.media.v1";
+export const DEVICE_WS_PROTOCOL = "device.ws.v2";
 export const PRESENCE_PROTOCOL = "presence.v2";
+export const DEVICE_MEDIA_PROTOCOL = "device.media.v1";
 
-export const DeviceCommonConnectionHelloFrameSchema = z.object({
-  protocol: z.literal(DEVICE_CONNECTION_PROTOCOL),
+export const DeviceWsHelloFrameSchema = z.object({
+  protocol: z.literal(DEVICE_WS_PROTOCOL),
   type: z.literal("hello"),
   payload: z.object({
     device: z.object({
@@ -32,12 +31,26 @@ export const DeviceCommonConnectionHelloFrameSchema = z.object({
       pageTitle: z.boolean(),
       pageUrl: z.boolean(),
     }),
+    media: z.object({
+      capabilities: z.object({
+        media: z.boolean(),
+        localPlayback: z.boolean(),
+        remotePlayback: z.boolean(),
+        binaryAudio: z.boolean().optional(),
+        localRingBuffer: z.boolean().optional(),
+        localRingBufferSeconds: z.number().int().positive().optional(),
+      }),
+      audio: z.object({
+        codecs: z.array(StreamCodecSchema).min(1),
+        chunkDurationMs: z.number().int().positive().optional(),
+      }),
+    }),
     supportedProtocols: z.array(z.string().min(1)).min(1),
   }),
 });
 
-export const DeviceCommonConnectionHelloAckFrameSchema = z.object({
-  protocol: z.literal(DEVICE_CONNECTION_PROTOCOL),
+export const DeviceWsHelloAckFrameSchema = z.object({
+  protocol: z.literal(DEVICE_WS_PROTOCOL),
   type: z.literal("hello_ack"),
   payload: z.discriminatedUnion("accepted", [
     z.object({
@@ -46,6 +59,9 @@ export const DeviceCommonConnectionHelloAckFrameSchema = z.object({
       connectionId: z.string().min(1),
       deviceSessionId: z.string().min(1),
       selectedProtocols: z.array(z.string().min(1)),
+      capabilities: z.object({
+        streaming: z.boolean(),
+      }),
     }),
     z.object({
       accepted: z.literal(false),
@@ -114,50 +130,6 @@ export const PresenceSessionEndFrameSchema = z.object({
       .enum(["app_shutdown", "logout", "sleep", "network_change", "unknown"])
       .optional(),
   }),
-});
-
-export const DeviceMediaConnectionHelloFrameSchema = z.object({
-  protocol: z.literal(DEVICE_MEDIA_CONNECTION_PROTOCOL),
-  type: z.literal("hello"),
-  payload: z.object({
-    capabilities: z.object({
-      media: z.boolean(),
-      localPlayback: z.boolean(),
-      remotePlayback: z.boolean(),
-      binaryAudio: z.boolean().optional(),
-      localRingBuffer: z.boolean().optional(),
-      localRingBufferSeconds: z.number().int().positive().optional(),
-    }),
-    audio: z.object({
-      codecs: z.array(StreamCodecSchema).min(1),
-      chunkDurationMs: z.number().int().positive().optional(),
-    }),
-    supportedProtocols: z.array(z.string().min(1)).min(1),
-  }),
-});
-
-export const DeviceMediaConnectionHelloAckFrameSchema = z.object({
-  protocol: z.literal(DEVICE_MEDIA_CONNECTION_PROTOCOL),
-  type: z.literal("hello_ack"),
-  payload: z.discriminatedUnion("accepted", [
-    z.object({
-      accepted: z.literal(true),
-      serverTime: IsoDateTimeSchema,
-      connectionId: z.string().min(1),
-      selectedProtocols: z.array(z.string().min(1)),
-      capabilities: z.object({
-        streaming: z.boolean(),
-      }),
-    }),
-    z.object({
-      accepted: z.literal(false),
-      serverTime: IsoDateTimeSchema,
-      error: z.object({
-        code: z.string().min(1),
-        message: z.string(),
-      }),
-    }),
-  ]),
 });
 
 export const DeviceStreamStateSchema = z.object({
@@ -311,18 +283,13 @@ export const DeviceMediaErrorFrameSchema = z.object({
   }),
 });
 
-export const DeviceCommonClientFrameSchema = z.discriminatedUnion("type", [
-  DeviceCommonConnectionHelloFrameSchema,
+export const DevicePresenceFrameSchema = z.discriminatedUnion("type", [
   PresenceSnapshotFrameSchema,
   PresenceHeartbeatFrameSchema,
   PresenceSessionEndFrameSchema,
 ]);
 
-export const DeviceCommonServerFrameSchema =
-  DeviceCommonConnectionHelloAckFrameSchema;
-
-export const DeviceMediaClientFrameSchema = z.discriminatedUnion("type", [
-  DeviceMediaConnectionHelloFrameSchema,
+export const DeviceMediaFrameSchema = z.discriminatedUnion("type", [
   DeviceStreamStateUpdatedFrameSchema,
   DeviceMediaUpdatedFrameSchema,
   DeviceMediaCommandAckFrameSchema,
@@ -332,17 +299,27 @@ export const DeviceMediaClientFrameSchema = z.discriminatedUnion("type", [
   DeviceMediaErrorFrameSchema,
 ]);
 
-export const DeviceMediaServerFrameSchema = z.discriminatedUnion("type", [
-  DeviceMediaConnectionHelloAckFrameSchema,
+export const DeviceWsClientFrameSchema = z.discriminatedUnion("type", [
+  DeviceWsHelloFrameSchema,
+  PresenceSnapshotFrameSchema,
+  PresenceHeartbeatFrameSchema,
+  PresenceSessionEndFrameSchema,
+  DeviceStreamStateUpdatedFrameSchema,
+  DeviceMediaUpdatedFrameSchema,
+  DeviceMediaCommandAckFrameSchema,
+  DeviceMediaAudioChunkFrameSchema,
+  DeviceMediaStreamHeartbeatFrameSchema,
+  DeviceMediaStreamStoppedFrameSchema,
+  DeviceMediaErrorFrameSchema,
+]);
+
+export const DeviceWsServerFrameSchema = z.discriminatedUnion("type", [
+  DeviceWsHelloAckFrameSchema,
   DeviceMediaCommandFrameSchema,
 ]);
 
-export type DeviceCommonConnectionHelloFrame = z.infer<
-  typeof DeviceCommonConnectionHelloFrameSchema
->;
-export type DeviceCommonConnectionHelloAckFrame = z.infer<
-  typeof DeviceCommonConnectionHelloAckFrameSchema
->;
+export type DeviceWsHelloFrame = z.infer<typeof DeviceWsHelloFrameSchema>;
+export type DeviceWsHelloAckFrame = z.infer<typeof DeviceWsHelloAckFrameSchema>;
 export type CommonPresenceState = z.infer<typeof CommonPresenceStateSchema>;
 export type PresenceSnapshotFrame = z.infer<typeof PresenceSnapshotFrameSchema>;
 export type PresenceHeartbeatFrame = z.infer<
@@ -350,12 +327,6 @@ export type PresenceHeartbeatFrame = z.infer<
 >;
 export type PresenceSessionEndFrame = z.infer<
   typeof PresenceSessionEndFrameSchema
->;
-export type DeviceMediaConnectionHelloFrame = z.infer<
-  typeof DeviceMediaConnectionHelloFrameSchema
->;
-export type DeviceMediaConnectionHelloAckFrame = z.infer<
-  typeof DeviceMediaConnectionHelloAckFrameSchema
 >;
 export type DeviceStreamState = z.infer<typeof DeviceStreamStateSchema>;
 export type DeviceStreamStateUpdatedFrame = z.infer<
@@ -379,18 +350,8 @@ export type DeviceMediaStreamHeartbeatFrame = z.infer<
 export type DeviceMediaStreamStoppedFrame = z.infer<
   typeof DeviceMediaStreamStoppedFrameSchema
 >;
-export type DeviceMediaErrorFrame = z.infer<
-  typeof DeviceMediaErrorFrameSchema
->;
-export type DeviceCommonClientFrame = z.infer<
-  typeof DeviceCommonClientFrameSchema
->;
-export type DeviceCommonServerFrame = z.infer<
-  typeof DeviceCommonServerFrameSchema
->;
-export type DeviceMediaClientFrame = z.infer<
-  typeof DeviceMediaClientFrameSchema
->;
-export type DeviceMediaServerFrame = z.infer<
-  typeof DeviceMediaServerFrameSchema
->;
+export type DeviceMediaErrorFrame = z.infer<typeof DeviceMediaErrorFrameSchema>;
+export type DevicePresenceFrame = z.infer<typeof DevicePresenceFrameSchema>;
+export type DeviceMediaFrame = z.infer<typeof DeviceMediaFrameSchema>;
+export type DeviceWsClientFrame = z.infer<typeof DeviceWsClientFrameSchema>;
+export type DeviceWsServerFrame = z.infer<typeof DeviceWsServerFrameSchema>;

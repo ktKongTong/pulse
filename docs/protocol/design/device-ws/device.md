@@ -1,23 +1,23 @@
 # Device WS 协议
 
-归属：`packages/realtime-protocol`
-代码范围：`packages/realtime-protocol`、`apps/realtime-worker`、`common`、`macosApp`
+归属：`packages/v2/realtime-protocol`
+代码范围：`packages/v2/realtime-protocol`、`apps/realtime-worker-v2`、`common`、`macosApp`
 状态：draft
-验证：协议草案；实现前需要补 schema、worker/native 测试和端到端验证
+验证：协议 schema、worker WS tests、KMP common compile
 
 ## Connection
 
-common WS 连接生命周期使用：
+device WS 连接生命周期使用：
 
 ```ts
-type CommonConnectionProtocol = "device.connection.v1";
+type DeviceWsProtocol = "device.ws.v2";
 ```
 
-hello：
+hello（统一携带 device metadata、presence capabilities、media capabilities、audio capabilities）：
 
 ```ts
-type CommonConnectionHello = {
-  protocol: "device.connection.v1";
+type DeviceWsHello = {
+  protocol: "device.ws.v2";
   type: "hello";
   payload: {
     device: {
@@ -33,6 +33,20 @@ type CommonConnectionHello = {
       pageTitle: boolean;
       pageUrl: boolean;
     };
+    media: {
+      capabilities: {
+        media: boolean;
+        localPlayback: boolean;
+        remotePlayback: boolean;
+        binaryAudio?: boolean;
+        localRingBuffer?: boolean;
+        localRingBufferSeconds?: number;
+      };
+      audio: {
+        codecs: Array<"pcm16-wav" | "opus" | "aac" | "mp3">;
+        chunkDurationMs?: number;
+      };
+    };
     supportedProtocols: string[];
   };
 };
@@ -41,8 +55,8 @@ type CommonConnectionHello = {
 hello ack：
 
 ```ts
-type CommonConnectionHelloAck = {
-  protocol: "device.connection.v1";
+type DeviceWsHelloAck = {
+  protocol: "device.ws.v2";
   type: "hello_ack";
   payload:
     | {
@@ -51,6 +65,9 @@ type CommonConnectionHelloAck = {
         connectionId: string;
         deviceSessionId: string;
         selectedProtocols: string[];
+        capabilities: {
+          streaming: boolean;
+        };
       }
     | {
         accepted: false;
@@ -63,15 +80,15 @@ type CommonConnectionHelloAck = {
 };
 ```
 
-`accepted = false` 后，server 必须立即关闭 common WS。
+`accepted = false` 后，server 必须立即关闭 device WS。
 
 身份绑定规则：
 
-- `workspaceId/siteId/deviceId` 是 common WS 连接建立时的 endpoint 参数，不通过 hello frame 传递。
-- `deviceSessionId` 由 server 在 common WS hello ack 中生成并返回。
-- server 在 upgrade/鉴权阶段绑定 common WS 连接上下文；hello 只做 device metadata、capability、protocol negotiation 和 `deviceSessionId` 分配。
-- common WS 上的后续业务 frame 默认继承连接上下文，不需要每帧重复 `workspaceId/siteId/deviceId/deviceSessionId`。
-- media WS 必须使用 common WS hello ack 返回的 `deviceSessionId` 绑定到同一 device session。
+- `deviceId` 是 device WS 连接建立时的 endpoint 参数，不通过 hello frame 传递。
+- `deviceSessionId` 由 server 在 device WS hello ack 中生成并返回。
+- server 在 upgrade/鉴权阶段绑定 device WS 连接上下文；hello 只做 device metadata、capability、protocol negotiation 和 `deviceSessionId` 分配。
+- device WS 上的后续业务 frame 默认继承连接上下文，不需要每帧重复 `deviceId/deviceSessionId`。
+- 旧 `/api/v1/device/media/ws` endpoint 已删除；media 业务帧（`device.media.v1`）和 presence 业务帧（`presence.v2`）都承载在统一 device WS 上。
 
 ## Presence
 
@@ -156,9 +173,9 @@ type PresenceHeartbeatFrame = {
 
 规则：
 
-- device common WS 每 60 秒发送一次 heartbeat。
-- server 使用 common WS heartbeat 作为整个 device session 的共享 lease；media WS 不单独定义心跳。
-- server 150 秒未观察到 heartbeat 后，主动关闭 device session，并释放同一 `deviceSessionId` 绑定的 media WS。
+- device WS 每 60 秒发送一次 heartbeat。
+- server 使用 device WS heartbeat 作为整个 device session 的共享 lease。
+- server 150 秒未观察到 heartbeat 后，主动关闭 device session，释放 `deviceSessionId` 绑定的全部上下文（presence/focus、media state、stream）。
 - heartbeat 只用于 lease，不更新 presence/focus 业务状态。
 
 session end：
@@ -177,4 +194,4 @@ type PresenceSessionEndFrame = {
 };
 ```
 
-`session_end` 表示 device 主动结束当前 device session。发送 `session_end` 后，device 必须立即关闭 common WS；如果 media WS 存在，也必须关闭。server 收到后释放该 `deviceSessionId` 对应的整个 device session 上下文。
+`session_end` 表示 device 主动结束当前 device session。发送 `session_end` 后，device 必须立即关闭 device WS。server 收到后释放该 `deviceSessionId` 对应的整个 device session 上下文（presence/focus、media state、stream）。

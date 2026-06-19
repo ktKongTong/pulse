@@ -1,7 +1,6 @@
 import {
   CLIENT_WS_PROTOCOL,
-  DEVICE_CONNECTION_PROTOCOL,
-  DEVICE_MEDIA_CONNECTION_PROTOCOL,
+  DEVICE_WS_PROTOCOL,
   DEVICE_MEDIA_PROTOCOL,
 } from "@ktfun/pulse-protocol";
 import type { Env } from "../src/env";
@@ -63,35 +62,23 @@ export async function connectClient(
 
 export async function connectDevice(env: Env, deviceId = "owner") {
   const device = env.DEVICE_DO.getByName(deviceId);
-  const common = (await device.fetch(wsRequest(`https://pulse.test/api/v1/device/ws?deviceId=${deviceId}`))).webSocket!;
-  common.accept();
-  common.send(JSON.stringify({
-    protocol: DEVICE_CONNECTION_PROTOCOL,
+  const socket = (await device.fetch(wsRequest(`https://pulse.test/api/v1/device/ws?deviceId=${deviceId}`))).webSocket!;
+  socket.accept();
+  socket.send(JSON.stringify({
+    protocol: DEVICE_WS_PROTOCOL,
     type: "hello",
     payload: {
       device: { name: "Mac", platform: "macos" },
       capabilities: { focusApp: true, windowTitle: true, pageTitle: true, pageUrl: true },
-      supportedProtocols: [DEVICE_CONNECTION_PROTOCOL],
-    },
-  }));
-  const ack = await nextMessage(common) as { payload: { deviceSessionId: string } };
-  return { device, common, deviceId, deviceSessionId: ack.payload.deviceSessionId };
-}
-
-export async function connectDeviceMedia(env: Env, media: DurableObjectStub, deviceSessionId: string, deviceId = "owner") {
-  const socket = (await media.fetch(wsRequest(`https://pulse.test/api/v1/device/media/ws?deviceId=${deviceId}&deviceSessionId=${deviceSessionId}`))).webSocket!;
-  socket.accept();
-  socket.send(JSON.stringify({
-    protocol: DEVICE_MEDIA_CONNECTION_PROTOCOL,
-    type: "hello",
-    payload: {
-      capabilities: { media: true, localPlayback: true, remotePlayback: false, binaryAudio: true },
-      audio: { codecs: ["pcm16-wav"] },
+      media: {
+        capabilities: { media: true, localPlayback: true, remotePlayback: false, binaryAudio: true },
+        audio: { codecs: ["pcm16-wav"] },
+      },
       supportedProtocols: [DEVICE_MEDIA_PROTOCOL],
     },
   }));
-  await nextMessage(socket);
-  return socket;
+  const ack = await nextMessage(socket) as { payload: { deviceSessionId: string } };
+  return { device, common: socket, deviceId, deviceSessionId: ack.payload.deviceSessionId };
 }
 
 export function sendReadyStreamState(socket: WebSocket) {

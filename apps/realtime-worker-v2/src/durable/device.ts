@@ -1,18 +1,21 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  DEVICE_CONNECTION_PROTOCOL,
-  DeviceCommonClientFrameSchema,
-  type DeviceCommonConnectionHelloFrame,
+  DEVICE_WS_PROTOCOL,
+  DEVICE_MEDIA_PROTOCOL,
+  PRESENCE_PROTOCOL,
+  DevicePresenceFrameSchema,
+  DeviceWsHelloFrameSchema,
+  type DeviceWsHelloFrame,
 } from "@ktfun/pulse-protocol";
 import type { Env } from "../env";
 import { globalStub, mediaStub } from "../env";
-import { parseFrame } from "../utils/frame";
+import { parseFrame, parseJson } from "../utils/frame";
 import { createAcceptedPair, upgradeResponse } from "../utils/pair";
 import { nowIso } from "../utils/time";
 import { closeWith, safeSend, socketAttachment } from "../utils/ws";
 
 interface DeviceAttachment {
-  protocol: typeof DEVICE_CONNECTION_PROTOCOL;
+  protocol: typeof DEVICE_WS_PROTOCOL;
   connectionId: string;
   deviceId: string;
   deviceSessionId: string;
@@ -21,7 +24,7 @@ interface DeviceAttachment {
 
 const SESSION_KEY = "device-session";
 const HEARTBEAT_REQUEST = JSON.stringify({
-  protocol: "presence.v2",
+  protocol: PRESENCE_PROTOCOL,
   type: "heartbeat",
   payload: {
     eventId: "heartbeat",
@@ -31,7 +34,7 @@ const HEARTBEAT_REQUEST = JSON.stringify({
   },
 });
 const HEARTBEAT_RESPONSE = JSON.stringify({
-  protocol: "device.connection.v1",
+  protocol: DEVICE_WS_PROTOCOL,
   type: "heartbeat_ack",
   payload: {},
 });
@@ -60,6 +63,18 @@ export class DeviceDO extends DurableObject<Env> {
     return false;
   }
 
+  async sendDeviceFrame(frame: unknown): Promise<boolean> {
+    const active = this.activeDeviceSocket();
+    if (!active) return false;
+    return safeSend(active.socket, frame);
+  }
+
+  async closeDeviceSocket(code: string): Promise<void> {
+    const active = this.activeDeviceSocket();
+    if (!active) return;
+    closeWith(active.socket, 4000, code);
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     this.deviceId = url.searchParams.get("deviceId") ?? "owner";
@@ -72,11 +87,48 @@ export class DeviceDO extends DurableObject<Env> {
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-    const frame = parseFrame(DeviceCommonClientFrameSchema, message);
-    if (!frame) return closeWith(socket, 4000, "invalid_frame");
-    if (frame.type === "hello") return this.acceptHello(socket, frame);
-    if (frame.type === "snapshot") return this.applyPresence(frame.payload.state);
-    if (frame.type === "session_end") return this.endSession(socket);
+    if (message instanceof ArrayBuffer) {
+      const attachment = socketAttachment<DeviceAttachment>(socket);
+      if (!attachment) return closeWith(socket, 4000, "hello_required");
+      return mediaStub(this.env).handleDeviceBinary(attachment.deviceSessionId, message);
+    }
+
+    const json = parseJson(message);
+    if (!json) {
+      console.log("[device-do] unparseable_message", { message: message.slice(0, 300) });
+      return closeWith(socket, 4000, "invalid_frame");
+    }
+    const protocol = (json as { protocol?: unknown }).protocol;
+    console.log("[device-do] message", { protocol, type: (json as { type?: unknown }).type });
+
+    if (protocol === DEVICE_WS_PROTOCOL) {
+      const attachment = socketAttachment<DeviceAttachment>(socket);
+      if (attachment) return;
+      const frame = parseFrame(DeviceWsHelloFrameSchema, message);
+      if (!frame) {
+        console.log("[device-do] hello_parse_failed", { message: message.slice(0, 500) });
+        return closeWith(socket, 4000, "invalid_frame");
+      }
+      return this.acceptHello(socket, frame);
+    }
+
+    const attachment = socketAttachment<DeviceAttachment>(socket);
+    if (!attachment) return closeWith(socket, 4000, "hello_required");
+
+    if (protocol === PRESENCE_PROTOCOL) {
+      const frame = parseFrame(DevicePresenceFrameSchema, message);
+      if (!frame) return closeWith(socket, 4000, "invalid_frame");
+      if (frame.type === "snapshot") return this.applyPresence(frame.payload.state);
+      if (frame.type === "session_end") return this.endSession(socket);
+      return;
+    }
+
+    if (protocol === DEVICE_MEDIA_PROTOCOL) {
+      return mediaStub(this.env).handleDeviceFrame(attachment.deviceSessionId, message);
+    }
+
+    console.log("[device-do] unknown_protocol", { protocol, message: message.slice(0, 300) });
+    return closeWith(socket, 4000, "invalid_frame");
   }
 
   async webSocketClose(socket: WebSocket) {
@@ -107,11 +159,11 @@ export class DeviceDO extends DurableObject<Env> {
 
   private async acceptHello(
     socket: WebSocket,
-    frame: DeviceCommonConnectionHelloFrame,
+    frame: DeviceWsHelloFrame,
   ) {
     const deviceSessionId = crypto.randomUUID();
     const attachment: DeviceAttachment = {
-      protocol: DEVICE_CONNECTION_PROTOCOL,
+      protocol: DEVICE_WS_PROTOCOL,
       connectionId: crypto.randomUUID(),
       deviceId: this.deviceId,
       deviceSessionId,
@@ -121,8 +173,12 @@ export class DeviceDO extends DurableObject<Env> {
     await this.ctx.storage.put(SESSION_KEY, deviceSessionId);
     socket.serializeAttachment(attachment);
     await this.ctx.storage.setAlarm(Date.now() + DEVICE_HEARTBEAT_LEASE_MS);
+
+    const streaming = frame.payload.media.capabilities.media;
+    await mediaStub(this.env).acceptDeviceSession(this.deviceId, deviceSessionId, streaming);
+
     safeSend(socket, {
-      protocol: DEVICE_CONNECTION_PROTOCOL,
+      protocol: DEVICE_WS_PROTOCOL,
       type: "hello_ack",
       payload: {
         accepted: true,
@@ -130,6 +186,7 @@ export class DeviceDO extends DurableObject<Env> {
         connectionId: attachment.connectionId,
         deviceSessionId,
         selectedProtocols: frame.payload.supportedProtocols,
+        capabilities: { streaming },
       },
     });
   }
@@ -165,8 +222,8 @@ export class DeviceDO extends DurableObject<Env> {
     this.deviceSessionId = null;
     await this.ctx.storage.delete(SESSION_KEY);
     await this.ctx.storage.deleteAlarm();
+    await mediaStub(this.env).endDeviceSession(attachment.deviceSessionId);
     await globalStub(this.env).updateOwnerFocus(null);
-    await mediaStub(this.env).revokeDeviceSession(attachment.deviceSessionId);
   }
 
   private activeDeviceSocket() {
