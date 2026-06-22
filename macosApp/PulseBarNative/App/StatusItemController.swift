@@ -9,6 +9,7 @@ final class StatusItemController: NSObject {
     private let statusItem: NSStatusItem
     private let panel: NSPanel
     private let menu = NSMenu()
+    private lazy var preferencesWindowController = PreferencesWindowController(monitor: monitor)
     private var localMonitor: Any?
     private var globalMonitor: Any?
 
@@ -53,13 +54,11 @@ final class StatusItemController: NSObject {
     }
 
     private func configureMenu() {
-        let stopItem = NSMenuItem(title: "Stop Listening", action: #selector(stopListening), keyEquivalent: "")
-        stopItem.target = self
-        menu.addItem(stopItem)
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(showPreferences), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(title: "Quit PulseBar", action: #selector(quitPulseBar), keyEquivalent: "")
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitPulseBar), keyEquivalent: "")
         quitItem.target = self
         menu.addItem(quitItem)
     }
@@ -69,9 +68,6 @@ final class StatusItemController: NSObject {
         switch NSApp.currentEvent?.type {
         case .rightMouseUp:
             closePanel()
-            if let stopItem = menu.items.first {
-                stopItem.isEnabled = monitor.isMonitoring
-            }
             statusItem.menu = menu
             button.performClick(nil)
             statusItem.menu = nil
@@ -142,8 +138,9 @@ final class StatusItemController: NSObject {
         closePanel()
     }
 
-    @objc private func stopListening() {
-        monitor.stop()
+    @objc func showPreferences() {
+        closePanel()
+        preferencesWindowController.show()
     }
 
     @objc private func quitPulseBar() {

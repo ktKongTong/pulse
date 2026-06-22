@@ -15,6 +15,10 @@ final class PulseBarNativeAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         monitor.resumeAndRefresh()
     }
+
+    func showPreferences() {
+        statusItemController?.showPreferences()
+    }
 }
 
 @main
@@ -22,30 +26,17 @@ struct PulseBarNativeApp: App {
     @NSApplicationDelegateAdaptor(PulseBarNativeAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("PulseBar", id: "dashboard") {
-            PulseBarDashboardView()
+        Settings {
+            PulseBarPreferencesView()
                 .environmentObject(appDelegate.monitor)
-                .frame(minWidth: 1080, minHeight: 720)
+                .frame(minWidth: 520, minHeight: 420)
         }
-        .defaultSize(width: 1180, height: 780)
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") {
-                    appDelegate.monitor.dashboardSelection = .settings
-                    DashboardWindow.focus()
+                Button("Settings...") {
+                    appDelegate.showPreferences()
                 }
                 .keyboardShortcut(",", modifiers: .command)
-            }
-            CommandGroup(after: .appSettings) {
-                Button(appDelegate.monitor.isMonitoring ? "Stop Monitoring" : "Start Monitoring") {
-                    if appDelegate.monitor.isMonitoring {
-                        appDelegate.monitor.stop()
-                    } else {
-                        appDelegate.monitor.start()
-                    }
-                }
-                .disabled(appDelegate.monitor.isPermissionPromptBlockingInteraction)
-                .keyboardShortcut("m", modifiers: [.command, .shift])
             }
         }
     }

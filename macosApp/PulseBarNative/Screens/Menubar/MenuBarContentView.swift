@@ -6,7 +6,6 @@ private let menuBarUsageRowLimit = 5
 
 struct MenuBarContentView: View {
     @EnvironmentObject private var monitor: MonitorStore
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -51,20 +50,6 @@ struct MenuBarContentView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Button {
-                showDashboard(.connection)
-            } label: {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .foregroundStyle(.secondary)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.secondary.opacity(0.08))
-                    )
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -139,12 +124,6 @@ struct MenuBarContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(height: 108)
-    }
-
-    private func showDashboard(_ section: DashboardSection) {
-        monitor.dashboardSelection = section
-        openWindow(id: "dashboard")
-        DashboardWindow.focus()
     }
 
     private var bottomSection: some View {

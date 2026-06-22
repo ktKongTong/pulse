@@ -1,5 +1,12 @@
 # PulseBar Dashboard Shell 设计草案
 
+状态：superseded
+
+> Superseded：独立 dashboard 壳层目标已被
+> [Pulse macOS Tray-Only Preferences Plan](../../exec-plans/active/tray-only-preferences.md)
+> 取代。当前 macOS UI 目标是 tray-only app，加一个按需打开的 Preferences
+> 窗口；本文仅作为旧 dashboard 草案保留。
+
 本文只记录当前已经确认的 `dashboard` 壳层结构与基础视觉约束。它描述 sidebar 的组织方式、当前导航范围，以及整体 UI 的分块方式。具体模块内部页面另见各自设计文档。
 
 ## 1. Dashboard 角色

@@ -6,8 +6,8 @@ import Foundation
 
 // MARK: - Model types consumed by the debug pane
 
-struct StreamCaptureSource: Identifiable, Equatable {
-    enum Kind: String {
+struct StreamCaptureSource: Identifiable, Equatable, Sendable {
+    enum Kind: String, Sendable {
         case system
         case application
     }
@@ -19,7 +19,12 @@ struct StreamCaptureSource: Identifiable, Equatable {
     let processIdentifier: pid_t?
 }
 
-struct StreamCaptureMeter: Equatable {
+private struct SupportedApplicationCaptureSource {
+    let bundleId: String
+    let name: String
+}
+
+struct StreamCaptureMeter: Equatable, Sendable {
     var peak: Double = 0
     var rms: Double = 0
     var nonSilentSamples: UInt64 = 0
@@ -45,6 +50,11 @@ struct StreamCaptureUpdate: Sendable {
 /// Everything else — batching, WAV framing, WebSocket transport, state
 /// machine, reconnect logic — lives in Kotlin's `StreamClient`.
 final class StreamCaptureService: @unchecked Sendable {
+    private static let supportedApplicationCaptureSources: [SupportedApplicationCaptureSource] = [
+        SupportedApplicationCaptureSource(bundleId: "com.spotify.client", name: "Spotify"),
+        SupportedApplicationCaptureSource(bundleId: "com.apple.Music", name: "Music"),
+    ]
+
     fileprivate final class CaptureContext: @unchecked Sendable {
         let channels: UInt32
         let writer: StreamWavWriter?
@@ -116,23 +126,26 @@ final class StreamCaptureService: @unchecked Sendable {
     }
 
     func availableSources() -> [StreamCaptureSource] {
-        let applications = NSWorkspace.shared.runningApplications
-            .filter { app in
-                guard app.activationPolicy == .regular else { return false }
-                return app.bundleIdentifier != nil
+        var runningApplicationsByBundleId: [String: NSRunningApplication] = [:]
+        for app in NSWorkspace.shared.runningApplications {
+            guard app.activationPolicy == .regular,
+                  let bundleId = app.bundleIdentifier else {
+                continue
             }
-            .compactMap { app -> StreamCaptureSource? in
-                guard let bundleId = app.bundleIdentifier else { return nil }
-                let processIdentifier = app.processIdentifier
-                return StreamCaptureSource(
-                    id: "app:\(bundleId):\(processIdentifier)",
-                    name: app.localizedName ?? bundleId,
-                    kind: .application,
-                    bundleId: bundleId,
-                    processIdentifier: processIdentifier
-                )
-            }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            runningApplicationsByBundleId[bundleId] = app
+        }
+
+        let applications = Self.supportedApplicationCaptureSources.compactMap { supported -> StreamCaptureSource? in
+            guard let app = runningApplicationsByBundleId[supported.bundleId] else { return nil }
+            let processIdentifier = app.processIdentifier
+            return StreamCaptureSource(
+                id: "app:\(supported.bundleId):\(processIdentifier)",
+                name: supported.name,
+                kind: .application,
+                bundleId: supported.bundleId,
+                processIdentifier: processIdentifier
+            )
+        }
 
         return [
             StreamCaptureSource(

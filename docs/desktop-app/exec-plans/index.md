@@ -4,6 +4,7 @@
 
 ## 活跃计划
 
+- [Pulse macOS Tray-Only Preferences Plan](./active/tray-only-preferences.md)
 - [KMP Native 下一阶段收尾计划](./active/kmp-native-refactor.md)
 - [Swift 壳层 Xcode / Reference Verification Checklist](./active/swift-shell-restructure.md)
 

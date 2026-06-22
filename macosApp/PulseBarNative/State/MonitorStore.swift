@@ -166,14 +166,14 @@ final class MonitorStore: ObservableObject {
     }
 
     func resumeAndRefresh() {
-        streamStore.refreshAudioCapturePermissionStatus()
+        streamStore.refreshAudioCapturePermissionStatusAsync()
         if !isMonitoring { start(); return }
         isPaused = false
         // bridge.forceTick()
     }
 
     func refreshMenuBarContent() {
-        streamStore.refreshAudioCapturePermissionStatus()
+        streamStore.refreshAudioCapturePermissionStatusAsync()
         if !isMonitoring { start(); return }
         isPaused = false
     }
@@ -222,7 +222,7 @@ final class MonitorStore: ObservableObject {
     }
 
     func prepareStreamCapturePane() {
-        streamStore.refreshSources()
+        streamStore.refreshSourcesAsync()
         streamStore.updateEndpoints(streamEndpoints)
     }
 

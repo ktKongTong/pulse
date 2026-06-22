@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum InstalledAppCatalog {
@@ -42,5 +43,26 @@ enum InstalledAppCatalog {
             .filter { !$0.isOther }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return [.other] + sorted
+    }
+
+    static func loadAsync() async -> [InstalledReportingApp] {
+        await Task.detached(priority: .userInitiated) {
+            load()
+        }.value
+    }
+}
+
+enum AppIconLoader {
+    static func load(bundleId: String) -> NSImage? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+            return nil
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    static func loadAsync(bundleId: String) async -> NSImage? {
+        await Task.detached(priority: .utility) {
+            load(bundleId: bundleId)
+        }.value
     }
 }

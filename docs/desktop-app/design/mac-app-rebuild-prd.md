@@ -2,8 +2,14 @@
 
 归属：`macosApp`
 代码范围：`macosApp/PulseBarNative`
-状态：draft
+状态：superseded
 验证：设计文档；落地时按 `docs/desktop-app/specs/verification.md` 执行 Xcode build，涉及 KMP bridge 时再跑 `pnpm check:native`
+
+> Superseded：本文中的 `menubar + dashboard` 目标结构已被
+> [Pulse macOS Tray-Only Preferences Plan](../exec-plans/active/tray-only-preferences.md)
+> 取代。当前目标是 tray-only app：不占 Dock，左键保留状态面板，右键只提供
+> `Settings...` 和 `Quit`，`Connection`、`Reporting`、`General` 进入按需打开的
+> Preferences 窗口。本文以下内容只作为历史产品草案保留，不再作为实施依据。
 
 本文是目标产品结构和交互模型的 PRD，不是当前实现规范，也不是协议或代码接口 spec。当前实现事实以 `docs/desktop-app/architecture.md`、`docs/desktop-app/specs/file-organization.md` 和代码为准；本文中的阶段和偏差章节只用于指导后续产品/UI 重构。
 

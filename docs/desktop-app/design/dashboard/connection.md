@@ -1,6 +1,8 @@
 # PulseBar Connection 设计草案
 
-本文只记录当前已经确认的 `Connection` 设计约束。它描述 `dashboard` 中 `Connection` 模块的对象模型、页面结构、状态语义和顶部处置区规则。尚未确定的 `detail body` 内部布局，不在本文展开。
+本文只记录当前已经确认的 `Connection` 设计约束。它描述 Preferences 窗口中
+`Connection` 分区的对象模型、页面结构、状态语义和顶部处置区规则。尚未确定的
+`detail body` 内部布局，不在本文展开。
 
 ## 1. 设计目标
 

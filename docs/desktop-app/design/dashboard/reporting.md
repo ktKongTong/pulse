@@ -1,6 +1,7 @@
 # PulseBar Reporting 设计草案
 
-本文只记录当前已经确认的 `Reporting` 设计约束。它描述 `dashboard` 中 `Reporting` 模块的对象边界、页面结构、列表项规则和顶部操作规则。当前版本不展开更复杂的 reporting 配置，也不讨论未来增强能力。
+本文只记录当前已经确认的 `Reporting` 设计约束。它描述 Preferences 窗口中
+`Reporting` 分区的对象边界、页面结构、列表项规则和顶部操作规则。当前版本不展开更复杂的 reporting 配置，也不讨论未来增强能力。
 
 ## 1. 设计目标
 

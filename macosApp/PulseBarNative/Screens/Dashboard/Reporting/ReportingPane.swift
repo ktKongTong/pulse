@@ -3,6 +3,8 @@ import SwiftUI
 struct ReportingPane: View {
     @State private var apps: [InstalledReportingApp] = []
     @State private var selectedID: String = InstalledReportingApp.other.id
+    @State private var isLoadingApps = false
+    @State private var hasLoadedApps = false
     @AppStorage("pulsebar.reporting.disabledBundleIds") private var disabledBundleIDsRaw = ""
 
     private var disabledBundleIDs: Set<String> {
@@ -16,21 +18,31 @@ struct ReportingPane: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Reporting")
+                Text("Report")
                     .font(.title2.weight(.semibold))
                     .padding(.horizontal, 20)
                     .padding(.vertical, 18)
                 Divider()
-                List(selection: $selectedID) {
-                    ForEach(apps) { app in
-                        ReportingAppListItem(
-                            app: app,
-                            enabled: isEnabled(app)
-                        )
-                        .tag(app.id)
+                if isLoadingApps && apps.isEmpty {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading applications...")
+                            .foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(selection: $selectedID) {
+                        ForEach(apps) { app in
+                            ReportingAppListItem(
+                                app: app,
+                                enabled: isEnabled(app)
+                            )
+                            .tag(app.id)
+                        }
+                    }
+                    .listStyle(.plain)
                 }
-                .listStyle(.plain)
             }
             .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
             .background(Color(nsColor: .controlBackgroundColor))
@@ -43,12 +55,21 @@ struct ReportingPane: View {
                 toggle: { setEnabled(!isEnabled(selectedApp), for: selectedApp) }
             )
         }
-        .onAppear {
-            apps = InstalledAppCatalog.load()
-            if !apps.contains(where: { $0.id == selectedID }) {
-                selectedID = apps.first?.id ?? InstalledReportingApp.other.id
-            }
+        .task {
+            await loadAppsIfNeeded()
         }
+    }
+
+    private func loadAppsIfNeeded() async {
+        guard !hasLoadedApps, !isLoadingApps else { return }
+        isLoadingApps = true
+        let loadedApps = await InstalledAppCatalog.loadAsync()
+        apps = loadedApps
+        if !loadedApps.contains(where: { $0.id == selectedID }) {
+            selectedID = loadedApps.first?.id ?? InstalledReportingApp.other.id
+        }
+        hasLoadedApps = true
+        isLoadingApps = false
     }
 
     private func isEnabled(_ app: InstalledReportingApp) -> Bool {

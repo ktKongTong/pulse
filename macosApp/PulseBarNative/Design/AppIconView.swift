@@ -4,10 +4,11 @@ import SwiftUI
 struct AppIconView: View {
     let bundleId: String
     var size: CGFloat = 24
+    @State private var image: NSImage?
 
     var body: some View {
         Group {
-            if let image = AppIconCache.shared.image(for: bundleId) {
+            if let image {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
@@ -23,6 +24,13 @@ struct AppIconView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        .task(id: bundleId) {
+            image = AppIconCache.shared.cachedImage(for: bundleId)
+            guard image == nil else { return }
+            guard let loadedImage = await AppIconLoader.loadAsync(bundleId: bundleId) else { return }
+            AppIconCache.shared.store(loadedImage, for: bundleId)
+            image = loadedImage
+        }
     }
 }
 
@@ -32,17 +40,13 @@ final class AppIconCache {
 
     private let cache = NSCache<NSString, NSImage>()
 
-    func image(for bundleId: String) -> NSImage? {
+    func cachedImage(for bundleId: String) -> NSImage? {
         let key = bundleId as NSString
-        if let image = cache.object(forKey: key) {
-            return image
-        }
-        guard let path = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)?.path else {
-            return nil
-        }
-        let image = NSWorkspace.shared.icon(forFile: path)
-        cache.setObject(image, forKey: key)
-        return image
+        return cache.object(forKey: key)
+    }
+
+    func store(_ image: NSImage, for bundleId: String) {
+        cache.setObject(image, forKey: bundleId as NSString)
     }
 }
 

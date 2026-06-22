@@ -12,7 +12,7 @@ import Foundation
 private typealias StreamTCCPreflightFunc = @convention(c) (CFString, CFDictionary?) -> Int32
 private typealias StreamTCCRequestFunc = @convention(c) (CFString, CFDictionary?, @escaping (Bool) -> Void) -> Void
 
-enum StreamAudioCapturePermissionStatus: String {
+enum StreamAudioCapturePermissionStatus: String, Sendable {
     case authorized
     case denied
     case unknown

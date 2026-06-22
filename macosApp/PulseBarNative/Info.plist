@@ -19,7 +19,7 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSUIElement</key>
-	<false/>
+	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>PulseBar reads browser and Spotify metadata to show the current status in the menu bar.</string>
 	<key>NSAudioCaptureUsageDescription</key>

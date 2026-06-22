@@ -12,8 +12,8 @@ enum DashboardSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .connection: return "Connection"
-        case .reporting: return "Reporting"
-        case .settings: return "Settings"
+        case .reporting: return "Report"
+        case .settings: return "General"
         }
     }
 

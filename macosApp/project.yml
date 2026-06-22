@@ -24,7 +24,7 @@ targets:
     info:
       path: PulseBarNative/Info.plist
       properties:
-        LSUIElement: false
+        LSUIElement: true
         NSAppleEventsUsageDescription: PulseBar reads browser and Spotify metadata to show the current status in the menu bar.
         NSAudioCaptureUsageDescription: PulseBar captures system audio for Stream streams after you start capture.
         NSScreenCaptureUsageDescription: PulseBar may need screen and system audio recording permission to capture Stream audio.

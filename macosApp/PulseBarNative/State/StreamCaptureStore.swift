@@ -117,11 +117,14 @@ private struct StreamMediaPositionAnchor {
 @MainActor
 final class StreamCaptureStore: ObservableObject {
     private static let mediaStreamAllowedKey = "PulseBarNative.stream.mediaStreamAllowed"
+    private static let mediaStatePublishQueue = DispatchQueue(label: "io.github.kt.pulsebar.native.media-state-publish")
+    static let autoSourceId = "auto"
+    private static let systemSourceId = "system"
 
     // MARK: - Exposed to SwiftUI
 
     @Published private(set) var sources: [StreamCaptureSource] = []
-    @Published var selectedSourceId: String = "system"
+    @Published var selectedSourceId: String = autoSourceId
     @Published private(set) var isCapturing = false
     @Published private(set) var statusText = "Idle"
     @Published private(set) var meter = StreamCaptureMeter()
@@ -139,7 +142,31 @@ final class StreamCaptureStore: ObservableObject {
     // MARK: - Derived
 
     var selectedSource: StreamCaptureSource? {
-        sources.first { $0.id == selectedSourceId } ?? sources.first
+        if selectedSourceId == Self.autoSourceId {
+            return automaticSource()
+        }
+        return sources.first { $0.id == selectedSourceId } ?? automaticSource()
+    }
+
+    private func automaticSource() -> StreamCaptureSource? {
+        if let providerId = currentMedia?.providerId?.lowercased() {
+            if providerId == "spotify",
+               let source = source(matchingBundleId: "com.spotify.client", fallbackName: "spotify") {
+                return source
+            }
+            if providerId == "apple-music",
+               let source = source(matchingBundleId: "com.apple.Music", fallbackName: "music") {
+                return source
+            }
+        }
+
+        return sources.first { $0.id == Self.systemSourceId } ?? sources.first
+    }
+
+    private func source(matchingBundleId bundleId: String, fallbackName: String) -> StreamCaptureSource? {
+        sources.first { source in
+            source.bundleId == bundleId || source.name.localizedCaseInsensitiveContains(fallbackName)
+        }
     }
 
     var serverConnectionText: String {
@@ -177,9 +204,11 @@ final class StreamCaptureStore: ObservableObject {
     private var lastPublishedMediaObservedAtMillis: Int64?
     private var currentMedia: Media?
     private var currentStreamFormat: StreamFormat?
+    private var cachedIdleStreamFormat: StreamFormat?
     private let worker: StreamBridge
     private var statsTask: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
+    private var mediaStatePublishTask: Task<Void, Never>?
     private var pcmForwarder: StreamPcmForwarder?
     private let currentMediaSnapshot: @Sendable () async -> Media?
 
@@ -192,14 +221,16 @@ final class StreamCaptureStore: ObservableObject {
             UserDefaults.standard.set(true, forKey: Self.mediaStreamAllowedKey)
         }
         mediaStreamPermission = UserDefaults.standard.bool(forKey: Self.mediaStreamAllowedKey) ? .allow : .disallow
-        audioCapturePermissionStatus = service.audioCapturePermissionStatus()
-        refreshSources()
+        cachedIdleStreamFormat = defaultStreamFormat()
+        refreshAudioCapturePermissionStatusAsync()
+        refreshSourcesAsync()
         subscribeStats()
     }
 
     deinit {
         statsTask?.cancel()
         commandTask?.cancel()
+        mediaStatePublishTask?.cancel()
         startupPermissionTask?.cancel()
         pcmForwarder = nil
     }
@@ -318,11 +349,39 @@ final class StreamCaptureStore: ObservableObject {
         audioCapturePermissionStatus = service.audioCapturePermissionStatus()
     }
 
+    func refreshAudioCapturePermissionStatusAsync() {
+        guard !audioCapturePermissionRequestPending else { return }
+        let service = self.service
+        Task {
+            let status = await Task.detached(priority: .utility) {
+                service.audioCapturePermissionStatus()
+            }.value
+            guard !audioCapturePermissionRequestPending else { return }
+            audioCapturePermissionStatus = status
+        }
+    }
+
     func refreshSources() {
         guard allowCommandWhilePermissionPromptPending("refreshSources") else { return }
         sources = service.availableSources()
-        if !sources.contains(where: { $0.id == selectedSourceId }) {
-            selectedSourceId = sources.first?.id ?? "system"
+        if selectedSourceId != Self.autoSourceId, !sources.contains(where: { $0.id == selectedSourceId }) {
+            selectedSourceId = Self.autoSourceId
+        }
+        updateCachedIdleStreamFormat()
+    }
+
+    func refreshSourcesAsync() {
+        guard allowCommandWhilePermissionPromptPending("refreshSourcesAsync") else { return }
+        let service = self.service
+        Task {
+            let loadedSources = await Task.detached(priority: .utility) {
+                service.availableSources()
+            }.value
+            sources = loadedSources
+            if selectedSourceId != Self.autoSourceId, !loadedSources.contains(where: { $0.id == selectedSourceId }) {
+                selectedSourceId = Self.autoSourceId
+            }
+            cachedIdleStreamFormat = await streamFormatAsync(for: selectedSource)
         }
     }
 
@@ -384,8 +443,10 @@ final class StreamCaptureStore: ObservableObject {
         let next: StreamMediaStreamPermission = allowed ? .allow : .disallow
         guard next != mediaStreamPermission else { return }
         mediaStreamPermission = next
-        UserDefaults.standard.set(allowed, forKey: Self.mediaStreamAllowedKey)
-        pushMediaStateToBridge()
+        scheduleMediaStatePublish(useCachedIdleFormat: true)
+        DispatchQueue.global(qos: .utility).async {
+            UserDefaults.standard.set(allowed, forKey: Self.mediaStreamAllowedKey)
+        }
         if !allowed && isCapturing {
             log("owner disabled media stream during capture")
             stopCapture()
@@ -395,25 +456,14 @@ final class StreamCaptureStore: ObservableObject {
 
     func selectPreferredSource(preferredProvider: String?, preferredBundleId: String?) {
         guard allowCommandWhilePermissionPromptPending("selectPreferredSource") else { return }
-        refreshSources()
-        if let preferredBundleId = preferredBundleId?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !preferredBundleId.isEmpty,
-           let source = sources.first(where: { $0.bundleId?.localizedCaseInsensitiveContains(preferredBundleId) == true }) {
-            selectedSourceId = source.id
-            return
+        _ = preferredProvider
+        _ = preferredBundleId
+        if selectedSourceId != Self.autoSourceId, selectedSource == nil {
+            selectedSourceId = Self.autoSourceId
+            updateCachedIdleStreamFormat()
         }
-
-        if preferredProvider?.lowercased() == "spotify",
-           let source = sources.first(where: { source in
-               source.bundleId?.localizedCaseInsensitiveContains("spotify") == true ||
-                   source.name.localizedCaseInsensitiveContains("spotify")
-           }) {
-            selectedSourceId = source.id
-            return
-        }
-
-        if selectedSource == nil {
-            selectedSourceId = sources.first?.id ?? "system"
+        if sources.isEmpty {
+            refreshSourcesAsync()
         }
     }
 
@@ -527,7 +577,7 @@ final class StreamCaptureStore: ObservableObject {
     }
 
     private func emitMediaStreamStopped(reason: PulseStreamStopReason) {
-        worker.emitNativeEvent(event: NativeMediaStreamStopped(reason: reason))
+        emitNativeEventAsync(NativeMediaStreamStopped(reason: reason))
     }
 
     private static func streamStopReason(for error: Error) -> PulseStreamStopReason {
@@ -584,16 +634,20 @@ final class StreamCaptureStore: ObservableObject {
 
     // MARK: - Private helpers
 
-    private func pushMediaStateToBridge(captureRunning: Bool? = nil) {
+    private func pushMediaStateToBridge(
+        captureRunning: Bool? = nil,
+        useCachedIdleFormat: Bool = false
+    ) {
         let capture = captureRunning ?? isCapturing
-        worker.emitNativeEvent(
-            event: NativeMediaStateChanged(
+        let format = currentStreamFormat ?? cachedIdleStreamFormat ?? defaultStreamFormat()
+        emitNativeEventAsync(
+            NativeMediaStateChanged(
                 permission: mediaStreamPermission == .allow ? PulseStreamPermission.ALLOW : PulseStreamPermission.DISALLOW,
                 playbackStatus: mediaPlaybackStatus == .playing ? PulsePlaybackStatus.PLAYING : PulsePlaybackStatus.PAUSED,
                 captureStatus: capture ? PulseStreamCaptureStatus.CAPTURING : PulseStreamCaptureStatus.IDLE,
                 reason: nil,
                 message: nil,
-                format: currentStreamFormat ?? streamFormat(for: selectedSource),
+                format: format,
                 media: currentMedia,
                 observedAtMillis: Int64(Date().timeIntervalSince1970 * 1000.0)
             )
@@ -601,10 +655,58 @@ final class StreamCaptureStore: ObservableObject {
 
     }
 
+    private func emitNativeEventAsync(_ event: any NativeDeviceEvent & Sendable) {
+        let worker = self.worker
+        Self.mediaStatePublishQueue.async {
+            worker.emitNativeEvent(event: event)
+        }
+    }
+
+    private func scheduleMediaStatePublish(
+        captureRunning: Bool? = nil,
+        useCachedIdleFormat: Bool = false
+    ) {
+        mediaStatePublishTask?.cancel()
+        mediaStatePublishTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            self.pushMediaStateToBridge(
+                captureRunning: captureRunning,
+                useCachedIdleFormat: useCachedIdleFormat
+            )
+            self.mediaStatePublishTask = nil
+        }
+    }
+
+    private func updateCachedIdleStreamFormat() {
+        cachedIdleStreamFormat = streamFormat(for: selectedSource)
+    }
+
     private func streamFormat(for source: StreamCaptureSource?) -> StreamFormat {
         StreamFormat(
             codec: "pcm16-wav",
             sampleRate: Int32(service.streamSampleRate(for: source)),
+            channels: 2,
+            bitDepth: 16
+        )
+    }
+
+    private func streamFormatAsync(for source: StreamCaptureSource?) async -> StreamFormat {
+        let service = self.service
+        return await Task.detached(priority: .utility) {
+            StreamFormat(
+                codec: "pcm16-wav",
+                sampleRate: Int32(service.streamSampleRate(for: source)),
+                channels: 2,
+                bitDepth: 16
+            )
+        }.value
+    }
+
+    private func defaultStreamFormat() -> StreamFormat {
+        StreamFormat(
+            codec: "pcm16-wav",
+            sampleRate: 48_000,
             channels: 2,
             bitDepth: 16
         )
