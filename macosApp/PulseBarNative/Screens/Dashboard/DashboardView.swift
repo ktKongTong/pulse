@@ -613,33 +613,6 @@ private struct PreferencesSection<Content: View>: View {
     }
 }
 
-private struct PreferenceFormRow<Content: View>: View {
-    private let title: String
-    private let content: Content
-
-    init(_ title: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 24) {
-            Text(title)
-                .font(.body)
-                .frame(width: 190, alignment: .leading)
-            content
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(minHeight: 34)
-    }
-}
-
-private struct PreferencesDivider: View {
-    var body: some View {
-        Divider()
-    }
-}
-
 private struct StatusDot: View {
     let color: Color
 

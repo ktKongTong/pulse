@@ -32,7 +32,6 @@ final class MonitorStore: ObservableObject {
     @Published private(set) var isMonitoring = false
     @Published private(set) var settings: PulseBarConfig = PulseBarConfig.defaultValue
     @Published var isPaused = false
-    @Published var dashboardSelection: DashboardSection = .connection
 
     // MARK: - Dependencies
 
@@ -41,7 +40,6 @@ final class MonitorStore: ObservableObject {
     let streamStore: StreamCaptureStore
     private var subscribed = false
     private var frontmostAppObserver: NSObjectProtocol?
-    private var connectionStores: [String: ConnectionStore] = [:]
     private var connectionStateTasks: [String: Task<Void, Never>] = [:]
     private var mediaStateTask: Task<Void, Never>?
     private var appUsageTask: Task<Void, Never>?
@@ -221,11 +219,6 @@ final class MonitorStore: ObservableObject {
         streamStore.blocksUserInteractionForAudioPermission
     }
 
-    func prepareStreamCapturePane() {
-        streamStore.refreshSourcesAsync()
-        streamStore.updateEndpoints(streamEndpoints)
-    }
-
     func requestStreamAudioCapturePermissionAtStartup() {
         streamStore.requestAudioCapturePermissionAtStartup()
     }
@@ -239,16 +232,6 @@ final class MonitorStore: ObservableObject {
         bridge.emitNativeEvent(event: UpdateConfigCommand(config: config))
     }
 
-    func addEndpoint(_ endpoint: EndpointConfig) {
-        let next = PulseBarConfig(
-            endpoints: settings.endpoints + [endpoint],
-            idleThresholdSeconds: settings.idleThresholdSeconds,
-            changeStabilityMillis: settings.changeStabilityMillis
-        )
-        saveConfig(next)
-        streamStore.updateEndpoints(streamEndpoints)
-    }
-
     func updateEndpoint(_ endpoint: EndpointConfig) {
         let next = PulseBarConfig(
             endpoints: settings.endpoints.map { $0.id == endpoint.id ? endpoint : $0 },
@@ -256,32 +239,6 @@ final class MonitorStore: ObservableObject {
             changeStabilityMillis: settings.changeStabilityMillis
         )
         saveConfig(next)
-    }
-
-    func updateSettings(idleThresholdSeconds: Int32? = nil, changeStabilityMillis: Int32? = nil) {
-        saveConfig(
-            PulseBarConfig(
-                endpoints: settings.endpoints,
-                idleThresholdSeconds: idleThresholdSeconds ?? settings.idleThresholdSeconds,
-                changeStabilityMillis: changeStabilityMillis ?? settings.changeStabilityMillis
-            )
-        )
-    }
-
-    func connectionStore(endpointId: String) -> ConnectionStore {
-        if let store = connectionStores[endpointId] { return store }
-        let store = ConnectionStore(endpointId: endpointId, bridge: bridge)
-        connectionStores[endpointId] = store
-        if let state = connectionStatesByEndpointID[endpointId] {
-            store.applyState(state)
-        }
-        store.start()
-        return store
-    }
-
-    func removeConnectionStore(endpointId: String) {
-        connectionStores[endpointId]?.stop()
-        connectionStores.removeValue(forKey: endpointId)
     }
 
     // MARK: - Media / interaction commands
@@ -343,7 +300,6 @@ final class MonitorStore: ObservableObject {
             connectionStateTasks.removeValue(forKey: endpointId)
             connectionStatesByEndpointID.removeValue(forKey: endpointId)
             connectedMediaEndpointIDs.remove(endpointId)
-            removeConnectionStore(endpointId: endpointId)
         }
 
         for endpointId in endpointIDs where connectionStateTasks[endpointId] == nil {
@@ -363,7 +319,6 @@ final class MonitorStore: ObservableObject {
 
     private func applyConnectionStateUpdate(_ state: PulseBarConnectionState) {
         connectionStatesByEndpointID[state.endpointId] = state
-        connectionStores[state.endpointId]?.applyState(state)
 
         let connected = Set(connectionStatesByEndpointID.values.compactMap { state in
             state.connectionState == .CONNECTED ? state.endpointId : nil
@@ -405,8 +360,6 @@ private extension PulseBarConfig {
     }
 
 }
-
-extension EndpointConfig: @retroactive Identifiable {}
 
 extension EndpointConfig {
     static func defaultEndpoint(index: Int, name: String? = nil, enabled: Bool = false) -> EndpointConfig {
