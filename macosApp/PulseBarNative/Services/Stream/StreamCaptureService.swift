@@ -4,7 +4,7 @@ import CoreAudio
 import Darwin
 import Foundation
 
-// MARK: - Model types consumed by the debug pane
+// MARK: - Model types
 
 struct StreamCaptureSource: Identifiable, Equatable, Sendable {
     enum Kind: String, Sendable {
@@ -24,18 +24,6 @@ private struct SupportedApplicationCaptureSource {
     let name: String
 }
 
-struct StreamCaptureMeter: Equatable, Sendable {
-    var peak: Double = 0
-    var rms: Double = 0
-    var nonSilentSamples: UInt64 = 0
-    var capturedFrames: UInt64 = 0
-}
-
-struct StreamCaptureUpdate: Sendable {
-    let meter: StreamCaptureMeter
-    let statusText: String
-}
-
 // MARK: - CoreAudio capture service
 
 /// Thin Swift shell around CoreAudio process-tap capture. Responsibilities are
@@ -46,9 +34,6 @@ struct StreamCaptureUpdate: Sendable {
 /// - Running `AudioHardwareCreateProcessTap` + aggregate device + render IOProc
 /// - Converting Float32 samples to Int16 PCM in the real-time render thread
 /// - Forwarding each captured chunk to a caller-supplied `(Data) -> Void`
-///
-/// Everything else — batching, WAV framing, WebSocket transport, state
-/// machine, reconnect logic — lives in Kotlin's `StreamClient`.
 final class StreamCaptureService: @unchecked Sendable {
     private static let supportedApplicationCaptureSources: [SupportedApplicationCaptureSource] = [
         SupportedApplicationCaptureSource(bundleId: "com.spotify.client", name: "Spotify"),
@@ -57,35 +42,22 @@ final class StreamCaptureService: @unchecked Sendable {
 
     fileprivate final class CaptureContext: @unchecked Sendable {
         let channels: UInt32
-        let writer: StreamWavWriter?
-        let targetFrames: UInt64?
-        let continuation: AsyncThrowingStream<StreamCaptureUpdate, Error>.Continuation
-        var capturedFrames: UInt64 = 0
+        let continuation: AsyncThrowingStream<Void, Error>.Continuation
         var done = false
-        var nonSilentSamples: UInt64 = 0
-        var peakSample: Float = 0
-        var sumSquares: Double = 0
-        var sampleCount: UInt64 = 0
-        var lastUpdateAt = Date()
         var ioProcID: AudioDeviceIOProcID?
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
         var tapID = AudioObjectID(kAudioObjectUnknown)
         var pcmHandler: (@Sendable (Data) -> Void)?
-        var ioProcSequence: UInt64 = 0
         var sampleRate: UInt32
 
         init(
             channels: UInt32,
             sampleRate: UInt32,
-            writer: StreamWavWriter?,
-            targetFrames: UInt64?,
             pcmHandler: (@Sendable (Data) -> Void)?,
-            continuation: AsyncThrowingStream<StreamCaptureUpdate, Error>.Continuation
+            continuation: AsyncThrowingStream<Void, Error>.Continuation
         ) {
             self.channels = channels
             self.sampleRate = sampleRate
-            self.writer = writer
-            self.targetFrames = targetFrames
             self.pcmHandler = pcmHandler
             self.continuation = continuation
         }
@@ -170,15 +142,6 @@ final class StreamCaptureService: @unchecked Sendable {
         }
     }
 
-    /// Capture a fixed-duration sample to `outputURL` (WAV) for diagnostics.
-    func capture(
-        source: StreamCaptureSource,
-        outputURL: URL,
-        seconds: Double
-    ) async throws -> AsyncThrowingStream<StreamCaptureUpdate, Error> {
-        try await capture(source: source, outputURL: outputURL, seconds: seconds, pcmHandler: nil)
-    }
-
     /// Stream PCM16 chunks to [pcmHandler] for as long as the returned stream
     /// is consumed. The handler runs on the CoreAudio render thread — it must
     /// be real-time safe. Consumers typically do nothing but enqueue the bytes
@@ -186,44 +149,28 @@ final class StreamCaptureService: @unchecked Sendable {
     func capture(
         source: StreamCaptureSource,
         pcmHandler: @escaping @Sendable (Data) -> Void
-    ) async throws -> AsyncThrowingStream<StreamCaptureUpdate, Error> {
-        try await capture(source: source, outputURL: nil, seconds: nil, pcmHandler: pcmHandler)
-    }
-
-    private func capture(
-        source: StreamCaptureSource,
-        outputURL: URL?,
-        seconds: Double?,
-        pcmHandler: (@Sendable (Data) -> Void)?
-    ) async throws -> AsyncThrowingStream<StreamCaptureUpdate, Error> {
+    ) async throws -> AsyncThrowingStream<Void, Error> {
         stop()
         let sampleRate = streamSampleRate(for: source)
-        let stream = AsyncThrowingStream<StreamCaptureUpdate, Error> { continuation in
-            do {
-                let writer = try outputURL.map { try StreamWavWriter(path: $0.path, sampleRate: sampleRate, channels: 2) }
-                let context = CaptureContext(
-                    channels: 2,
-                    sampleRate: sampleRate,
-                    writer: writer,
-                    targetFrames: seconds.map { UInt64(Double(sampleRate) * $0) },
-                    pcmHandler: pcmHandler,
-                    continuation: continuation
-                )
-                continuation.onTermination = { [weak self] _ in
-                    self?.stop()
+        let stream = AsyncThrowingStream<Void, Error> { continuation in
+            let context = CaptureContext(
+                channels: 2,
+                sampleRate: sampleRate,
+                pcmHandler: pcmHandler,
+                continuation: continuation
+            )
+            continuation.onTermination = { [weak self] _ in
+                self?.stop()
+            }
+            self.context = context
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self else { return }
+                do {
+                    try self.startSystemTap(source: source, context: context)
+                } catch {
+                    appendStreamCaptureServiceLog("startSystemTap failed error=\(error.localizedDescription)")
+                    continuation.finish(throwing: error)
                 }
-                self.context = context
-                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                    guard let self else { return }
-                    do {
-                        try self.startSystemTap(source: source, context: context)
-                    } catch {
-                        appendStreamCaptureServiceLog("startSystemTap failed error=\(error.localizedDescription)")
-                        continuation.finish(throwing: error)
-                    }
-                }
-            } catch {
-                continuation.finish(throwing: error)
             }
         }
         return stream
@@ -244,7 +191,6 @@ final class StreamCaptureService: @unchecked Sendable {
                 AudioHardwareDestroyProcessTap(context.tapID)
             }
         }
-        try? context.writer?.close()
         self.context = nil
     }
 
@@ -475,30 +421,12 @@ private let streamCaptureIOProc: AudioDeviceIOProc = { _, _, inputData, _, outpu
                 rawSample = floatSamples[frame * firstBufferChannels + sourceChannel]
             }
             let sample = max(-1.0, min(1.0, rawSample))
-            let absSample = abs(sample)
-            if absSample > 0.000_01 {
-                context.nonSilentSamples += 1
-                context.peakSample = max(context.peakSample, absSample)
-            }
-            context.sumSquares += Double(sample * sample)
-            context.sampleCount += 1
             int16[frame * targetChannels + channel] = Int16(sample * Float(Int16.max))
         }
     }
 
     let data = Data(bytes: int16, count: int16.count * MemoryLayout<Int16>.size)
-    do {
-        try context.writer?.write(data)
-    } catch {
-        context.done = true
-        context.continuation.finish(throwing: error)
-        return noErr
-    }
-
-    if let handler = context.pcmHandler {
-        context.ioProcSequence &+= 1
-        handler(data)
-    }
+    context.pcmHandler?(data)
 
     for bufferIndex in 0..<Int(outputData.pointee.mNumberBuffers) {
         let buffer = UnsafeMutableAudioBufferListPointer(outputData)[bufferIndex]
@@ -507,31 +435,12 @@ private let streamCaptureIOProc: AudioDeviceIOProc = { _, _, inputData, _, outpu
         }
     }
 
-    context.capturedFrames += UInt64(frameCount)
-    streamEmitCaptureUpdateIfNeeded(context: context)
-    if let targetFrames = context.targetFrames, context.capturedFrames >= targetFrames {
-        context.done = true
-        context.continuation.finish()
-    }
+    context.continuation.yield(())
     return noErr
 }
 
 private func appendStreamCaptureServiceLog(_ message: String) {
     PulseNativeLog.debug(.streamSession, "capture.service \(message)")
-}
-
-private func streamEmitCaptureUpdateIfNeeded(context: StreamCaptureService.CaptureContext) {
-    let now = Date()
-    guard now.timeIntervalSince(context.lastUpdateAt) >= 0.1 || context.done else { return }
-    context.lastUpdateAt = now
-    let rms = context.sampleCount == 0 ? 0 : sqrt(context.sumSquares / Double(context.sampleCount))
-    let meter = StreamCaptureMeter(
-        peak: Double(context.peakSample),
-        rms: rms,
-        nonSilentSamples: context.nonSilentSamples,
-        capturedFrames: context.capturedFrames
-    )
-    context.continuation.yield(StreamCaptureUpdate(meter: meter, statusText: "Capturing"))
 }
 
 // MARK: - Errors

@@ -26,13 +26,10 @@
 		D2F95141D1AE7FC5225D8E08 /* PulseBarShared+Media.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D81BAFA6F1CE20A92DE9D4 /* PulseBarShared+Media.swift */; };
 		8CBD735AD287840AD7EC5DB7 /* PulseNativeLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AA1983D33325C1C35CAAA63 /* PulseNativeLog.swift */; };
 		EB317BE953C9773EE9EA23DF /* StatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCAB5196BF7067C53F0CD93E /* StatusItemController.swift */; };
-		57792800F4DFCE5CADBE163E /* StreamBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 503FE129C2FD69827C9FC305 /* StreamBridge.swift */; };
 		1F745DB815E1FC56A03A4357 /* StreamCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A112A587E98819BA8943032 /* StreamCaptureService.swift */; };
 		748DB9CF5034876DF9A0043C /* StreamCaptureSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7C1F212279BD741CDF31CE9 /* StreamCaptureSession.swift */; };
 		EAEC8838329E8DEEDF4EBFDF /* StreamCaptureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01460D50C30F11B0573019A1 /* StreamCaptureStore.swift */; };
 		500D37DE83683FF22EB5643B /* StreamPermission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 918C42653AB6EE8D3CFCF7F6 /* StreamPermission.swift */; };
-		499226D68E891AA8BDE90BA3 /* StreamTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8584A4B1329E8DCAE898B461 /* StreamTypes.swift */; };
-		191E4408A181D5280FECE161 /* StreamWavWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C081E6DA81DFF92C015E9B28 /* StreamWavWriter.swift */; };
 		E56A9276D03C051F021494F2 /* WindowHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CA333A2011BA8268CB2126 /* WindowHelpers.swift */; };
 /* End PBXBuildFile section */
 
@@ -56,13 +53,10 @@
 		07D81BAFA6F1CE20A92DE9D4 /* PulseBarShared+Media.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PulseBarShared+Media.swift"; sourceTree = "<group>"; };
 		8AA1983D33325C1C35CAAA63 /* PulseNativeLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseNativeLog.swift; sourceTree = "<group>"; };
 		BCAB5196BF7067C53F0CD93E /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
-		503FE129C2FD69827C9FC305 /* StreamBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamBridge.swift; sourceTree = "<group>"; };
 		5A112A587E98819BA8943032 /* StreamCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamCaptureService.swift; sourceTree = "<group>"; };
 		C7C1F212279BD741CDF31CE9 /* StreamCaptureSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamCaptureSession.swift; sourceTree = "<group>"; };
 		01460D50C30F11B0573019A1 /* StreamCaptureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamCaptureStore.swift; sourceTree = "<group>"; };
 		918C42653AB6EE8D3CFCF7F6 /* StreamPermission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamPermission.swift; sourceTree = "<group>"; };
-		8584A4B1329E8DCAE898B461 /* StreamTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamTypes.swift; sourceTree = "<group>"; };
-		C081E6DA81DFF92C015E9B28 /* StreamWavWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamWavWriter.swift; sourceTree = "<group>"; };
 		48CA333A2011BA8268CB2126 /* WindowHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowHelpers.swift; sourceTree = "<group>"; };
 		902FE641F33901EE027B942D /* PulseBarNative.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PulseBarNative.entitlements; sourceTree = "<group>"; };
 		F0D77DB5CC212B4742562DA9 /* PulseBarNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseBarNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -171,11 +165,9 @@
 		2328188BEF80551782B726F0 /* Stream */ = {
 			isa = PBXGroup;
 			children = (
-				503FE129C2FD69827C9FC305 /* StreamBridge.swift */,
 				5A112A587E98819BA8943032 /* StreamCaptureService.swift */,
 				C7C1F212279BD741CDF31CE9 /* StreamCaptureSession.swift */,
 				918C42653AB6EE8D3CFCF7F6 /* StreamPermission.swift */,
-				C081E6DA81DFF92C015E9B28 /* StreamWavWriter.swift */,
 			);
 			path = Stream;
 			sourceTree = "<group>";
@@ -187,7 +179,6 @@
 				FBF2BD982CA5EC65C24F6B65 /* MonitorStore.swift */,
 				D746BEFD4EBAD0BB6641D414 /* NetworkStateMonitor.swift */,
 				01460D50C30F11B0573019A1 /* StreamCaptureStore.swift */,
-				8584A4B1329E8DCAE898B461 /* StreamTypes.swift */,
 			);
 			path = State;
 			sourceTree = "<group>";
@@ -307,13 +298,10 @@
 				D2F95141D1AE7FC5225D8E08 /* PulseBarShared+Media.swift in Sources */,
 				8CBD735AD287840AD7EC5DB7 /* PulseNativeLog.swift in Sources */,
 				EB317BE953C9773EE9EA23DF /* StatusItemController.swift in Sources */,
-				57792800F4DFCE5CADBE163E /* StreamBridge.swift in Sources */,
 				1F745DB815E1FC56A03A4357 /* StreamCaptureService.swift in Sources */,
 				748DB9CF5034876DF9A0043C /* StreamCaptureSession.swift in Sources */,
 				EAEC8838329E8DEEDF4EBFDF /* StreamCaptureStore.swift in Sources */,
 				500D37DE83683FF22EB5643B /* StreamPermission.swift in Sources */,
-				499226D68E891AA8BDE90BA3 /* StreamTypes.swift in Sources */,
-				191E4408A181D5280FECE161 /* StreamWavWriter.swift in Sources */,
 				E56A9276D03C051F021494F2 /* WindowHelpers.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

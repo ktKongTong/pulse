@@ -24,18 +24,16 @@ final class MonitorStore: ObservableObject {
     // MARK: - Published state
 
     @Published private(set) var focusState: FocusState?
-    @Published private(set) var mediaState: MediaFlowState?
     @Published private(set) var currentMedia: Media?
     @Published private(set) var todayStats: [AppUsageItem] = []
     @Published private(set) var todayTotalSeconds: Int = 0
     @Published private(set) var connectionStatesByEndpointID: [String: PulseBarConnectionState] = [:]
-    @Published private(set) var isMonitoring = false
-    @Published private(set) var settings: PulseBarConfig = PulseBarConfig.defaultValue
-    @Published var isPaused = false
+    @Published private(set) var settings: PulseBarConfig?
 
     // MARK: - Dependencies
 
     private let bridge: PulseBarBridge
+    private var isMonitoring = false
     private var observerTasks: [Task<Void, Never>] = []
     let streamStore: StreamCaptureStore
     private var subscribed = false
@@ -76,11 +74,9 @@ final class MonitorStore: ObservableObject {
     func start() {
         PulseNativeLog.info(.streamSession, "monitor.start")
         if subscribed {
-            isPaused = false
             return
         }
         isMonitoring = true
-        isPaused = false
         subscribed = true
         let bridge = self.bridge
         frontmostAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -150,34 +146,19 @@ final class MonitorStore: ObservableObject {
         streamStore.updateEndpoints(streamEndpoints)
     }
 
-    func stop() {
-        isMonitoring = false
-        isPaused = true
-    }
-
-    func togglePaused() {
-        if !isMonitoring { start(); return }
-        isPaused.toggle()
-        if !isPaused {
-            
-        }
-    }
-
     func resumeAndRefresh() {
         streamStore.refreshAudioCapturePermissionStatusAsync()
         if !isMonitoring { start(); return }
-        isPaused = false
         // bridge.forceTick()
     }
 
     func refreshMenuBarContent() {
         streamStore.refreshAudioCapturePermissionStatusAsync()
         if !isMonitoring { start(); return }
-        isPaused = false
     }
 
     private func handleFrontmostApplicationChange(bundleId: String, name: String) {
-        guard isMonitoring, !isPaused else { return }
+        guard isMonitoring else { return }
         let event = NativeFrontmostAppChanged(
             bundleId: bundleId,
             name: name,
@@ -187,7 +168,7 @@ final class MonitorStore: ObservableObject {
     }
 
     private func handleNowPlayingChange(_ snapshot: Media?) {
-        guard isMonitoring, !isPaused else { return }
+        guard isMonitoring else { return }
         if streamStore.updateCurrentMedia(snapshot) {
             let label = snapshot?.title ?? "nil"
             PulseNativeLog.info(.streamSession, "native.media.changed title=\(label) playing=\(snapshot?.isPlaying == true)")
@@ -223,22 +204,18 @@ final class MonitorStore: ObservableObject {
         streamStore.requestAudioCapturePermissionAtStartup()
     }
 
-    var streamEndpoints: [EndpointConfig] {
-        settings.streamEndpoints
+    private var streamEndpoints: [EndpointConfig] {
+        settings?.streamEndpoints ?? []
     }
 
     // MARK: - Settings commands
-    func saveConfig(_ config: PulseBarConfig) {
-        bridge.emitNativeEvent(event: UpdateConfigCommand(config: config))
-    }
-
     func updateEndpoint(_ endpoint: EndpointConfig) {
+        guard let settings else { return }
         let next = PulseBarConfig(
             endpoints: settings.endpoints.map { $0.id == endpoint.id ? endpoint : $0 },
-            idleThresholdSeconds: settings.idleThresholdSeconds,
-            changeStabilityMillis: settings.changeStabilityMillis
+            commonConfig: settings.commonConfig
         )
-        saveConfig(next)
+        bridge.emitNativeEvent(event: UpdateConfigCommand(config: next))
     }
 
     // MARK: - Media / interaction commands
@@ -262,7 +239,6 @@ final class MonitorStore: ObservableObject {
     }
 
     private func applyMediaFlowStateUpdate(_ state: MediaFlowState) {
-        mediaState = state
         mediaStateTask?.cancel()
         mediaStateTask = Task { @MainActor [weak self] in
             do {
@@ -344,14 +320,6 @@ final class MonitorStore: ObservableObject {
 }
 
 private extension PulseBarConfig {
-    static var defaultValue: PulseBarConfig {
-        PulseBarConfig(
-            endpoints: [EndpointConfig.defaultEndpoint(index: 0, name: "Primary", enabled: true)],
-            idleThresholdSeconds: 300,
-            changeStabilityMillis: 1200
-        )
-    }
-
     var streamEndpoints: [EndpointConfig] {
         endpoints.filter {
             $0.enabled &&
@@ -359,27 +327,4 @@ private extension PulseBarConfig {
         }
     }
 
-}
-
-extension EndpointConfig {
-    static func defaultEndpoint(index: Int, name: String? = nil, enabled: Bool = false) -> EndpointConfig {
-        EndpointConfig(
-            id: UUID().uuidString.lowercased(),
-            name: name ?? "Endpoint \(index + 1)",
-            enabled: enabled,
-            url: "http://localhost:8900",
-            deviceId: "pulse",
-            apiKey: ""
-        )
-    }
-
-    var displayName: String {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedName.isEmpty { return trimmedName }
-        let rawUrl = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let components = URLComponents(string: rawUrl), let host = components.host, !host.isEmpty else {
-            return rawUrl.isEmpty ? "Untitled endpoint" : rawUrl
-        }
-        return host
-    }
 }

@@ -10,7 +10,7 @@ export function ensureStreamContext(
     const now = nowIso();
     state.streamContext = {
       streamId, generation, latestSeq: 0, availableFromSeq: 0,
-      codec: state.deviceStreamState?.streamFormat?.codec ?? "pcm16-wav",
+      codec: state.deviceStreamState?.streamFormat?.codec,
       format: state.deviceStreamState?.streamFormat,
       openedAt: now, updatedAt: now,
     };
@@ -29,5 +29,6 @@ export function applyAcceptedStream(
   context.latestSeq = payload.firstSeq;
   context.availableFromSeq = payload.firstSeq;
   context.format = payload.streamFormat;
+  context.codec = payload.streamFormat?.codec;
   context.updatedAt = payload.sentAt;
 }

@@ -24,7 +24,7 @@ private struct ConnectionEditorDraft {
 }
 
 enum LaunchAtLoginService {
-    static var isEnabled: Bool {
+    private static var isEnabled: Bool {
         switch SMAppService.mainApp.status {
         case .enabled, .requiresApproval:
             return true
@@ -35,7 +35,7 @@ enum LaunchAtLoginService {
         }
     }
 
-    static func setEnabled(_ enabled: Bool) throws {
+    private static func setEnabled(_ enabled: Bool) throws {
         let service = SMAppService.mainApp
         switch (enabled, service.status) {
         case (true, .enabled), (true, .requiresApproval):
@@ -140,7 +140,7 @@ private struct GeneralPreferencesPane: View {
     @State private var isLaunchAtLoginErrorPresented = false
 
     private var endpoint: EndpointConfig? {
-        monitor.settings.endpoints.first
+        monitor.settings?.endpoints.first
     }
 
     private var connectionState: PulseBarConnectionState? {
@@ -363,7 +363,7 @@ private struct GeneralPreferencesPane: View {
         isSynchronizingRuntimeSettingsState = true
         defer { isSynchronizingRuntimeSettingsState = false }
         launchAtLogin = await LaunchAtLoginService.isEnabledAsync()
-        audioStreamingAllowed = monitor.streamStore.mediaStreamPermission == .allow
+        audioStreamingAllowed = monitor.streamStore.mediaStreamAllowed
         selectedAudioSourceId = monitor.streamStore.selectedSourceId
     }
 
@@ -398,10 +398,6 @@ private struct ReportingPreferencesPane: View {
         Set(disabledBundleIDsRaw.split(separator: ",").map(String.init))
     }
 
-    private var visibleApps: [InstalledReportingApp] {
-        apps.filter { !$0.isOther }
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -416,7 +412,7 @@ private struct ReportingPreferencesPane: View {
                         .frame(maxWidth: .infinity, minHeight: 220)
                     } else {
                         ReportingRulesTable(
-                            apps: visibleApps,
+                            apps: apps,
                             isEnabled: isEnabled,
                             setEnabled: setEnabled
                         )
@@ -444,7 +440,6 @@ private struct ReportingPreferencesPane: View {
     }
 
     private func setEnabled(_ enabled: Bool, for app: InstalledReportingApp) {
-        guard !app.isOther else { return }
         var next = disabledBundleIDs
         if enabled {
             next.remove(app.bundleID)

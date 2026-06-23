@@ -5,12 +5,12 @@
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
-    "build": "tsgo -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "mock:device": "pnpm exec tsx scripts/mock-device.ts",
     "test": "vitest run",
-    "typecheck": "tsgo -p tsconfig.json --noEmit && tsgo -p tsconfig.scripts.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "type": "wrangler types worker-configuration.d.ts"
   },
   "dependencies": {

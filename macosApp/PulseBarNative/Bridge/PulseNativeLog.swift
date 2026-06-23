@@ -3,17 +3,12 @@ import os
 
 /// Swift-side companion to the Kotlin kermit logger. Uses Apple's structured
 /// logging (`os.Logger`) so entries appear in Console.app under subsystem
-/// `io.github.kt.pulsebar` with the same categories as the Kotlin tags:
-/// `app.lifecycle`, `config.store`, `stats.refresh`, `sync.endpoint`,
-/// `stream.session`, `platform.adapter`.
+/// `io.github.kt.pulsebar` with categories used by Swift-owned subsystems.
 ///
 /// This is only for Swift-owned subsystems that Kotlin cannot reach yet
-/// (CoreAudio capture, WebRTC publisher, AppKit status-item lifecycle). Once
-/// Phase 3 moves orchestration into Kotlin, most of these call sites will
-/// migrate to kermit directly.
+/// (CoreAudio capture, AppKit status-item lifecycle).
 enum PulseNativeLog {
     enum Category: String {
-        case appLifecycle = "app.lifecycle"
         case platformAdapter = "platform.adapter"
         case streamSession = "stream.session"
     }
@@ -25,7 +20,6 @@ enum PulseNativeLog {
         .appendingPathComponent("Library/Logs/PulseBarNative/pulse.log")
 
     private static let loggers: [Category: Logger] = [
-        .appLifecycle: Logger(subsystem: subsystem, category: Category.appLifecycle.rawValue),
         .platformAdapter: Logger(subsystem: subsystem, category: Category.platformAdapter.rawValue),
         .streamSession: Logger(subsystem: subsystem, category: Category.streamSession.rawValue),
     ]
@@ -46,12 +40,6 @@ enum PulseNativeLog {
         let text = message()
         loggers[category]?.warning("\(text, privacy: .public)")
         writeToFile(level: "W", category: category, message: text)
-    }
-
-    static func error(_ category: Category, _ message: @autoclosure @escaping () -> String) {
-        let text = message()
-        loggers[category]?.error("\(text, privacy: .public)")
-        writeToFile(level: "E", category: category, message: text)
     }
 
     private static func writeToFile(level: String, category: Category, message: String) {

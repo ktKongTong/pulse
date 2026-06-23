@@ -18,10 +18,10 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsgo -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "pub": "pnpm publish --access=public --no-git-checks",
-    "typecheck": "tsgo -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@ktfun/pulse-protocol": "workspace:*"

@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 
 enum InstalledAppCatalog {
-    static func load() -> [InstalledReportingApp] {
-        var appsByBundleID: [String: InstalledReportingApp] = [InstalledReportingApp.other.bundleID: .other]
+    private static func load() -> [InstalledReportingApp] {
+        var appsByBundleID: [String: InstalledReportingApp] = [:]
         let paths = [
             "/Applications",
             "/System/Applications",
@@ -33,16 +33,13 @@ enum InstalledAppCatalog {
                 appsByBundleID[bundleID] = InstalledReportingApp(
                     id: bundleID,
                     name: name,
-                    bundleID: bundleID,
-                    isOther: false
+                    bundleID: bundleID
                 )
             }
         }
 
-        let sorted = appsByBundleID.values
-            .filter { !$0.isOther }
+        return appsByBundleID.values
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        return [.other] + sorted
     }
 
     static func loadAsync() async -> [InstalledReportingApp] {
@@ -53,7 +50,7 @@ enum InstalledAppCatalog {
 }
 
 enum AppIconLoader {
-    static func load(bundleId: String) -> NSImage? {
+    private static func load(bundleId: String) -> NSImage? {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
             return nil
         }

@@ -4,7 +4,7 @@ import { deviceStub } from "../env";
 
 export const deviceRoutes = new Hono<{ Bindings: Env }>();
 
-deviceRoutes.get("/ws", (c) => {
+deviceRoutes.get("/ws", async (c)=> {
   const deviceId = c.req.query("deviceId");
   if(!deviceId) {
     return c.json({message: "invalid deviceId"},400)

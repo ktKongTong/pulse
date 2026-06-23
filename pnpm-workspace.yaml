@@ -4,16 +4,16 @@ packages:
   - packages/v2/*
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@latest
-  vite-plus: latest
-  vitest: npm:@voidzero-dev/vite-plus-test@latest
+  vite-plus: 0.3.0
+  vitest: latest
   zod: ^4
-  typescript: "npm:@typescript/native-preview"
+  typescript: ^7.0.2
   "babel-plugin-react-compiler": "1.0.0"
   "@rolldown/plugin-babel": "0.2.3"
   "@types/node": ^24
   "@vitejs/plugin-react": "6.0.1"
   "@voidzero-dev/vite-plus-core": latest
-  better-result: "^2.8.2"
+  better-result: "^3.0.1"
   nitro: latest
   react-router-hono-server: 2.26.0
 catalogs:
@@ -23,8 +23,8 @@ catalogs:
     "@types/react": "^19"
     "@types/react-dom": "^19"
   drizzle:
-    drizzle-kit: 1.0.0-beta.22
-    drizzle-orm: 1.0.0-beta.22
+    drizzle-kit: 1.0.0-rc.4
+    drizzle-orm: 1.0.0-rc.4
   react-router:
     react-router: 7.14.2
     "@react-router/node": "^7.14.2"

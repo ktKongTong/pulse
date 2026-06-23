@@ -63,7 +63,11 @@ export class MediaDO extends MediaBase {
       return this.stateChanged();
     }
     if (frame.type === "ack") return this.applyDeviceAck(frame);
-    if (frame.type === "audio.chunk") this.pendingChunk = { ...frame.payload, codec: this.state.streamContext?.codec ?? "pcm16-wav" };
+    if (frame.type === "audio.chunk") {
+      const codec = this.state.streamContext?.codec;
+      if (!codec) return this.closeDeviceFatal("invalid_audio_chunk");
+      this.pendingChunk = { ...frame.payload, codec };
+    }
     if (frame.type === "stream.stopped" || frame.type === "error") this.endStreamForClients();
   }
 

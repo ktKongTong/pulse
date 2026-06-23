@@ -15,8 +15,8 @@ extension AppUsageItem: @retroactive Identifiable {
     public var id: String { key }
 }
 
-extension PulseBarStreamStats: @retroactive @unchecked Sendable {}
 extension Media: @retroactive @unchecked Sendable {}
 extension StreamFormat: @retroactive @unchecked Sendable {}
 extension NativeMediaStateChanged: @retroactive @unchecked Sendable {}
 extension NativeMediaStreamStopped: @retroactive @unchecked Sendable {}
+extension PulseBarBridge: @retroactive @unchecked Sendable {}

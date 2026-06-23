@@ -27,9 +27,7 @@ struct PulseBarNativeApp: App {
 
     var body: some Scene {
         Settings {
-            PulseBarPreferencesView()
-                .environmentObject(appDelegate.monitor)
-                .frame(minWidth: 520, minHeight: 420)
+            EmptyView()
         }
         .commands {
             CommandGroup(replacing: .appSettings) {

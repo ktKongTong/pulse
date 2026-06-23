@@ -54,7 +54,7 @@ struct MenuBarContentView: View {
     }
 
     private func mediaSection(_ media: Media) -> some View {
-        let durationSeconds = Double(mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0)
+        let durationSeconds = Double(Int(media.durationSeconds ?? 0))
         return HStack(alignment: .center, spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
                 AsyncImage(url: media.artworkURL) { image in
@@ -139,7 +139,7 @@ struct MenuBarContentView: View {
     }
 
     private func remainingClockText(_ media: Media, progressSeconds: Double? = nil) -> String {
-        let duration = mediaDurationSecondsOrNull(media: media).map(Int.init) ?? 0
+        let duration = Int(media.durationSeconds ?? 0)
         let progress = Int((progressSeconds ?? media.progressSeconds).rounded())
         let remaining = max(0, duration - progress)
         return "-\(pulseClock(remaining))"

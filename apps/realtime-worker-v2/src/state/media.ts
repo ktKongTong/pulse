@@ -26,7 +26,7 @@ export interface StreamContext {
   generation: number;
   latestSeq: number;
   availableFromSeq: number;
-  codec: StreamCodec;
+  codec?: StreamCodec;
   format?: StreamFormat;
   openedAt: string;
   updatedAt: string;

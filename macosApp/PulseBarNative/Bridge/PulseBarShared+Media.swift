@@ -22,12 +22,4 @@ extension Media {
     var displayArtist: String {
         artist?.takeIfNotBlank() ?? "Unknown artist"
     }
-
-    var displayAlbum: String? {
-        album?.takeIfNotBlank()
-    }
-}
-
-func mediaDurationSecondsOrNull(media: Media) -> Double? {
-    media.durationSeconds
 }

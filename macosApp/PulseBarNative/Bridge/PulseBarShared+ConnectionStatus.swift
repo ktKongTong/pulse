@@ -12,19 +12,6 @@ extension PulseBarStreamConnectionState {
         }
     }
 
-    var title: String {
-        switch self {
-        case .IDLE: return "idle"
-        case .CONNECTING: return "connecting"
-        case .CONNECTED: return "connected"
-        case .RECONNECTING: return "reconnecting"
-        case .OFFLINE: return "offline"
-        case .STOPPING: return "stopping"
-        case .STOPPED: return "stopped"
-        case .FAILED: return "failed"
-        }
-    }
-
     var isConnected: Bool {
         self == .CONNECTED
     }
@@ -50,50 +37,6 @@ extension PulseBarConnectionState {
         default:
             return .IDLE
         }
-    }
-
-    var isConnecting: Bool {
-        connectionState == .CONNECTING || connectionState == .RECONNECTING
-    }
-
-    var statusText: String {
-        if let message = lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
-            return message
-        }
-        switch connectionState {
-        case .CONNECTED:
-            return "Connected"
-        case .CONNECTING:
-            return "Connecting"
-        case .RECONNECTING:
-            return "Reconnecting"
-        case .OFFLINE:
-            return "Offline"
-        case .STOPPING:
-            return "Stopping"
-        case .STOPPED:
-            return "Stopped"
-        case .FAILED:
-            return "Failed"
-        case .IDLE:
-            return "Idle"
-        }
-    }
-
-    var lastConnectedAtMillis: Int64 {
-        max(connection.common.connection.lastConnectedAtMillis ?? 0, connection.media.connection.lastConnectedAtMillis ?? 0)
-    }
-
-    var lastDisconnectedAtMillis: Int64 {
-        max(connection.common.connection.lastDisconnectedAtMillis ?? 0, connection.media.connection.lastDisconnectedAtMillis ?? 0)
-    }
-
-    var lastErrorMessage: String? {
-        connection.lastErrorMessage
-    }
-
-    var commonPhaseName: String {
-        String(describing: connection.common.connection.phase)
     }
 
     private var devicePhaseName: String {
