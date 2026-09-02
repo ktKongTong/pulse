@@ -3,44 +3,6 @@ package io.github.kt.pulsebar.model.stream
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-
-enum class MediaProvider {
-    SYSTEM,
-    SPOTIFY,
-    APPLE_MUSIC,
-    NETEASE_MUSIC,
-    TENCENT_MUSIC,
-    YOUTUBE_MUSIC,
-    OTHER,
-    UNKNOWN
-}
-
-//data class Media(
-//    val providerId: String,
-//    val detail: MediaDetail,
-//    val status: StreamStatus,
-//)
-
-data class MediaPlayingState(
-    val progressSeconds: Double,
-    val durationSeconds: Double?,
-    val isPlaying: Boolean,
-    // if playing
-    val lastPlayedAt: Long?,
-)
-
-data class MediaDetail(
-    val durationSeconds: Double?,
-    val itemType: String?,
-    val trackId: String?,
-    val uri: String?,
-    val linkUrl: String?,
-    val title: String?,
-    val artist: String?,
-    val album: String?,
-    val artworkUrl: String?,
-)
-
 @Serializable
 data class Media(
     val providerId: String? = null,

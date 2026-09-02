@@ -1,5 +1,7 @@
 package io.github.kt.pulsebar.logger
 
+import co.touchlab.kermit.Logger
+
 /**
  * Category labels that correspond to the plan's §6.2 logging sections. They
  * become `os_log` categories on macOS and stdout prefixes on JVM.
@@ -11,7 +13,12 @@ enum class PulseLogCategory(val tag: String) {
     SyncEndpoint("sync.endpoint"),
     StreamSession("stream.session"),
     PlatformAdapter("platform.adapter"),
-    NativeEvent("native.event")
+    NativeEvent("native.event");
+
+    companion object {
+        fun fromTag(tag: String): PulseLogCategory =
+            entries.firstOrNull { it.tag == tag } ?: NativeEvent
+    }
 }
 
 enum class PulseLogLevel { Debug, Info, Warn, Error }
@@ -44,19 +51,45 @@ object PulseLogConfig {
 }
 
 class PulseBarLog(val category: PulseLogCategory) {
-    fun d(message: () -> String) = platformLog(PulseLogLevel.Debug, category, message(), null)
-    fun i(message: () -> String) = platformLog(PulseLogLevel.Info, category, message(), null)
-    fun w(message: () -> String) = platformLog(PulseLogLevel.Warn, category, message(), null)
-    fun w(error: Throwable?, message: () -> String) = platformLog(PulseLogLevel.Warn, category, message(), error)
-    fun e(message: () -> String) = platformLog(PulseLogLevel.Error, category, message(), null)
-    fun e(error: Throwable?, message: () -> String) = platformLog(PulseLogLevel.Error, category, message(), error)
+    private val kermit = Logger(PulseLoggerConfig.config, tag = category.tag)
+
+    fun d(message: () -> String) = kermit.d(message = message)
+    fun i(message: () -> String) = kermit.i(message = message)
+    fun w(message: () -> String) = kermit.w(message = message)
+    fun w(error: Throwable?, message: () -> String) = kermit.w(throwable = error, message = message)
+    fun e(message: () -> String) = kermit.e(message = message)
+    fun e(error: Throwable?, message: () -> String) = kermit.e(throwable = error, message = message)
+
+    fun log(level: PulseLogLevel, message: String) {
+        when (level) {
+            PulseLogLevel.Debug -> d { message }
+            PulseLogLevel.Info -> i { message }
+            PulseLogLevel.Warn -> w { message }
+            PulseLogLevel.Error -> e { message }
+        }
+    }
 }
 
 fun logger(category: PulseLogCategory): PulseBarLog = PulseBarLog(category)
 
-internal expect fun platformLog(
-    level: PulseLogLevel,
-    category: PulseLogCategory,
-    message: String,
-    error: Throwable?,
-)
+enum class PulseNativeLogCategory(val logCategory: PulseLogCategory) {
+    platformAdapter(PulseLogCategory.PlatformAdapter),
+    streamSession(PulseLogCategory.StreamSession),
+}
+
+object PulseNativeLog {
+    fun debug(category: PulseNativeLogCategory, message: String) =
+        logger(category.logCategory).log(PulseLogLevel.Debug, message)
+
+    fun info(category: PulseNativeLogCategory, message: String) =
+        logger(category.logCategory).log(PulseLogLevel.Info, message)
+
+    fun warn(category: PulseNativeLogCategory, message: String) =
+        logger(category.logCategory).log(PulseLogLevel.Warn, message)
+}
+
+internal object PulseLoggerConfig {
+    val config by lazy { platformLoggerConfig() }
+}
+
+internal expect fun platformLoggerConfig(): co.touchlab.kermit.LoggerConfig

@@ -1,22 +1,9 @@
 package io.github.kt.pulsebar.logger
 
-import java.time.Instant
+import co.touchlab.kermit.CommonWriter
+import co.touchlab.kermit.LoggerConfig
+import co.touchlab.kermit.Severity
+import co.touchlab.kermit.loggerConfigInit
 
-internal actual fun platformLog(
-    level: PulseLogLevel,
-    category: PulseLogCategory,
-    message: String,
-    error: Throwable?,
-) {
-    val prefix = when (level) {
-        PulseLogLevel.Debug -> "D"
-        PulseLogLevel.Info -> "I"
-        PulseLogLevel.Warn -> "W"
-        PulseLogLevel.Error -> "E"
-    }
-    val stream = if (level == PulseLogLevel.Warn || level == PulseLogLevel.Error) System.err else System.out
-    stream.println("${Instant.now()} [$prefix][${category.tag}] $message")
-    if (error != null) {
-        error.printStackTrace(stream)
-    }
-}
+internal actual fun platformLoggerConfig(): LoggerConfig =
+    loggerConfigInit(CommonWriter(), minSeverity = Severity.Debug)

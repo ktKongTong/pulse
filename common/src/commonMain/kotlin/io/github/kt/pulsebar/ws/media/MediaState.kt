@@ -129,21 +129,24 @@ internal fun MediaRuntimeState.reduce(event: MediaRuntimeEvent): MediaRuntimeSta
             isSending = true,
         )
 
-        is MediaRuntimeEvent.MediaStateChanged -> copy(
-            streamPermission = event.state.permission,
-            playbackStatus = event.state.playbackStatus,
-            captureStatus = event.state.captureStatus,
-            sampleRate = event.state.format?.sampleRate ?: sampleRate,
-            channels = event.state.format?.channels ?: channels,
-            chunkDurationMs = if (event.state.format != null) DEVICE_V2_AUDIO_CHUNK_DURATION_MS else chunkDurationMs,
-            chunkBytes = event.state.format?.let { format ->
-                deviceV2ChunkBytesFor(
-                    chunkDurationMs = DEVICE_V2_AUDIO_CHUNK_DURATION_MS,
-                    sampleRate = format.sampleRate,
-                    channels = format.channels,
-                )
-            } ?: chunkBytes,
-        )
+        is MediaRuntimeEvent.MediaStateChanged -> {
+            val format = event.state.format
+            copy(
+                streamPermission = event.state.permission,
+                playbackStatus = event.state.playbackStatus,
+                captureStatus = event.state.captureStatus,
+                sampleRate = format?.sampleRate ?: 0,
+                channels = format?.channels ?: 0,
+                chunkDurationMs = if (format != null) DEVICE_V2_AUDIO_CHUNK_DURATION_MS else 0,
+                chunkBytes = format?.let {
+                    deviceV2ChunkBytesFor(
+                        chunkDurationMs = DEVICE_V2_AUDIO_CHUNK_DURATION_MS,
+                        sampleRate = it.sampleRate,
+                        channels = it.channels,
+                    )
+                } ?: 0,
+            )
+        }
 
         is MediaRuntimeEvent.PlayingChanged -> copy(
             currentMedia = event.media,

@@ -90,7 +90,7 @@ struct MenuBarContentView: View {
                 HStack(spacing: 6) {
                     MediaTransportButton(systemName: "backward.fill", action: { monitor.mediaCommand(.PREVIOUS) })
                     Spacer(minLength: 0)
-                    MediaTransportButton(systemName: media.isPlaying ? "pause.fill" : "play.fill", isPrimary: true, action: {
+                    MediaTransportButton(systemName: media.playbackStatus == .PLAYING ? "pause.fill" : "play.fill", isPrimary: true, action: {
                         monitor.mediaCommand(.TOGGLE_PLAY_PAUSE)
                     })
                     Spacer(minLength: 0)
@@ -100,7 +100,7 @@ struct MenuBarContentView: View {
                 MediaProgressTimeline(
                     progressSeconds: media.progressSeconds,
                     durationSeconds: durationSeconds,
-                    isPlaying: media.isPlaying
+                    playbackStatus: media.playbackStatus
                 ) { displayedProgress in
                     VStack(alignment: .leading, spacing: 6) {
                         MediaSeekBar(
@@ -112,7 +112,7 @@ struct MenuBarContentView: View {
                         .frame(height: 3)
 
                         HStack {
-                            Text(pulseClock(Int(displayedProgress.rounded())))
+                            Text(SharedFormatters.formatClockSeconds(seconds: Int32(displayedProgress.rounded())))
                             Spacer()
                             Text(remainingClockText(media, progressSeconds: displayedProgress))
                         }
@@ -142,7 +142,7 @@ struct MenuBarContentView: View {
         let duration = Int(media.durationSeconds ?? 0)
         let progress = Int((progressSeconds ?? media.progressSeconds).rounded())
         let remaining = max(0, duration - progress)
-        return "-\(pulseClock(remaining))"
+        return "-\(SharedFormatters.formatClockSeconds(seconds: Int32(remaining)))"
     }
 }
 
@@ -194,6 +194,6 @@ private struct UsageRowView: View {
     }
 
     private var durationText: String {
-        pulseDurationHuman(seconds: row.totalSeconds)
+        SharedFormatters.formatDurationHuman(seconds: row.totalSeconds)
     }
 }

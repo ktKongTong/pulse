@@ -50,4 +50,32 @@ fun parseIso8601ToMillis(value: String?): Long? {
     }.getOrNull()
 }
 
+fun formatClockSeconds(seconds: Int): String {
+    val value = seconds.coerceAtLeast(0)
+    val hours = value / 3600
+    val minutes = (value % 3600) / 60
+    val remainingSeconds = value % 60
+    return if (hours > 0) {
+        "$hours:${minutes.twoDigits()}:${remainingSeconds.twoDigits()}"
+    } else {
+        "$minutes:${remainingSeconds.twoDigits()}"
+    }
+}
+
+fun formatDurationHuman(seconds: Int): String {
+    val value = seconds.coerceAtLeast(0)
+    if (value >= 3600) {
+        val hours = value / 3600
+        val minutes = (value % 3600) / 60
+        return if (minutes > 0) "${hours}h ${minutes}m" else "${hours}h"
+    }
+    if (value >= 60) {
+        return "${value / 60}m"
+    }
+    return "${value}s"
+}
+
+fun takeIfNotBlank(value: String?): String? =
+    value?.takeIf { it.isNotBlank() }
+
 private fun Int.twoDigits(): String = if (this < 10) "0$this" else toString()

@@ -1,9 +1,10 @@
 import SwiftUI
+@preconcurrency import PulseBarShared
 
 struct MediaProgressTimeline<Content: View>: View {
     let progressSeconds: Double
     let durationSeconds: Double
-    let isPlaying: Bool
+    let playbackStatus: PulsePlaybackStatus
 
     private let content: (Double) -> Content
 
@@ -15,12 +16,12 @@ struct MediaProgressTimeline<Content: View>: View {
     init(
         progressSeconds: Double,
         durationSeconds: Double,
-        isPlaying: Bool,
+        playbackStatus: PulsePlaybackStatus,
         @ViewBuilder content: @escaping (Double) -> Content
     ) {
         self.progressSeconds = progressSeconds
         self.durationSeconds = durationSeconds
-        self.isPlaying = isPlaying
+        self.playbackStatus = playbackStatus
         self.content = content
     }
 
@@ -36,7 +37,7 @@ struct MediaProgressTimeline<Content: View>: View {
             tickDate = now
             resetBase(to: newValue, at: now)
         }
-        .onChange(of: isPlaying) { _, _ in
+        .onChange(of: playbackStatus) { _, _ in
             let now = Date.now
             tickDate = now
             resetBase(to: displayProgress(at: now), at: now)
@@ -46,9 +47,9 @@ struct MediaProgressTimeline<Content: View>: View {
             tickDate = now
             resetBase(to: displayProgress(at: now), at: now)
         }
-        .task(id: isPlaying) {
+        .task(id: playbackStatus) {
             tickDate = .now
-            guard isPlaying else { return }
+            guard playbackStatus == .PLAYING else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled else { return }
@@ -59,7 +60,7 @@ struct MediaProgressTimeline<Content: View>: View {
 
     private func displayProgress(at date: Date) -> Double {
         let base = hasBase ? baseProgressSeconds : progressSeconds
-        let elapsed = isPlaying ? max(0, date.timeIntervalSince(baseDate)) : 0
+        let elapsed = playbackStatus == .PLAYING ? max(0, date.timeIntervalSince(baseDate)) : 0
         return clamped(base + elapsed)
     }
 

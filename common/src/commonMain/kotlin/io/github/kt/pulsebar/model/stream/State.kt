@@ -75,7 +75,11 @@ fun MediaStateSnapshot.toStreamState(previousFormat: StreamFormat? = null): Stre
     captureStatus = captureStatus,
     reason = reason,
     message = message,
-    streamFormat = format ?: previousFormat,
+    streamFormat = when {
+        format != null -> format
+        captureStatus == StreamCaptureStatus.CAPTURING -> previousFormat
+        else -> null
+    },
 )
 
 @Serializable

@@ -1,4 +1,4 @@
-package io.github.kt.pulsebar.config
+package io.github.kt.pulsebar.store.config
 
 import okio.FileSystem
 import okio.Path

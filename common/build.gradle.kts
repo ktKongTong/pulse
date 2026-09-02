@@ -37,6 +37,7 @@ kotlin {
                 implementation(libs.ktor.client.websockets)
                 implementation(libs.androidx.datastore.core)
                 implementation(libs.androidx.datastore.core.okio)
+                implementation(libs.kermit)
                 implementation(libs.okio)
             }
         }

@@ -15,12 +15,26 @@ data class NativeFrontmostAppChanged(
     val bundleId: String,
     val name: String,
     val observedAtMillis: Long = nowInMillis()
-) : AppEvent
+) : AppEvent {
+    constructor(
+        bundleId: String,
+        name: String,
+    ) : this(
+        bundleId = bundleId,
+        name = name,
+        observedAtMillis = nowInMillis(),
+    )
+}
 
 data class NativeNowPlayingChanged(
     val media: Media?,
     val observedAtMillis: Long = nowInMillis()
-) : AppEvent
+) : AppEvent {
+    constructor(media: Media?) : this(
+        media = media,
+        observedAtMillis = nowInMillis(),
+    )
+}
 
 data class NativeMediaStateChanged(
     val permission: StreamPermission,
@@ -31,15 +45,49 @@ data class NativeMediaStateChanged(
     val format: StreamFormat?,
     val media: Media?,
     val observedAtMillis: Long = nowInMillis()
-) : AppEvent
+) : AppEvent {
+    constructor(
+        permission: StreamPermission,
+        playbackStatus: PlaybackStatus,
+        captureStatus: StreamCaptureStatus,
+        reason: StreamBlockedReason?,
+        message: String?,
+        format: StreamFormat?,
+        media: Media?,
+    ) : this(
+        permission = permission,
+        playbackStatus = playbackStatus,
+        captureStatus = captureStatus,
+        reason = reason,
+        message = message,
+        format = format,
+        media = media,
+        observedAtMillis = nowInMillis(),
+    )
+
+}
 
 data class NativeStreamPcmChunk(
     val chunkBase64: String,
     val mediaStartPositionMs: Long,
     val observedAtMillis: Long = nowInMillis()
-) : AppEvent
+) : AppEvent {
+    constructor(
+        chunkBase64: String,
+        mediaStartPositionMs: Long,
+    ) : this(
+        chunkBase64 = chunkBase64,
+        mediaStartPositionMs = mediaStartPositionMs,
+        observedAtMillis = nowInMillis(),
+    )
+}
 
 data class NativeMediaStreamStopped(
     val reason: StreamStopReason,
     val observedAtMillis: Long = nowInMillis()
-) : AppEvent
+) : AppEvent {
+    constructor(reason: StreamStopReason) : this(
+        reason = reason,
+        observedAtMillis = nowInMillis(),
+    )
+}

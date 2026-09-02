@@ -26,16 +26,18 @@ final class StreamCaptureSession {
     /// implementations must be real-time safe.
     func runStreaming(
         source: StreamCaptureSource,
-        pcmHandler: @escaping @Sendable (Data) -> Void,
+        makePcmHandler: @escaping @MainActor (StreamCaptureAudioFormat) -> @Sendable (Data) -> Void,
         onError: @escaping @MainActor (Error) -> Void,
         onFinish: @escaping @MainActor () -> Void
     ) {
         captureTask?.cancel()
-        captureTask = Task { [weak self] in
+        captureTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 try service.ensureAudioCapturePermissionForBackgroundStart()
-                let stream = try await service.capture(source: source, pcmHandler: pcmHandler)
+                let format = try service.streamAudioFormat(for: source)
+                let pcmHandler = makePcmHandler(format)
+                let stream = try await service.capture(source: source, format: format, pcmHandler: pcmHandler)
                 for try await _ in stream {
                 }
             } catch {

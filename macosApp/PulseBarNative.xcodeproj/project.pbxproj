@@ -13,7 +13,6 @@
 		04368F90613FA8CAB22EC1BB /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0FCA5EC26D615E311CD3F5 /* DashboardView.swift */; };
 		71781F95CDD3248BB06BB67B /* InstalledAppCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ECAB8819B655CCC3ACEC0E1 /* InstalledAppCatalog.swift */; };
 		F46E529B1F0F516DA4355752 /* InstalledReportingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C6D4AF4F941200092C2AB7F /* InstalledReportingApp.swift */; };
-		2353A3E54065B6E97D643907 /* MediaFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = D675D065089A039E5E97DB2B /* MediaFormatting.swift */; };
 		7508FF88D49765EFEF5C8FD1 /* MediaGlassBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4B1513A5FFA66200BE050C9 /* MediaGlassBackground.swift */; };
 		E0C30918ED12E502A247F438 /* MediaSeekBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1D03DF85E491216051EE41 /* MediaSeekBar.swift */; };
 		B4E546B397EFDB2BFAD320A8 /* MenuBarContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7396F0A64AF4F513ABE5862 /* MenuBarContentView.swift */; };
@@ -40,7 +39,6 @@
 		6D0FCA5EC26D615E311CD3F5 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		2ECAB8819B655CCC3ACEC0E1 /* InstalledAppCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstalledAppCatalog.swift; sourceTree = "<group>"; };
 		0C6D4AF4F941200092C2AB7F /* InstalledReportingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstalledReportingApp.swift; sourceTree = "<group>"; };
-		D675D065089A039E5E97DB2B /* MediaFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaFormatting.swift; sourceTree = "<group>"; };
 		D4B1513A5FFA66200BE050C9 /* MediaGlassBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGlassBackground.swift; sourceTree = "<group>"; };
 		AA1D03DF85E491216051EE41 /* MediaSeekBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSeekBar.swift; sourceTree = "<group>"; };
 		B7396F0A64AF4F513ABE5862 /* MenuBarContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContentView.swift; sourceTree = "<group>"; };
@@ -104,7 +102,6 @@
 			children = (
 				E04E0F792AF2CED97CB0D709 /* AppIconView.swift */,
 				FA76178436F5D6D5686B5A92 /* Buttons.swift */,
-				D675D065089A039E5E97DB2B /* MediaFormatting.swift */,
 				D4B1513A5FFA66200BE050C9 /* MediaGlassBackground.swift */,
 				AA1D03DF85E491216051EE41 /* MediaSeekBar.swift */,
 			);
@@ -285,7 +282,6 @@
 				04368F90613FA8CAB22EC1BB /* DashboardView.swift in Sources */,
 				71781F95CDD3248BB06BB67B /* InstalledAppCatalog.swift in Sources */,
 				F46E529B1F0F516DA4355752 /* InstalledReportingApp.swift in Sources */,
-				2353A3E54065B6E97D643907 /* MediaFormatting.swift in Sources */,
 				7508FF88D49765EFEF5C8FD1 /* MediaGlassBackground.swift in Sources */,
 				E0C30918ED12E502A247F438 /* MediaSeekBar.swift in Sources */,
 				B4E546B397EFDB2BFAD320A8 /* MenuBarContentView.swift in Sources */,

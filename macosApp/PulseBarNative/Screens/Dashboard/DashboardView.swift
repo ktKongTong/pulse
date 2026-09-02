@@ -150,12 +150,12 @@ private struct GeneralPreferencesPane: View {
 
     private var connectionColor: Color {
         if endpoint?.enabled == false { return .gray }
-        return connectionState?.connectionState.color ?? .gray
+        return connectionState?.connectionStatus.color ?? .gray
     }
 
     private var connectionText: String {
         if endpoint?.enabled == false { return "已停止" }
-        if connectionState?.connectionState.isConnected == true { return "已连接" }
+        if connectionState?.connectionStatus.isConnected == true { return "已连接" }
         return "未连接"
     }
 
@@ -356,14 +356,14 @@ private struct GeneralPreferencesPane: View {
     }
 
     private func submitAudioStreamingAllowed(_ enabled: Bool) {
-        monitor.streamStore.setMediaStreamAllowed(enabled)
+        monitor.streamStore.setStreamPermission(enabled ? .ALLOW : .DISALLOW)
     }
 
     private func syncRuntimeSettingsState() async {
         isSynchronizingRuntimeSettingsState = true
         defer { isSynchronizingRuntimeSettingsState = false }
         launchAtLogin = await LaunchAtLoginService.isEnabledAsync()
-        audioStreamingAllowed = monitor.streamStore.mediaStreamAllowed
+        audioStreamingAllowed = monitor.streamStore.streamPermission == .ALLOW
         selectedAudioSourceId = monitor.streamStore.selectedSourceId
     }
 

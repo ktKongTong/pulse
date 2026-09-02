@@ -19,6 +19,13 @@ struct StreamCaptureSource: Identifiable, Equatable, Sendable {
     let processIdentifier: pid_t?
 }
 
+struct StreamCaptureAudioFormat: Sendable {
+    let codec: String
+    let sampleRate: UInt32
+    let channels: UInt32
+    let bitDepth: UInt32
+}
+
 private struct SupportedApplicationCaptureSource {
     let bundleId: String
     let name: String
@@ -39,6 +46,9 @@ final class StreamCaptureService: @unchecked Sendable {
         SupportedApplicationCaptureSource(bundleId: "com.spotify.client", name: "Spotify"),
         SupportedApplicationCaptureSource(bundleId: "com.apple.Music", name: "Music"),
     ]
+    private static let outputCodec = "pcm16-wav"
+    private static let outputChannels: UInt32 = 2
+    private static let outputBitDepth: UInt32 = 16
 
     fileprivate final class CaptureContext: @unchecked Sendable {
         let channels: UInt32
@@ -130,16 +140,20 @@ final class StreamCaptureService: @unchecked Sendable {
         ] + applications
     }
 
-    func streamSampleRate(for source: StreamCaptureSource?) -> UInt32 {
-        do {
-            let outputDeviceID = try Self.defaultOutputDeviceID()
-            let sampleRate = try Self.nominalSampleRate(deviceID: outputDeviceID)
-            appendStreamCaptureServiceLog("stream sampleRate=\(sampleRate) source=\(source?.name ?? "nil")")
-            return sampleRate
-        } catch {
-            appendStreamCaptureServiceLog("stream sampleRate fallback=48000 error=\(error.localizedDescription)")
-            return 48_000
-        }
+    func streamSampleRate(for source: StreamCaptureSource?) throws -> UInt32 {
+        let outputDeviceID = try Self.defaultOutputDeviceID()
+        let sampleRate = try Self.nominalSampleRate(deviceID: outputDeviceID)
+        appendStreamCaptureServiceLog("stream sampleRate=\(sampleRate) source=\(source?.name ?? "nil")")
+        return sampleRate
+    }
+
+    func streamAudioFormat(for source: StreamCaptureSource) throws -> StreamCaptureAudioFormat {
+        StreamCaptureAudioFormat(
+            codec: Self.outputCodec,
+            sampleRate: try streamSampleRate(for: source),
+            channels: Self.outputChannels,
+            bitDepth: Self.outputBitDepth
+        )
     }
 
     /// Stream PCM16 chunks to [pcmHandler] for as long as the returned stream
@@ -148,14 +162,14 @@ final class StreamCaptureService: @unchecked Sendable {
     /// before emitting them into Kotlin as a native event.
     func capture(
         source: StreamCaptureSource,
+        format: StreamCaptureAudioFormat,
         pcmHandler: @escaping @Sendable (Data) -> Void
     ) async throws -> AsyncThrowingStream<Void, Error> {
         stop()
-        let sampleRate = streamSampleRate(for: source)
         let stream = AsyncThrowingStream<Void, Error> { continuation in
             let context = CaptureContext(
-                channels: 2,
-                sampleRate: sampleRate,
+                channels: Self.outputChannels,
+                sampleRate: format.sampleRate,
                 pcmHandler: pcmHandler,
                 continuation: continuation
             )

@@ -2,44 +2,21 @@ import Foundation
 import SwiftUI
 @preconcurrency import PulseBarShared
 
-extension PulseBarStreamConnectionState {
+extension PulseBarConnectionStatus {
     var color: Color {
         switch self {
-        case .CONNECTED: return .green
-        case .CONNECTING, .RECONNECTING, .STOPPING: return .yellow
-        case .FAILED: return .red
-        case .IDLE, .OFFLINE, .STOPPED: return .gray
+        case .Connected: return .green
+        case .Connecting, .Reconnecting, .Closing: return .yellow
+        case .Failed: return .red
+        case .Idle, .Offline, .Closed: return .gray
         }
     }
 
     var isConnected: Bool {
-        self == .CONNECTED
+        self == .Connected
     }
 }
 
 extension PulseBarConnectionState {
-    var connectionState: PulseBarStreamConnectionState {
-        switch devicePhaseName {
-        case "Connected":
-            return .CONNECTED
-        case "Connecting":
-            return .CONNECTING
-        case "Reconnecting":
-            return .RECONNECTING
-        case "Offline":
-            return .OFFLINE
-        case "Closing":
-            return .STOPPING
-        case "Closed":
-            return .STOPPED
-        case "Failed":
-            return .FAILED
-        default:
-            return .IDLE
-        }
-    }
-
-    private var devicePhaseName: String {
-        String(describing: connection.phase)
-    }
+    var connectionStatus: PulseBarConnectionStatus { connection.phase }
 }

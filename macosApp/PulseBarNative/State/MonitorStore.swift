@@ -161,8 +161,7 @@ final class MonitorStore: ObservableObject {
         guard isMonitoring else { return }
         let event = NativeFrontmostAppChanged(
             bundleId: bundleId,
-            name: name,
-            observedAtMillis: nowMillis()
+            name: name
         )
         bridge.emitNativeEvent(event: event)
     }
@@ -171,7 +170,7 @@ final class MonitorStore: ObservableObject {
         guard isMonitoring else { return }
         if streamStore.updateCurrentMedia(snapshot) {
             let label = snapshot?.title ?? "nil"
-            PulseNativeLog.info(.streamSession, "native.media.changed title=\(label) playing=\(snapshot?.isPlaying == true)")
+            PulseNativeLog.info(.streamSession, "native.media.changed title=\(label) playback=\(snapshot?.playbackStatus ?? .PAUSED)")
         }
     }
 
@@ -188,10 +187,6 @@ final class MonitorStore: ObservableObject {
                 constrained: snapshot.constrained
             )
         )
-    }
-
-    private func nowMillis() -> Int64 {
-        Int64(Date().timeIntervalSince1970 * 1000.0)
     }
 
     // MARK: - Stream convenience
@@ -297,7 +292,7 @@ final class MonitorStore: ObservableObject {
         connectionStatesByEndpointID[state.endpointId] = state
 
         let connected = Set(connectionStatesByEndpointID.values.compactMap { state in
-            state.connectionState == .CONNECTED ? state.endpointId : nil
+            state.connectionStatus.isConnected ? state.endpointId : nil
         })
         let newlyConnected = connected.subtracting(connectedMediaEndpointIDs)
         connectedMediaEndpointIDs = connected

@@ -17,53 +17,14 @@ typealias NativeStreamPcmChunk = ExportedKotlinPackages.io.github.kt.pulsebar.ex
 typealias PlayerPlaybackCommand = ExportedKotlinPackages.io.github.kt.pulsebar.export.ui.PlayerPlaybackCommand
 typealias PulseBarConfig = ExportedKotlinPackages.io.github.kt.pulsebar.model.PulseConfig
 typealias PulseBarConnectionState = ExportedKotlinPackages.io.github.kt.pulsebar.model.connection.ConnectionState
+typealias PulseBarConnectionStatus = ExportedKotlinPackages.io.github.kt.pulsebar.ws.connection.ConnectionStatus
+typealias PulsePlaybackStatus = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.PlaybackStatus
+typealias PulseStreamCaptureStatus = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamCaptureStatus
+typealias PulseStreamPermission = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamPermission
 typealias StreamFormat = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamFormat
 typealias PulseStreamStopReason = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.StreamStopReason
 typealias RuntimeState = ExportedKotlinPackages.io.github.kt.pulsebar.model.RuntimeState
 typealias ServerCommandEvent = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.ServerCommandEvent
 typealias UpdateConfigCommand = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.UpdateConfigCommand
 typealias UsageStats = ExportedKotlinPackages.io.github.kt.pulsebar.export.ui.UsageStats
-
-private func pulseNowMillis() -> Int64 {
-    Int64(Date().timeIntervalSince1970 * 1000.0)
-}
-
-extension UpdateConfigCommand {
-    convenience init(config: PulseBarConfig) {
-        self.init(config: config, sentAt: pulseNowMillis())
-    }
-}
-
-extension NativeStreamPcmChunk {
-    convenience init(chunkBase64: String, mediaStartPositionMs: Int64) {
-        self.init(chunkBase64: chunkBase64, mediaStartPositionMs: mediaStartPositionMs, observedAtMillis: pulseNowMillis())
-    }
-}
-
-extension NativeMediaStreamStopped {
-    convenience init(reason: PulseStreamStopReason) {
-        self.init(reason: reason, observedAtMillis: pulseNowMillis())
-    }
-}
-
-extension NativeNetworkChanged {
-    convenience init(online: Bool, expensive: Bool, constrained: Bool) {
-        self.init(
-            online: online,
-            expensive: expensive,
-            constrained: constrained,
-            observedAtMillis: pulseNowMillis()
-        )
-    }
-}
-
-enum PulseBarStreamConnectionState {
-    case IDLE
-    case CONNECTING
-    case CONNECTED
-    case RECONNECTING
-    case OFFLINE
-    case STOPPING
-    case STOPPED
-    case FAILED
-}
+typealias SharedFormatters = ExportedKotlinPackages.io.github.kt.pulsebar.utils

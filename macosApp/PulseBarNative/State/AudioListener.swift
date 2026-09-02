@@ -94,9 +94,9 @@ final class NowPlayingEventSource: @unchecked Sendable {
     func refresh() {
         guard let getNowPlayingInfo, let getNowPlayingApplicationIsPlaying else { return }
         let queue = DispatchQueue.main
-        getNowPlayingApplicationIsPlaying(queue) { [weak self] isPlaying in
+        getNowPlayingApplicationIsPlaying(queue) { [weak self] rawPlayingFlag in
             getNowPlayingInfo(queue) { info in
-                let snapshot = Self.makeSnapshot(info: info, isPlaying: isPlaying)
+                let snapshot = Self.makeSnapshot(info: info, playbackStatus: Self.playbackStatus(fromMediaRemotePlayingFlag: rawPlayingFlag))
                     ?? Self.readPlayerFallbackSnapshot()
                 self?.onChange?(snapshot)
             }
@@ -111,9 +111,9 @@ final class NowPlayingEventSource: @unchecked Sendable {
         }
         return await withCheckedContinuation { continuation in
             let queue = DispatchQueue.main
-            getNowPlayingApplicationIsPlaying(queue) { isPlaying in
+            getNowPlayingApplicationIsPlaying(queue) { rawPlayingFlag in
                 getNowPlayingInfo(queue) { [weak self] info in
-                    let snapshot = Self.makeSnapshot(info: info, isPlaying: isPlaying)
+                    let snapshot = Self.makeSnapshot(info: info, playbackStatus: Self.playbackStatus(fromMediaRemotePlayingFlag: rawPlayingFlag))
                         ?? Self.readPlayerFallbackSnapshot()
                     self?.onChange?(snapshot)
                     continuation.resume(returning: snapshot)
@@ -122,7 +122,7 @@ final class NowPlayingEventSource: @unchecked Sendable {
         }
     }
 
-    private static func makeSnapshot(info: CFDictionary?, isPlaying: Bool) -> Media? {
+    private static func makeSnapshot(info: CFDictionary?, playbackStatus: PulsePlaybackStatus) -> Media? {
         guard let raw = info as? [String: Any], !raw.isEmpty else {
             return nil
         }
@@ -156,8 +156,16 @@ final class NowPlayingEventSource: @unchecked Sendable {
             collectionId: nil,
             collectionTitle: nil,
             collectionLinkUrl: nil,
-            playbackStatus: isPlaying ? .PLAYING : .PAUSED
+            playbackStatus: playbackStatus
         )
+    }
+
+    private static func playbackStatus(fromMediaRemotePlayingFlag flag: Bool) -> PulsePlaybackStatus {
+        flag ? .PLAYING : .PAUSED
+    }
+
+    private static func playbackStatus(fromPlayerState state: String) -> PulsePlaybackStatus {
+        state == "playing" ? .PLAYING : .PAUSED
     }
 
     private static func string(_ raw: [String: Any], _ key: String) -> String? {
@@ -257,7 +265,7 @@ final class NowPlayingEventSource: @unchecked Sendable {
             collectionId: nil,
             collectionTitle: nil,
             collectionLinkUrl: nil,
-            playbackStatus: values[0] == "playing" ? .PLAYING : .PAUSED
+            playbackStatus: playbackStatus(fromPlayerState: values[0])
         )
     }
 
@@ -295,7 +303,7 @@ final class NowPlayingEventSource: @unchecked Sendable {
             collectionId: nil,
             collectionTitle: nil,
             collectionLinkUrl: nil,
-            playbackStatus: values[0] == "playing" ? .PLAYING : .PAUSED
+            playbackStatus: playbackStatus(fromPlayerState: values[0])
         )
     }
 

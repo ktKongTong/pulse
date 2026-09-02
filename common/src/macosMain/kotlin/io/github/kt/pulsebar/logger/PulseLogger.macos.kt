@@ -1,11 +1,15 @@
 package io.github.kt.pulsebar.logger
 
+import co.touchlab.kermit.LogWriter
+import co.touchlab.kermit.LoggerConfig
+import co.touchlab.kermit.Severity
+import co.touchlab.kermit.loggerConfigInit
+import co.touchlab.kermit.platformLogWriter
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSDate
 import platform.Foundation.NSDateFormatter
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSHomeDirectory
-import platform.Foundation.NSLog
 import platform.Foundation.NSProcessInfo
 import okio.FileSystem
 import okio.Path.Companion.toPath
@@ -35,34 +39,13 @@ private fun ensureConfig() {
     configInitialized = true
 }
 
-@OptIn(ExperimentalForeignApi::class)
-internal actual fun platformLog(
-    level: PulseLogLevel,
-    category: PulseLogCategory,
-    message: String,
-    error: Throwable?,
-) {
+internal actual fun platformLoggerConfig(): LoggerConfig {
     ensureConfig()
-    val prefix = when (level) {
-        PulseLogLevel.Debug -> "D"
-        PulseLogLevel.Info -> "I"
-        PulseLogLevel.Warn -> "W"
-        PulseLogLevel.Error -> "E"
-    }
-    val line = if (error == null) {
-        "[$prefix][${category.tag}] $message"
-    } else {
-        "[$prefix][${category.tag}] $message -- ${error::class.simpleName}: ${error.message ?: ""}"
-    }
-
-    if (PulseLogConfig.shouldEmit(PulseLogConfig.stderrLevel, level)) {
-        NSLog("%s", line)
-    }
-
-    if (PulseLogConfig.shouldEmit(PulseLogConfig.fileLevel, level)) {
-        val ts = dateFormatter.stringFromDate(NSDate())
-        appendToLogFile("$ts $line\n")
-    }
+    return loggerConfigInit(
+        FilteringLogWriter(PulseLogConfig.stderrLevel, platformLogWriter()),
+        PulseFileLogWriter(),
+        minSeverity = Severity.Debug,
+    )
 }
 
 private fun appendToLogFile(line: String) {
@@ -72,4 +55,49 @@ private fun appendToLogFile(line: String) {
     } finally {
         sink.close()
     }
+}
+
+private class FilteringLogWriter(
+    private val minLevel: PulseLogLevel,
+    private val delegate: LogWriter,
+) : LogWriter() {
+    override fun isLoggable(tag: String, severity: Severity): Boolean =
+        PulseLogConfig.shouldEmit(minLevel, severity.toPulseLogLevel())
+
+    override fun log(severity: Severity, message: String, tag: String, throwable: Throwable?) {
+        delegate.log(severity, message, tag, throwable)
+    }
+}
+
+private class PulseFileLogWriter : LogWriter() {
+    override fun isLoggable(tag: String, severity: Severity): Boolean =
+        PulseLogConfig.shouldEmit(PulseLogConfig.fileLevel, severity.toPulseLogLevel())
+
+    override fun log(severity: Severity, message: String, tag: String, throwable: Throwable?) {
+        val category = PulseLogCategory.fromTag(tag)
+        val level = severity.toPulseLogLevel()
+        val line = if (throwable == null) {
+            "[${levelPrefix(level)}][${category.tag}] $message"
+        } else {
+            "[${levelPrefix(level)}][${category.tag}] $message -- ${throwable::class.simpleName}: ${throwable.message ?: ""}"
+        }
+        val ts = dateFormatter.stringFromDate(NSDate())
+        appendToLogFile("$ts $line\n")
+    }
+}
+
+private fun Severity.toPulseLogLevel(): PulseLogLevel = when (this) {
+    Severity.Verbose,
+    Severity.Debug -> PulseLogLevel.Debug
+    Severity.Info -> PulseLogLevel.Info
+    Severity.Warn -> PulseLogLevel.Warn
+    Severity.Error,
+    Severity.Assert -> PulseLogLevel.Error
+}
+
+private fun levelPrefix(level: PulseLogLevel): String = when (level) {
+    PulseLogLevel.Debug -> "D"
+    PulseLogLevel.Info -> "I"
+    PulseLogLevel.Warn -> "W"
+    PulseLogLevel.Error -> "E"
 }

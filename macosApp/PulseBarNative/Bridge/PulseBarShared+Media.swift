@@ -13,13 +13,11 @@ extension Media {
 
     var source: String { providerId ?? "" }
 
-    var isPlaying: Bool { playbackStatus == .PLAYING }
-
     var displayTitle: String {
-        title?.takeIfNotBlank() ?? "No title"
+        SharedFormatters.takeIfNotBlank(value: title) ?? "No title"
     }
 
     var displayArtist: String {
-        artist?.takeIfNotBlank() ?? "Unknown artist"
+        SharedFormatters.takeIfNotBlank(value: artist) ?? "Unknown artist"
     }
 }

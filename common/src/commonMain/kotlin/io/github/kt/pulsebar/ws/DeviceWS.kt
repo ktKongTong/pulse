@@ -253,54 +253,69 @@ internal class DeviceWS(
             val pcmJob = launch {
                 try {
                     mediaStateFlow.value.pcmChannel.receiveAsFlow().collect { pcm ->
-                    val mediaState = mediaStateFlow.value
-                    pcmAcceptedCount += 1L
-                    pcmAcceptedBytes += pcm.bytes.size
-                    if (pcmAcceptedCount <= 3L || pcmAcceptedCount % 20L == 0L) {
-                        log.i {
-                            "media.pcm.accepted endpointId=$endpointId count=$pcmAcceptedCount " +
-                                "bytes=$pcmAcceptedBytes lastBytes=${pcm.bytes.size} mediaStartPositionMs=${pcm.mediaStartPositionMs}"
+                        val mediaState = mediaStateFlow.value
+                        val streamFormat = mediaState.streamState.streamFormat
+                        if (streamFormat == null) {
+                            log.w {
+                                "media.pcm.dropped_missing_format endpointId=$endpointId bytes=${pcm.bytes.size} " +
+                                    "mediaStartPositionMs=${pcm.mediaStartPositionMs}"
+                            }
+                            return@collect
                         }
-                    }
+                        if (streamFormat.channels <= 0 || streamFormat.sampleRate <= 0) {
+                            log.w {
+                                "media.pcm.dropped_invalid_format endpointId=$endpointId bytes=${pcm.bytes.size} " +
+                                    "sampleRate=${streamFormat.sampleRate} channels=${streamFormat.channels}"
+                            }
+                            return@collect
+                        }
+                        pcmAcceptedCount += 1L
+                        pcmAcceptedBytes += pcm.bytes.size
+                        if (pcmAcceptedCount <= 3L || pcmAcceptedCount % 20L == 0L) {
+                            log.i {
+                                "media.pcm.accepted endpointId=$endpointId count=$pcmAcceptedCount " +
+                                    "bytes=$pcmAcceptedBytes lastBytes=${pcm.bytes.size} mediaStartPositionMs=${pcm.mediaStartPositionMs}"
+                            }
+                        }
 
-                    val channels = mediaState.streamState.streamFormat?.channels ?: 2
-                    val bytesPerFrame = deviceV2BytesPerFrame(channels)
-                    val sampleRate = mediaState.streamState.streamFormat?.sampleRate ?: 44_100
-                    transitionMediaState(MediaRuntimeEvent.PcmAccepted(
-                        pcm.bytes.size,
-                        (pcm.bytes.size / bytesPerFrame),
-                    ))
-                    val chunkBytes = deviceV2ChunkBytesFor(
-                        mediaState.chunkDuration.inWholeMilliseconds.toInt(),
-                        sampleRate,
-                        channels,
-                    )
-                    val expectedPosition = pcmBufferStartMediaPositionMs?.let { start ->
-                        start + ((pcmBuffer.size / bytesPerFrame).toLong() * 1_000L / sampleRate.toLong())
-                    }
-                    if (expectedPosition != null && kotlin.math.abs(expectedPosition - pcm.mediaStartPositionMs) > 100L) {
-                        log.w {
-                            "media.pcm.timeline.discontinuity endpointId=$endpointId expectedMediaStartPositionMs=$expectedPosition " +
-                                "actualMediaStartPositionMs=${pcm.mediaStartPositionMs} bufferedBytes=${pcmBuffer.size}"
+                        val channels = streamFormat.channels
+                        val bytesPerFrame = deviceV2BytesPerFrame(channels)
+                        val sampleRate = streamFormat.sampleRate
+                        transitionMediaState(MediaRuntimeEvent.PcmAccepted(
+                            pcm.bytes.size,
+                            (pcm.bytes.size / bytesPerFrame),
+                        ))
+                        val chunkBytes = deviceV2ChunkBytesFor(
+                            mediaState.chunkDuration.inWholeMilliseconds.toInt(),
+                            sampleRate,
+                            channels,
+                        )
+                        val expectedPosition = pcmBufferStartMediaPositionMs?.let { start ->
+                            start + ((pcmBuffer.size / bytesPerFrame).toLong() * 1_000L / sampleRate.toLong())
                         }
-                        pcmBuffer.clear()
-                        pcmBufferStartMediaPositionMs = null
+                        if (expectedPosition != null && kotlin.math.abs(expectedPosition - pcm.mediaStartPositionMs) > 100L) {
+                            log.w {
+                                "media.pcm.timeline.discontinuity endpointId=$endpointId expectedMediaStartPositionMs=$expectedPosition " +
+                                    "actualMediaStartPositionMs=${pcm.mediaStartPositionMs} bufferedBytes=${pcmBuffer.size}"
+                            }
+                            pcmBuffer.clear()
+                            pcmBufferStartMediaPositionMs = null
+                        }
+                        if (pcmBuffer.isEmpty()) {
+                            pcmBufferStartMediaPositionMs = pcm.mediaStartPositionMs
+                        }
+                        pcmBuffer.append(pcm.bytes)
+                        while (pcmBuffer.size >= chunkBytes) {
+                            val chunk = pcmBuffer.take(chunkBytes)
+                            val mediaStartPositionMs = pcmBufferStartMediaPositionMs ?: pcm.mediaStartPositionMs
+                            pcmBufferStartMediaPositionMs = mediaStartPositionMs + mediaState.chunkDuration.inWholeMilliseconds
+                            sendChunk(packPcm16(chunk, sampleRate, channels), mediaStartPositionMs)
+                        }
+                        if (pcmBuffer.isEmpty()) {
+                            pcmBufferStartMediaPositionMs = null
+                        }
+                        _mediaRuntime.update { it.copy(bufferedFrames = (pcmBuffer.size / bytesPerFrame.toLong())) }
                     }
-                    if (pcmBuffer.isEmpty()) {
-                        pcmBufferStartMediaPositionMs = pcm.mediaStartPositionMs
-                    }
-                    pcmBuffer.append(pcm.bytes)
-                    while (pcmBuffer.size >= chunkBytes) {
-                        val chunk = pcmBuffer.take(chunkBytes)
-                        val mediaStartPositionMs = pcmBufferStartMediaPositionMs ?: pcm.mediaStartPositionMs
-                        pcmBufferStartMediaPositionMs = mediaStartPositionMs + mediaState.chunkDuration.inWholeMilliseconds
-                        sendChunk(packPcm16(chunk, sampleRate, channels), mediaStartPositionMs)
-                    }
-                    if (pcmBuffer.isEmpty()) {
-                        pcmBufferStartMediaPositionMs = null
-                    }
-                    _mediaRuntime.update { it.copy(bufferedFrames = (pcmBuffer.size / bytesPerFrame.toLong())) }
-                }
                 } catch (t: Throwable) {
                     if (t is CancellationException) throw t
                     log.e(t) { "pcmJob.failed endpointId=$endpointId" }
