@@ -34,6 +34,8 @@ Pulse 文档按“归属 owner”组织。每个实现域根目录只保留入�
 - [Client WebSocket 协议设计](./protocol/design/client-ws/index.md)
 - [协议兼容策略](./protocol/specs/compatibility.md)
 - [macOS App 重构 PRD](./desktop-app/design/mac-app-rebuild-prd.md)
+- [Windows 双进程架构决策](./desktop-app/decisions/windows-dual-process-architecture.md)
+- [.NET ↔ Kotlin/JVM IPC Flow 语义验证结论](./dotnet-kotlin-ipc.md)
 
 ## 新文档头部
 

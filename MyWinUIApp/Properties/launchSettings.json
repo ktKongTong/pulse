@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "MyWinUIApp (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "MyWinUIApp (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

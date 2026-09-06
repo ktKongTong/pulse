@@ -40,3 +40,7 @@ worker-configuration.d.ts
 .env
 .env.*
 *.mp3
+bin
+obj
+.vs
+NuGet.Config

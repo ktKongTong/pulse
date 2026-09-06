@@ -1,0 +1,131 @@
+<Window
+    x:Class="PulseBar.Windows.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="PulseBar">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="TitleBarDragRegion" Grid.Row="0" Padding="20,0,12,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <Border Width="24" Height="24" CornerRadius="7" Background="#C8F169">
+                    <TextBlock Text="P" Foreground="#101410" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <TextBlock Text="PulseBar" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Grid.Column="1" Text="WINDOWS PREVIEW" Opacity="0.46" FontSize="10" FontWeight="SemiBold" CharacterSpacing="90" HorizontalAlignment="Right" VerticalAlignment="Center" />
+        </Grid>
+
+        <NavigationView x:Name="NavView" Grid.Row="1" IsSettingsVisible="False" IsBackButtonVisible="Collapsed" PaneDisplayMode="LeftCompact" SelectionChanged="NavView_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Overview" Tag="Overview" Icon="Home" />
+                <NavigationViewItem Content="Connections" Tag="Connections" Icon="Globe" />
+                <NavigationViewItem Content="Activity" Tag="Activity" Icon="Clock" />
+            </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem Content="Settings" Tag="Settings" Icon="Setting" />
+            </NavigationView.FooterMenuItems>
+
+            <ScrollViewer Padding="34,28,34,40" VerticalScrollBarVisibility="Auto">
+                <StackPanel MaxWidth="1040" Spacing="24">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="8">
+                            <TextBlock x:Name="PageEyebrow" Text="OVERVIEW" FontSize="11" FontWeight="SemiBold" CharacterSpacing="110" Foreground="#6E8F24" />
+                            <TextBlock x:Name="PageTitle" Text="Hello, Windows." FontSize="36" FontWeight="SemiBold" />
+                            <TextBlock x:Name="PageSubtitle" Text="Your PulseBar workspace is ready for its first signal." FontSize="15" Opacity="0.66" />
+                        </StackPanel>
+                        <Border Grid.Column="1" Background="#1E281F" CornerRadius="16" Padding="16,12" VerticalAlignment="Top">
+                            <StackPanel Orientation="Horizontal" Spacing="9">
+                                <Ellipse Width="9" Height="9" Fill="#C8F169" VerticalAlignment="Center" />
+                                <TextBlock Text="Demo mode" Foreground="#D9F59A" FontSize="12" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Border Background="#172019" CornerRadius="18" Padding="28" MinHeight="198">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="220" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Spacing="12">
+                                <TextBlock Text="HELLO WORLD" Foreground="#C8F169" FontSize="11" FontWeight="SemiBold" CharacterSpacing="150" />
+                                <TextBlock Text="A quiet signal in a noisy day." Foreground="White" FontSize="27" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock Text="This is the Windows native shell. The runtime underneath can arrive later without changing this surface." Foreground="#B8C3B7" FontSize="14" MaxWidth="540" TextWrapping="Wrap" LineHeight="22" />
+                            </StackPanel>
+                            <Grid Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" Width="176" Height="120">
+                                <Ellipse Width="116" Height="116" Stroke="#C8F169" StrokeThickness="1" Opacity="0.8" />
+                                <Ellipse Width="78" Height="78" Fill="#C8F169" Opacity="0.14" />
+                                <Ellipse Width="12" Height="12" Fill="#C8F169" />
+                                <Border Width="6" Height="6" Background="#FFFFFF" CornerRadius="3" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,20,0" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.15*" />
+                            <ColumnDefinition Width="0.85*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="14" Padding="20">
+                            <StackPanel Spacing="18">
+                                <Grid>
+                                    <TextBlock Text="Connection" FontSize="17" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="ConnectionStatus" Text="Not connected" Foreground="#B47725" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Border Width="42" Height="42" Background="#E8F2D1" CornerRadius="12">
+                                        <FontIcon Glyph="&#xE774;" Foreground="#5C7820" FontSize="19" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <StackPanel Spacing="3" VerticalAlignment="Center">
+                                        <TextBlock Text="Pulse workspace" FontWeight="SemiBold" />
+                                        <TextBlock Text="Waiting for a runtime" Opacity="0.58" FontSize="12" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Button x:Name="ConnectButton" Content="Connect demo endpoint" Click="ConnectButton_Click" />
+                                    <Button x:Name="KotlinHelloButton" Content="Attach shared runtime" Click="KotlinHelloButton_Click" />
+                                    <Button x:Name="KotlinNativeHelloButton" Content="Call Kotlin/Native" Click="KotlinNativeHelloButton_Click" />
+                                </StackPanel>
+                                <TextBlock x:Name="KotlinHelloResult" Text="Kotlin result will appear here" FontSize="12" Opacity="0.58" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="14" Padding="20">
+                            <StackPanel Spacing="16">
+                                <TextBlock Text="Recent activity" FontSize="17" FontWeight="SemiBold" />
+                                <StackPanel Spacing="14">
+                                    <StackPanel Orientation="Horizontal" Spacing="11">
+                                        <Ellipse Width="8" Height="8" Fill="#6E8F24" Margin="2,6,0,0" />
+                                        <StackPanel Spacing="2"><TextBlock Text="Native shell started" FontSize="13" /><TextBlock Text="Just now" FontSize="11" Opacity="0.52" /></StackPanel>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="11">
+                                        <Ellipse Width="8" Height="8" Fill="#A5ADB0" Margin="2,6,0,0" />
+                                        <StackPanel Spacing="2"><TextBlock Text="Runtime not attached" FontSize="13" /><TextBlock Text="Waiting for integration" FontSize="11" Opacity="0.52" /></StackPanel>
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+        </NavigationView>
+    </Grid>
+</Window>

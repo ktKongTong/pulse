@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package pulsebar.flowipc.v1;
+
+option java_multiple_files = true;
+option java_package = "io.github.kt.pulsebar.flowipc.v1";
+option csharp_namespace = "PulseBar.FlowIpc.V1";
+
+// Spike contract for the dual-process Windows plan:
+// Kotlin/JVM daemon <-> native .NET UI shell over loopback gRPC.
+//
+// The demo validates exactly one thing: Flow semantics across the process
+// boundary. It is not the real bridge contract.
+service FlowBridgeDemo {
+  // Kotlin StateFlow -> .NET IAsyncEnumerable.
+  //
+  // Contract convention (replaces in-process StateFlow replay semantics):
+  // the first message is always the current snapshot, followed by every
+  // subsequent state change, conflated to the latest value.
+  rpc WatchRuntimeState(WatchRuntimeStateRequest) returns (stream RuntimeState);
+
+  // .NET platform events -> Kotlin Flow<PlatformEvent>.
+  //
+  // Mirrors the macOS "Swift-only platform service" role: on Windows the
+  // UI process owns platform collection and streams events up to the daemon.
+  rpc PublishPlatformEvents(stream PlatformEvent) returns (PublishSummary);
+}
+
+message WatchRuntimeStateRequest {}
+
+message RuntimeState {
+  // Monotonic change counter; lets subscribers observe conflation.
+  uint64 revision = 1;
+  // Incremented by the daemon-internal ticker (daemon-originated changes).
+  uint64 tick_count = 2;
+  // Last frontmost app reported by the UI process (client-originated changes).
+  string frontmost_app = 3;
+  // How many platform events the daemon has accepted so far.
+  uint32 platform_event_count = 4;
+}
+
+message PlatformEvent {
+  oneof event {
+    FrontmostAppChanged frontmost_app_changed = 1;
+  }
+}
+
+message FrontmostAppChanged {
+  string app_id = 1;
+}
+
+message PublishSummary {
+  uint32 accepted_events = 1;
+}
