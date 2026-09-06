@@ -64,8 +64,9 @@ internal class PulseBarConfigStore(
         }
         log.d {
             "config.persisted schemaVersion=${updated.schemaVersion}" +
-                " endpoints=${updated.data.endpoints.size}"
+                " endpointUrl=${updated.data.endpoint.url}"
         }
+
         return updated
     }
 

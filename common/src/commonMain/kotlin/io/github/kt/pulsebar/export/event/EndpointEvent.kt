@@ -4,52 +4,24 @@ import io.github.kt.pulsebar.evt.AppEvent
 import io.github.kt.pulsebar.model.PulseConfig
 import io.github.kt.pulsebar.utils.nowInMillis
 
-data class ConnectEndpointCommand(
-    val endpointId: String,
+data class ConnectCommand(
     val sentAt: Long = nowInMillis(),
 ) : AppEvent {
-    constructor(endpointId: String) : this(
-        endpointId = endpointId,
-        sentAt = nowInMillis(),
-    )
+    constructor() : this(sentAt = nowInMillis())
 }
 
-data class EnableEndpointCommand(
-    val endpointId: String,
+data class DisconnectCommand(
     val sentAt: Long = nowInMillis(),
 ) : AppEvent {
-    constructor(endpointId: String) : this(
-        endpointId = endpointId,
-        sentAt = nowInMillis(),
-    )
+    constructor() : this(sentAt = nowInMillis())
 }
 
-data class DisableEndpointCommand(
-    val endpointId: String,
+data class SetEndpointEnabledCommand(
+    val enabled: Boolean,
     val sentAt: Long = nowInMillis(),
 ) : AppEvent {
-    constructor(endpointId: String) : this(
-        endpointId = endpointId,
-        sentAt = nowInMillis(),
-    )
-}
-
-data class DisconnectEndpointCommand(
-    val endpointId: String,
-    val sentAt: Long = nowInMillis(),
-) : AppEvent {
-    constructor(endpointId: String) : this(
-        endpointId = endpointId,
-        sentAt = nowInMillis(),
-    )
-}
-
-data class ReconnectEndpointCommand(
-    val endpointId: String,
-    val sentAt: Long = nowInMillis(),
-) : AppEvent {
-    constructor(endpointId: String) : this(
-        endpointId = endpointId,
+    constructor(enabled: Boolean) : this(
+        enabled = enabled,
         sentAt = nowInMillis(),
     )
 }
@@ -69,16 +41,6 @@ data class NativeNetworkChanged(
         expensive = expensive,
         constrained = constrained,
         observedAtMillis = nowInMillis(),
-    )
-}
-
-data class RemoveEndpointCommand(
-    val endpointId: String,
-    val sentAt: Long = nowInMillis(),
-) : AppEvent {
-    constructor(endpointId: String) : this(
-        endpointId = endpointId,
-        sentAt = nowInMillis(),
     )
 }
 

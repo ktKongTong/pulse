@@ -27,7 +27,7 @@ final class MonitorStore: ObservableObject {
     @Published private(set) var currentMedia: Media?
     @Published private(set) var todayStats: [AppUsageItem] = []
     @Published private(set) var todayTotalSeconds: Int = 0
-    @Published private(set) var connectionStatesByEndpointID: [String: PulseBarConnectionState] = [:]
+    @Published private(set) var connectionState: PulseBarConnectionState?
     @Published private(set) var settings: PulseBarConfig?
 
     // MARK: - Dependencies
@@ -38,12 +38,10 @@ final class MonitorStore: ObservableObject {
     let streamStore: StreamCaptureStore
     private var subscribed = false
     private var frontmostAppObserver: NSObjectProtocol?
-    private var connectionStateTasks: [String: Task<Void, Never>] = [:]
     private var mediaStateTask: Task<Void, Never>?
     private var appUsageTask: Task<Void, Never>?
     private let nowPlayingEventSource = NowPlayingEventSource()
     private let networkStateMonitor = NetworkStateMonitor()
-    private var connectedMediaEndpointIDs: Set<String> = []
 
     init() {
         self.bridge = PulseBarBridge(initialMedia: NowPlayingEventSource.startupSnapshot())
@@ -57,7 +55,7 @@ final class MonitorStore: ObservableObject {
 
     deinit {
         for t in observerTasks { t.cancel() }
-        for t in connectionStateTasks.values { t.cancel() }
+
         mediaStateTask?.cancel()
         appUsageTask?.cancel()
         if let frontmostAppObserver {
@@ -134,6 +132,15 @@ final class MonitorStore: ObservableObject {
         observerTasks.append(configTask)
 
 
+        let connectionTask: Task<Void, Never> = Task { @MainActor [weak self] in
+            do {
+                for try await state in bridge.connectionState.asAsyncSequence() {
+                    self?.applyConnectionStateUpdate(state)
+                }
+            } catch {}
+        }
+        observerTasks.append(connectionTask)
+
         let usageTask: Task<Void, Never> = Task { @MainActor [weak self] in
             do {
                 for try await stats in bridge.usageStats.asAsyncSequence() {
@@ -143,8 +150,9 @@ final class MonitorStore: ObservableObject {
         }
         observerTasks.append(usageTask)
 
-        streamStore.updateEndpoints(streamEndpoints)
+        streamStore.updateEndpoint(settings?.endpoint)
     }
+
 
     func resumeAndRefresh() {
         streamStore.refreshAudioCapturePermissionStatusAsync()
@@ -199,18 +207,26 @@ final class MonitorStore: ObservableObject {
         streamStore.requestAudioCapturePermissionAtStartup()
     }
 
-    private var streamEndpoints: [EndpointConfig] {
-        settings?.streamEndpoints ?? []
-    }
-
     // MARK: - Settings commands
     func updateEndpoint(_ endpoint: EndpointConfig) {
         guard let settings else { return }
         let next = PulseBarConfig(
-            endpoints: settings.endpoints.map { $0.id == endpoint.id ? endpoint : $0 },
+            endpoint: endpoint,
             commonConfig: settings.commonConfig
         )
         bridge.emitNativeEvent(event: UpdateConfigCommand(config: next))
+    }
+
+    func connect() {
+        bridge.emitNativeEvent(event: ConnectCommand())
+    }
+
+    func disconnect() {
+        bridge.emitNativeEvent(event: DisconnectCommand())
+    }
+
+    func setEndpointEnabled(_ enabled: Bool) {
+        bridge.emitNativeEvent(event: SetEndpointEnabledCommand(enabled: enabled))
     }
 
     // MARK: - Media / interaction commands
@@ -259,45 +275,15 @@ final class MonitorStore: ObservableObject {
 
     private func applyConfigUpdate(_ config: PulseBarConfig) {
         settings = config
-        streamStore.updateEndpoints(streamEndpoints)
-        reconcileConnectionStateTasks(for: config.endpoints)
-    }
-
-    private func reconcileConnectionStateTasks(for endpoints: [EndpointConfig]) {
-        let endpointIDs = Set(endpoints.map(\.id))
-        let removedEndpointIDs = connectionStateTasks.keys.filter { !endpointIDs.contains($0) }
-        for endpointId in removedEndpointIDs {
-            connectionStateTasks[endpointId]?.cancel()
-            connectionStateTasks.removeValue(forKey: endpointId)
-            connectionStatesByEndpointID.removeValue(forKey: endpointId)
-            connectedMediaEndpointIDs.remove(endpointId)
-        }
-
-        for endpointId in endpointIDs where connectionStateTasks[endpointId] == nil {
-            connectionStateTasks[endpointId] = Task { @MainActor [weak self, bridge] in
-                do {
-                    for try await state in bridge.connectionState(endpointId: endpointId).asAsyncSequence() {
-                        self?.applyConnectionStateUpdate(state)
-                    }
-                } catch {
-                    self?.connectionStateTasks.removeValue(forKey: endpointId)
-                    self?.connectionStatesByEndpointID.removeValue(forKey: endpointId)
-                    self?.connectedMediaEndpointIDs.remove(endpointId)
-                }
-            }
-        }
+        streamStore.updateEndpoint(config.endpoint)
     }
 
     private func applyConnectionStateUpdate(_ state: PulseBarConnectionState) {
-        connectionStatesByEndpointID[state.endpointId] = state
+        let wasConnected = connectionState?.connectionStatus.isConnected ?? false
+        connectionState = state
 
-        let connected = Set(connectionStatesByEndpointID.values.compactMap { state in
-            state.connectionStatus.isConnected ? state.endpointId : nil
-        })
-        let newlyConnected = connected.subtracting(connectedMediaEndpointIDs)
-        connectedMediaEndpointIDs = connected
-        if !newlyConnected.isEmpty {
-            PulseNativeLog.info(.streamSession, "native.media.connected endpoints=\(newlyConnected.sorted().joined(separator: ",")) publishCurrentState refreshNowPlaying")
+        if !wasConnected && state.connectionStatus.isConnected {
+            PulseNativeLog.info(.streamSession, "native.media.connected url=\(state.endpointConfig.url) publishCurrentState refreshNowPlaying")
             streamStore.republishCurrentMediaState()
             nowPlayingEventSource.refresh()
         }
@@ -312,14 +298,4 @@ final class MonitorStore: ObservableObject {
             self?.nowPlayingEventSource.refresh()
         }
     }
-}
-
-private extension PulseBarConfig {
-    var streamEndpoints: [EndpointConfig] {
-        endpoints.filter {
-            $0.enabled &&
-                !$0.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-    }
-
 }

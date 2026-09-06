@@ -8,12 +8,10 @@ import io.github.kt.pulsebar.export.event.NativeMediaStateChanged
 import io.github.kt.pulsebar.export.event.NativeMediaStreamStopped
 import io.github.kt.pulsebar.export.event.NativeNowPlayingChanged
 import io.github.kt.pulsebar.export.event.NativeStreamPcmChunk
-import io.github.kt.pulsebar.export.event.ConnectEndpointCommand
-import io.github.kt.pulsebar.export.event.DisableEndpointCommand
-import io.github.kt.pulsebar.export.event.DisconnectEndpointCommand
-import io.github.kt.pulsebar.export.event.EnableEndpointCommand
+import io.github.kt.pulsebar.export.event.ConnectCommand
+import io.github.kt.pulsebar.export.event.DisconnectCommand
 import io.github.kt.pulsebar.export.event.NativeNetworkChanged
-import io.github.kt.pulsebar.export.event.RemoveEndpointCommand
+import io.github.kt.pulsebar.export.event.SetEndpointEnabledCommand
 import io.github.kt.pulsebar.export.event.UpdateConfigCommand
 import io.github.kt.pulsebar.model.FocusState
 import io.github.kt.pulsebar.model.PulseConfig
@@ -27,15 +25,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okio.ByteString.Companion.decodeBase64
 
-
 internal class EventDispatcher(
     scope: CoroutineScope,
     private val focusState: MutableStateFlow<FocusState?>,
     private val stream: Stream,
-    private val connectEndpoint: (String) -> Unit,
-    private val disconnectEndpoint: (String) -> Unit,
-    private val setEndpointEnabled: suspend (String, Boolean) -> Unit,
-    private val removeEndpoint: suspend (String) -> Unit,
+    private val connect: () -> Unit,
+    private val disconnect: () -> Unit,
+    private val setEndpointEnabled: suspend (Boolean) -> Unit,
     private val updateConfig: suspend (PulseConfig) -> Unit,
     private val publishFocusChanged: suspend (NativeFrontmostAppChanged) -> Unit,
     private val handleMediaStreamStopped: (StreamStopReason) -> Unit,
@@ -83,25 +79,20 @@ internal class EventDispatcher(
             is NativeNetworkChanged ->
                 handleNetworkChanged(event)
 
-            is ConnectEndpointCommand ->
-                connectEndpoint(event.endpointId)
+            is ConnectCommand ->
+                connect()
 
-            is DisconnectEndpointCommand ->
-                disconnectEndpoint(event.endpointId)
+            is DisconnectCommand ->
+                disconnect()
 
-            is EnableEndpointCommand ->
-                setEndpointEnabled(event.endpointId, true)
-
-            is DisableEndpointCommand ->
-                setEndpointEnabled(event.endpointId, false)
-
-            is RemoveEndpointCommand ->
-                removeEndpoint(event.endpointId)
+            is SetEndpointEnabledCommand ->
+                setEndpointEnabled(event.enabled)
 
             is UpdateConfigCommand ->
                 updateConfig(event.config)
         }
     }
+
 
     private fun handleNowPlayingChanged(media: Media?) {
         stream.updateMedia(media)

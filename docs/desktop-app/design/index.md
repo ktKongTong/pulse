@@ -2,6 +2,7 @@
 
 这里放 desktop app 归属的设计文档。目标设计如果不是当前实现，必须在文档开头明确说明。
 
+- [菜单栏与主面板交互设计（状态可见性 / 串流关停 / 白名单 / 纯展示媒体）](./menubar-panel-ux.md)
 - [macOS App 重构 PRD（已被 tray-only Preferences 计划取代）](./mac-app-rebuild-prd.md)
 - [Dashboard Shell（历史草案）](./dashboard/shell.md)
 - [Connection（Preferences 分区设计来源）](./dashboard/connection.md)

@@ -13,19 +13,19 @@ import kotlinx.coroutines.flow.Flow
 interface IPulseBarBridge {
     val config: Flow<PulseConfig>
 
-    // 比如当前 focus，当前 stream，connections
+    // 当前 focus，当前 stream
     val runtimeState: Flow<RuntimeState>
     val mediaFlow: Flow<MediaFlowState>
 
     // 一些 db 驱动的统计数据
     val usageStats: Flow<UsageStats>
 
-    val connectionStates: Flow<Map<String, Flow<ConnectionState>>>
-    // 获取某个 connection 的 stateFlow
-    fun connectionState(endpointId: String): Flow<ConnectionState>
+    // 单 endpoint 连接状态流
+    val connectionState: Flow<ConnectionState>
 
-    // from kotlin to swift
+    // from kotlin to host
     val serverCommands: Flow<ServerCommandEvent>
-    // from swift to kotlin
+    // from host to kotlin
     fun emitNativeEvent(event: AppEvent)
+//    fun emitKotlinEvent(event: ServerCommandEvent)
 }

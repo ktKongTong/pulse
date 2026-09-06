@@ -218,16 +218,17 @@ final class StreamCaptureStore: ObservableObject {
 
     // MARK: - Public commands
 
-    func updateEndpoints(_ endpoints: [EndpointConfig]) {
-        if endpoints.isEmpty {
+    func updateEndpoint(_ endpoint: EndpointConfig?) {
+        guard let endpoint, endpoint.enabled, !endpoint.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             if captureStatus == .CAPTURING {
-                log("stopping capture because no live listen endpoints remain")
+                log("stopping capture because no live listen endpoint remains")
                 stopCaptureSession()
             }
             return
         }
         pushMediaStateToBridge()
     }
+
 
     func requestAudioCapturePermissionAtStartup() {
         guard startupPermissionTask == nil else { return }

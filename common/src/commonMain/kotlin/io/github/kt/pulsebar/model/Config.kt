@@ -9,13 +9,7 @@ data class FocusConfig(
 )
 
 @Serializable
-data class PulseConfigItem(
-    val endpoint: EndpointConfig,
-    val commonConfig: FocusConfig = FocusConfig(),
-)
-
-@Serializable
 data class PulseConfig(
-    val endpoints: List<EndpointConfig> = listOf(),
+    val endpoint: EndpointConfig = EndpointConfig(),
     val commonConfig: FocusConfig = FocusConfig(),
 )

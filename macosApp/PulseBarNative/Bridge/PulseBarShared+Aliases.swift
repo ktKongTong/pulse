@@ -6,7 +6,12 @@ typealias EndpointConfig = ExportedKotlinPackages.io.github.kt.pulsebar.model.En
 typealias FocusState = ExportedKotlinPackages.io.github.kt.pulsebar.model.FocusState
 typealias Media = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.Media
 typealias MediaFlowState = ExportedKotlinPackages.io.github.kt.pulsebar.model.stream.MediaFlowState
+typealias ConnectCommand = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.ConnectCommand
+typealias DisconnectCommand = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.DisconnectCommand
+typealias SetEndpointEnabledCommand = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.SetEndpointEnabledCommand
 typealias NativeDeviceEvent = ExportedKotlinPackages.io.github.kt.pulsebar.evt.AppEvent
+
+
 typealias NativeFrontmostAppChanged = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeFrontmostAppChanged
 typealias NativeMediaStateChanged = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeMediaStateChanged
 typealias NativeMediaStreamStopped = ExportedKotlinPackages.io.github.kt.pulsebar.export.event.NativeMediaStreamStopped

@@ -1,6 +1,7 @@
 package io.github.kt.pulsebar.export
 
 import io.github.kt.pulsebar.evt.AppEvent
+
 import io.github.kt.pulsebar.evt.EventDispatcher
 import io.github.kt.pulsebar.evt.Stream
 import io.github.kt.pulsebar.export.event.NativeFrontmostAppChanged
@@ -13,7 +14,6 @@ import io.github.kt.pulsebar.logger.PulseLogCategory
 import io.github.kt.pulsebar.logger.logger
 import io.github.kt.pulsebar.model.FocusState
 import io.github.kt.pulsebar.model.PulseConfig
-import io.github.kt.pulsebar.model.PulseConfigItem
 import io.github.kt.pulsebar.model.RuntimeState
 import io.github.kt.pulsebar.model.connection.ConnectionState
 import io.github.kt.pulsebar.model.stream.Media
@@ -74,7 +74,7 @@ class PulseBarBridge private constructor(
 
     private val stream: Stream = Stream(startup.initialMediaState)
     private val focusState: MutableStateFlow<FocusState?> = MutableStateFlow(null)
-    private val endpointRuntimes: MutableStateFlow<Map<String, EndpointRuntime>> = MutableStateFlow(emptyMap())
+    private val configStateFlow: MutableStateFlow<PulseConfig> = MutableStateFlow(startup.config)
     private val networkOnline: MutableStateFlow<Boolean> = MutableStateFlow(true)
     private var activeFocusSpan: ActiveFocusSpan? = null
 
@@ -86,6 +86,13 @@ class PulseBarBridge private constructor(
             logger.w { "bridge.host.command.dropped command=${command::class.simpleName} reason=${result.exceptionOrNull()?.message ?: "channel_closed"}" }
         }
     }
+
+    private val deviceClient = DeviceV2Client(
+        configFlow = configStateFlow,
+        mediaStateFlow = stream.mediaState,
+        networkOnline = networkOnline,
+        hostCommandSink = serverCommandHandler,
+    )
 
     override val mediaFlow = stream.mediaFlowState
 
@@ -121,10 +128,13 @@ class PulseBarBridge private constructor(
                     }
             }
 
-    override val connectionStates: Flow<Map<String, Flow<ConnectionState>>> =
-        endpointRuntimes
-            .map { runtimes -> runtimes.mapValues { it.value.connectionState } }
-            .distinctUntilChanged()
+    override val connectionState: Flow<ConnectionState> =
+        combine(deviceClient.deviceWsState, configStateFlow) { deviceWs, cfg ->
+            ConnectionState(
+                endpointConfig = cfg.endpoint,
+                connection = deviceWs,
+            )
+        }.distinctUntilChanged()
 
     override val config: Flow<PulseConfig> =
         configStore.configFlow.distinctUntilChanged().map { it.data }
@@ -133,10 +143,9 @@ class PulseBarBridge private constructor(
         scope = scope,
         focusState = focusState,
         stream = stream,
-        connectEndpoint = ::connectEndpoint,
-        disconnectEndpoint = ::disconnectEndpoint,
+        connect = ::connect,
+        disconnect = ::disconnect,
         setEndpointEnabled = ::setEndpointEnabled,
-        removeEndpoint = ::removeEndpoint,
         updateConfig = ::updateConfig,
         publishFocusChanged = ::publishFocusChanged,
         handleMediaStreamStopped = ::handleMediaStreamStopped,
@@ -145,15 +154,20 @@ class PulseBarBridge private constructor(
 
     init {
         logger.i {
-            "bridge.initialized endpoints=${startup.config.endpoints.size} enabled=${startup.config.endpoints.count { it.enabled }}"
+            "bridge.initialized endpointUrl=${startup.config.endpoint.url} enabled=${startup.config.endpoint.enabled}"
+        }
+        if (startup.config.endpoint.enabled) {
+            deviceClient.start()
         }
         scope.launch {
-            config.collect { config ->
-                logger.d {
-                    "config.changed endpoints=${config.endpoints.size}" +
-                        " enabled=${config.endpoints.count { it.enabled }}"
+            config.collect { nextConfig ->
+                val wasEnabled = configStateFlow.value.endpoint.enabled
+                configStateFlow.value = nextConfig
+                if (!wasEnabled && nextConfig.endpoint.enabled) {
+                    deviceClient.start()
+                } else if (wasEnabled && !nextConfig.endpoint.enabled) {
+                    deviceClient.stop()
                 }
-                reconcileEndpointRuntimes(config)
             }
         }
     }
@@ -163,12 +177,7 @@ class PulseBarBridge private constructor(
     }
 
     private fun handleMediaStreamStopped(reason: StreamStopReason) {
-        val runtimes = endpointRuntimes.value.values
-        if (runtimes.isEmpty()) {
-            logger.w { "stream.stop.missing reason=$reason" }
-            return
-        }
-        runtimes.forEach { it.client.stopActiveStream(reason) }
+        deviceClient.stopActiveStream(reason)
     }
 
     private fun handleNetworkChanged(event: NativeNetworkChanged) {
@@ -176,118 +185,26 @@ class PulseBarBridge private constructor(
         logger.i {
             "network.changed online=${event.online} expensive=${event.expensive} constrained=${event.constrained}"
         }
-        endpointRuntimes.value.values.forEach { runtime ->
-            runtime.client.setNetworkOnline(event.online)
-        }
+        deviceClient.setNetworkOnline(event.online)
     }
 
-    override fun connectionState(endpointId: String): Flow<ConnectionState> =
-        endpointRuntimes.value[endpointId]?.connectionState
-            ?: error("connection state for $endpointId not found")
-
-    private fun reconcileEndpointRuntimes(config: PulseConfig) {
-        val current = endpointRuntimes.value
-        val next = linkedMapOf<String, EndpointRuntime>()
-        val endpointConfigs = config.endpoints.associateBy { it.id }
-
-        endpointConfigs.values.forEach { endpoint ->
-            val endpointId = endpoint.id
-            val item = PulseConfigItem(
-                endpoint = endpoint,
-                commonConfig = config.commonConfig,
-            )
-            val existing = current[endpointId]
-            if (existing != null) {
-                val wasEnabled = existing.config.value.endpoint.enabled
-                existing.config.value = item
-                applyEndpointEnabledTransition(existing, wasEnabled = wasEnabled, isEnabled = endpoint.enabled)
-                next[endpointId] = existing
-            } else {
-                val configFlow = MutableStateFlow(item)
-                val client = DeviceV2Client(
-                    endpointId = endpointId,
-                    configFlow = configFlow,
-                    mediaStateFlow = stream.mediaState,
-                    networkOnline = networkOnline,
-                    hostCommandSink = serverCommandHandler,
-                )
-                val connectionState = combine(client.deviceWsState, configFlow) { deviceWs, endpointConfig ->
-                    ConnectionState(
-                        endpointId = endpointConfig.endpoint.id,
-                        endpointConfig = endpointConfig.endpoint,
-                        connection = deviceWs,
-                    )
-                }
-                val runtime = EndpointRuntime(
-                    endpointId = endpointId,
-                    config = configFlow,
-                    client = client,
-                    connectionState = connectionState,
-                )
-                if (endpoint.enabled) {
-                    runtime.client.start()
-                }
-                next[endpointId] = runtime
-            }
-        }
-
-        current
-            .filterKeys { it !in endpointConfigs }
-            .values
-            .forEach { runtime ->
-                logger.d { "endpoint.runtime.dispose endpoint=${runtime.endpointId}" }
-                runtime.client.dispose()
-            }
-
-        endpointRuntimes.value = next
-    }
-
-    private fun applyEndpointEnabledTransition(
-        runtime: EndpointRuntime,
-        wasEnabled: Boolean,
-        isEnabled: Boolean,
-    ) {
-        when {
-            !wasEnabled && isEnabled -> runtime.client.start()
-            wasEnabled && !isEnabled -> runtime.client.stop()
-        }
-    }
-
-    private fun connectEndpoint(endpointId: String) {
-        val runtime = endpointRuntimes.value[endpointId]
-        if (runtime == null) {
-            logger.w { "endpoint.connect.missing endpoint=$endpointId" }
+    private fun connect() {
+        if (!configStateFlow.value.endpoint.enabled) {
+            logger.d { "endpoint.connect.disabled" }
             return
         }
-        if (!runtime.config.value.endpoint.enabled) {
-            logger.d { "endpoint.connect.disabled endpoint=$endpointId" }
-            return
-        }
-        runtime.client.start()
+        deviceClient.start()
     }
 
-    private fun disconnectEndpoint(endpointId: String) {
-        endpointRuntimes.value[endpointId]?.client?.stop()
-            ?: logger.w { "endpoint.disconnect.missing endpoint=$endpointId" }
+    private fun disconnect() {
+        deviceClient.stop()
     }
 
-    private suspend fun setEndpointEnabled(endpointId: String, enabled: Boolean) {
+    private suspend fun setEndpointEnabled(enabled: Boolean) {
         configStore.update { current ->
             current.copy(
                 data = current.data.copy(
-                    endpoints = current.data.endpoints.map { endpoint ->
-                        if (endpoint.id == endpointId) endpoint.copy(enabled = enabled) else endpoint
-                    },
-                ),
-            )
-        }
-    }
-
-    private suspend fun removeEndpoint(endpointId: String) {
-        configStore.update { current ->
-            current.copy(
-                data = current.data.copy(
-                    endpoints = current.data.endpoints.filterNot { it.id == endpointId },
+                    endpoint = current.data.endpoint.copy(enabled = enabled),
                 ),
             )
         }
@@ -301,9 +218,7 @@ class PulseBarBridge private constructor(
 
     private suspend fun publishFocusChanged(event: NativeFrontmostAppChanged) {
         recordFocusTransition(event)
-        endpointRuntimes.value.values.forEach { runtime ->
-            runtime.client.publishFocusChanged(event)
-        }
+        deviceClient.publishFocusChanged(event)
     }
 
     private fun recordFocusTransition(event: NativeFrontmostAppChanged) {
@@ -344,12 +259,6 @@ class PulseBarBridge private constructor(
     }
 }
 
-private data class EndpointRuntime(
-    val endpointId: String,
-    val config: MutableStateFlow<PulseConfigItem>,
-    val client: DeviceV2Client,
-    val connectionState: Flow<ConnectionState>,
-)
 
 private data class ActiveFocusSpan(
     val bundleId: String,

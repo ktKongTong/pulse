@@ -2,7 +2,7 @@ package io.github.kt.pulsebar.ws
 
 import io.github.kt.pulsebar.logger.PulseLogCategory
 import io.github.kt.pulsebar.logger.logger
-import io.github.kt.pulsebar.model.PulseConfigItem
+import io.github.kt.pulsebar.model.PulseConfig
 import io.github.kt.pulsebar.export.event.ServerCommandEvent
 import io.github.kt.pulsebar.export.event.NativeFrontmostAppChanged
 import io.github.kt.pulsebar.model.getEndpoint
@@ -44,12 +44,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 internal class DeviceV2Client(
-    val configFlow: StateFlow<PulseConfigItem>,
+    val configFlow: StateFlow<PulseConfig>,
     mediaStateFlow: StateFlow<MediaState>,
     private val networkOnline: StateFlow<Boolean>,
-    val endpointId: String,
+    val endpointId: String = "",
     hostCommandSink: (ServerCommandEvent) -> Unit,
 ) {
+
     internal val log = logger(PulseLogCategory.StreamSession)
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, error ->
         log.e(error) { "device.client.coroutine.failed endpoint=${configFlow.value.endpoint.url}" }
@@ -170,7 +171,7 @@ internal class DeviceV2Client(
         connectedDeviceWS.stopActiveStream(reason)
     }
 
-    private suspend fun connect(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {
+    private suspend fun connect(config: PulseConfig, onReady: (suspend () -> Unit)? = null) {
         while (scope.isActive && !stopRequested) {
             if (!networkOnline.value) {
                 networkPaused = true
@@ -225,7 +226,7 @@ internal class DeviceV2Client(
     }
 
 
-    private suspend fun initConnection(config: PulseConfigItem, onReady: (suspend () -> Unit)? = null) {
+    private suspend fun initConnection(config: PulseConfig, onReady: (suspend () -> Unit)? = null) {
         connectedDeviceWS.resetConnection("connect")
         log.d { "connecting to unified device ws" }
         val deviceSessionId = connectedDeviceWS.connect(config.endpoint.getEndpoint(), onReady)
@@ -289,8 +290,9 @@ private fun Throwable.isExpectedSocketCloseNoise(): Boolean {
 private fun Throwable.reasonText(): String =
     "${this::class.simpleName}: ${message ?: "(no message)"}"
 
-private fun PulseConfigItem.validationError(): String? =
+private fun PulseConfig.validationError(): String? =
     endpoint.validationError()
+
 
 private fun io.github.kt.pulsebar.model.EndpointConfig.validationError(): String? =
     when {

@@ -33,7 +33,8 @@ Pulse 文档按“归属 owner”组织。每个实现域根目录只保留入�
 - [Device WebSocket 协议草案](./protocol/design/device-ws/index.md)
 - [Client WebSocket 协议设计](./protocol/design/client-ws/index.md)
 - [协议兼容策略](./protocol/specs/compatibility.md)
-- [macOS App 重构 PRD](./desktop-app/design/mac-app-rebuild-prd.md)
+- [PulseBar 菜单栏与主面板交互设计](./desktop-app/design/menubar-panel-ux.md)
+- [macOS App 重构 PRD（历史草案）](./desktop-app/design/mac-app-rebuild-prd.md)
 - [Windows 双进程架构决策](./desktop-app/decisions/windows-dual-process-architecture.md)
 - [.NET ↔ Kotlin/JVM IPC Flow 语义验证结论](./dotnet-kotlin-ipc.md)
 

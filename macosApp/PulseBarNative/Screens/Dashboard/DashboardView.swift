@@ -140,13 +140,13 @@ private struct GeneralPreferencesPane: View {
     @State private var isLaunchAtLoginErrorPresented = false
 
     private var endpoint: EndpointConfig? {
-        monitor.settings?.endpoints.first
+        monitor.settings?.endpoint
     }
 
     private var connectionState: PulseBarConnectionState? {
-        guard let endpoint else { return nil }
-        return monitor.connectionStatesByEndpointID[endpoint.id]
+        monitor.connectionState
     }
+
 
     private var connectionColor: Color {
         if endpoint?.enabled == false { return .gray }
@@ -325,19 +325,17 @@ private struct GeneralPreferencesPane: View {
     }
 
     private func saveConnectionDraft() {
-        guard let endpoint else { return }
         monitor.updateEndpoint(
             EndpointConfig(
-                id: endpoint.id,
-                name: endpoint.name,
-                enabled: endpoint.enabled,
                 url: connectionDraft.url,
                 deviceId: connectionDraft.deviceId,
-                apiKey: connectionDraft.apiKey
+                apiKey: connectionDraft.apiKey,
+                enabled: endpoint?.enabled ?? true
             )
         )
         isEditingConnection = false
     }
+
 
     private func submitLaunchAtLogin(_ enabled: Bool) {
         guard !isLaunchAtLoginUpdating else { return }

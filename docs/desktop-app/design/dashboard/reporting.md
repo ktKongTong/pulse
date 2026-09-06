@@ -61,30 +61,23 @@
 
 左侧 list 的职责只是按 app 定位，并快速判断这个 app 当前是否作为独立 reporting 对象处理。
 
-## 5. 状态语义
+## 5. 状态语义（默认白名单模式）
 
-`Enabled`
+PulseBar 采用**默认白名单（Default Whitelist）**机制保护用户隐私：
 
-- 该 app 作为独立 app 进入 Pulse 上报链路
+`Enabled`（加入白名单）
 
-`Disabled`
+- 该 app 明确加入白名单，作为独立 app 进入 Pulse 上报链路与时长统计。
 
-- 该 app 不作为独立 app 处理
-- 归并到 `other`
-- 事件仍然上报
+`Disabled`（未在白名单）
 
-因此，`Disabled` 不是“不上报”，而是“不作为独立 app reporting 对象存在”。
+- 该 app 不在白名单中。
+- **完全不上报、不记录**（True Ignore）。
+- 用户在前台操作该 app 时，Pulse 保持静默，不收集也不上报前台切换事件。
 
 ## 6. Other
 
-`other` 是系统保留桶。
-
-约束如下：
-
-- 不可删除
-- 不可禁用
-
-所有未作为独立 reporting app 处理的事件，最终都应落到 `other`。
+系统不再强制保留全量兜底桶将未授权应用隐蔽上报。对于无法获取 BundleID 或系统桌面原生切换空闲态，可作为 `idle / none` 标记，严禁将用户未授权的第三方私密应用打包进 `other` 上报。
 
 ## 7. Detail Header
 

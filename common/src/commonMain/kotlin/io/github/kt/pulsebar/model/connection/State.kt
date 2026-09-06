@@ -4,7 +4,6 @@ import io.github.kt.pulsebar.model.EndpointConfig
 import io.github.kt.pulsebar.ws.connection.DeviceWsState
 
 data class ConnectionState(
-    val endpointId: String,
     val endpointConfig: EndpointConfig,
-    val connection: DeviceWsState
+    val connection: DeviceWsState,
 )

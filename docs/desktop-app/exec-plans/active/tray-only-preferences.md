@@ -18,11 +18,21 @@ The window is a compact settings popup, not a dashboard-sized canvas.
 ## Product Behavior
 
 - Launch shows a menu bar icon and no Dock/app switcher icon.
-- Left click on the menu bar icon opens the existing compact status/media panel.
+- Menu bar icon dynamically reflects runtime state:
+  - Default/online: standard waveform icon
+  - Offline/error: dimmed / error dot indicator
+  - Streaming active: highlighted / active waveform animation
+- Left click on the menu bar icon opens the compact status/media panel (`MenuBarContentView`).
+  - Panel header includes:
+    - **Connection status icon**: icon-sized indicator colored by state (green = connected, yellow = connecting/reconnecting, red = error, gray = disabled). Hover shows detailed error reason and a **Retry** action button.
+    - **Audio stream kill switch**: icon button showing streaming state; clicking it immediately stops/disallows audio streaming without digging into Settings.
+  - **Media section**: pure display card without playback seek control. The progress bar (`MediaSeekBar`) is removed, and overall media component height is tightly controlled.
 - Right click on the menu bar icon shows only:
   - `Settings...`
   - `Quit`
-- `Settings...` opens the Preferences window.
+- `Settings...` opens the Preferences window:
+  - `通用` tab: `连接`、`启动`、`音频`
+  - `报告` tab: `Application rules` with **Default Whitelist** semantics (only explicitly enabled apps are tracked/reported; non-whitelisted apps are completely ignored).
 - `Quit` exits the app.
 - There is no right-click `Stop Listening` / `Start Listening` item.
 - Existing startup runtime behavior stays unchanged: `monitor.start()` and the
@@ -34,7 +44,15 @@ The window is a compact settings popup, not a dashboard-sized canvas.
   an AppKit-created Preferences window for the status-item menu action.
 - Replace the sidebar/dashboard shell with a dialog-style Preferences surface:
   - `通用` tab: `连接`、`启动`、`音频`
-  - `报告` tab: `Application rules`
+  - `报告` tab: `Application rules` with search filter and default whitelist logic.
+- Main panel (`MenuBarContentView`) improvements:
+  - Add connection status indicator icon button with state colors, hover tooltip showing error details, and an inline retry button.
+  - Add audio stream kill switch icon button in the panel header to immediately stop streaming.
+  - Remove `MediaSeekBar` from `MenuBarContentView` and downsize the media component to a compact, display-only card.
+- Dynamic menu bar status item:
+  - Update `StatusItemController` to observe connection and streaming states and switch icon/tint accordingly.
+- Reporting default whitelist:
+  - Only report apps explicitly checked in the whitelist. Non-whitelisted apps do not produce events or usage rows.
 - Keep Preferences sizing and spacing close to macOS System Settings density:
   - default window around `560 x 480`
   - minimum content around `520 x 420`
@@ -84,8 +102,6 @@ The window is a compact settings popup, not a dashboard-sized canvas.
 - No protocol or wire-shape changes.
 - No KMP config owner changes.
 - No connection-state semantic changes.
-- No redesign of the compact menu bar status/media panel beyond removing the
-  dashboard jump button.
 - No change to startup monitoring or startup permission request timing.
 
 ## Verification
