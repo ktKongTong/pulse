@@ -23,7 +23,7 @@
     "@cloudflare/workers-types": "catalog:worker",
     "@types/node": "catalog:",
     "typescript": "catalog:",
-    "vitest": "^4.1.6",
+    "vitest": "^5.0.0",
     "wrangler": "catalog:worker"
   }
 }
