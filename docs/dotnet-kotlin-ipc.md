@@ -3,7 +3,7 @@
 归属：desktop-app（技术验证总结，供独立验证 repo / 远程 thread 复用）
 代码范围：`flowIpcDemo/`
 状态：active
-验证：`./gradlew :flowIpcDemo:test`（macOS，真实 loopback socket）；Windows 实机 daemon + .NET 8 客户端实测通过（2026-09）
+验证：`./gradlew :flowIpcDemo:test`；Windows ARM64 本地盘上的真实 daemon + WinUI ARM64 build 已通过（2026-09-07）；行为消融记录见 [`plans/active/windows-kotlin-ipc-ablation.md`](./plans/active/windows-kotlin-ipc-ablation.md)
 
 本文是可携带的技术结论，目标是让后续验证工作不用重新推导。决策背景和路线取舍见 [Windows 双进程架构 ADR](./desktop-app/decisions/windows-dual-process-architecture.md)。
 
@@ -31,7 +31,7 @@
 
 - Kotlin 侧：Kotlin 2.4.0、coroutines 1.11.0、grpc-java 1.84.0（netty-shaded）、grpc-kotlin 1.5.0、protobuf 4.36.1、protobuf-gradle-plugin 0.10.0、JDK 17+ bytecode
 - .NET 侧：net8.0、Grpc.Net.Client 2.71.0、Google.Protobuf 3.30.2、Grpc.Tools 2.72.0
-- 传输：loopback TCP + h2c（`GrpcChannel.ForAddress("http://127.0.0.1:...")` 在 .NET 8 直接可用）。**grpc-java 不支持 Windows named pipe**，两端交集就是 loopback；真实实现用端口 0 + 启动握手交换端口和 auth token。
+- 传输：loopback TCP + h2c（`GrpcChannel.ForAddress("http://127.0.0.1:...")` 在 .NET 8 直接可用）。**grpc-java 不支持 Windows named pipe**，两端交集就是 loopback；真实实现用端口 0 + 启动握手交换端口、auth token 和 protocol version。
 - 契约：单一 `.proto` 文件，Gradle protobuf 插件和 Grpc.Tools 各自生成，不存在手写平行类型。
 
 ## 4. 两端代码形态（从 spike 摘录）
@@ -84,9 +84,19 @@ var summary = await publish;
 - **镜像仓库缺 plugin marker**：`com.google.protobuf` 插件需要在 `settings.gradle.kts` 用 `pluginManagement.resolutionStrategy.eachPlugin` 映射到直接坐标 `com.google.protobuf:protobuf-gradle-plugin:<ver>`。
 - **JVM TLS 信任库**：开发机如果有 MITM 代理（Reqable 等）或 JDK cacerts 不全，Gradle 拉新依赖会 PKIX 失败；macOS 上给 `org.gradle.jvmargs` 加 `-Djavax.net.ssl.trustStoreType=KeychainStore -Djavax.net.ssl.trustStore=NONE` 改用系统钥匙串。
 
-## 7. 下一批待验证（迁入独立 repo 后）
+## 7. 当前实现状态与下一批待验证
+
+当前已落地：
+
+1. Kotlin daemon 持有真实 `PulseBarBridge`，并暴露 runtime/config/connection 三条 snapshot stream。
+2. `DesktopIpcTransport` 负责一次 session 的 port 0、token、protocol version handshake、daemon spawn、gRPC stream lifecycle 和 auth 注入；它不认识 PulseBar command 语义。
+3. `RuntimeConnection` 负责连接状态、session 重启和基础指数退避；`RuntimeAdapter` 只负责 PulseBar domain snapshot/command/event 映射。WinUI 已有 config 表单、connect/disconnect 命令和 frontmost event 演示。
+4. `DemoRuntime` 与真实 bridge edge 的消融均通过；详见 [`windows-kotlin-ipc-ablation.md`](./plans/active/windows-kotlin-ipc-ablation.md)。
+
+下一批待验证：
 
 1. WinUI3 tray（H.NotifyIcon 或 Win32 interop）——tray 形态 app 的核心路径。
-2. daemon 生命周期：UI 进程 spawn/看护/重启，冷启动时间。
-3. jlink 裁剪后的分发体积与常驻内存实测。
-4. 端口 0 + token 握手，以及断线重订阅 adapter。
+2. daemon 崩溃/重启后的正式 `RuntimeConnection`、指数 backoff、ownership 和快照恢复。
+3. jlink 裁剪后的分发体积、常驻内存和冷启动时间。
+4. 真实 Windows 前台应用、网络、GSMTC/media 与权限事件。
+5. API key 的 PasswordBox 之外的安全存储、日志脱敏和发布配置。

@@ -1,0 +1,19 @@
+<UserControl
+    x:Class="PulseBar.Windows.Runtime.TrayHostView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:runtime="using:PulseBar.Windows.Runtime"
+    xmlns:tb="using:H.NotifyIcon">
+    <tb:TaskbarIcon
+        x:Name="TrayIcon"
+        x:FieldModifier="public"
+        IconSource="\Assets\PulseBar.ico"
+        NoLeftClickDelay="True"
+        PopupActivation="LeftClick"
+        PopupPlacement="Bottom"
+        ToolTipText="PulseBar">
+        <tb:TaskbarIcon.TrayPopup>
+            <runtime:StatusPopover />
+        </tb:TaskbarIcon.TrayPopup>
+    </tb:TaskbarIcon>
+</UserControl>

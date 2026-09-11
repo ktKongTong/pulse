@@ -5,19 +5,29 @@ import java.io.File
 import kotlin.jvm.functions.Function0
 
 internal actual fun pulseBarRoomDatabaseBuilder(): RoomDatabase.Builder<PulseBarRoomDatabase> {
-    val dbPath = File(System.getProperty("java.io.tmpdir"), "pulsebar-jvm.room.db").absolutePath
-    val roomClass = Class.forName("androidx.room3.Room")
-    val room = roomClass.getField("INSTANCE").get(null)
-    val databaseBuilder = roomClass.methods.first { method ->
-        method.name == "databaseBuilder" &&
-            method.parameterTypes.size == 2 &&
-            method.parameterTypes[0] == String::class.java
-    }
+    val dbPath = File(
+        System.getProperty("user.home"),
+        "AppData/Local/PulseBar/pulsebar.room.db",
+    ).apply {
+        parentFile?.mkdirs()
+    }.absolutePath
+
     val factory = object : Function0<PulseBarRoomDatabase> {
-        override fun invoke(): PulseBarRoomDatabase {
-            return PulseBarRoomDatabaseConstructor.initialize()
-        }
+        override fun invoke(): PulseBarRoomDatabase =
+            PulseBarRoomDatabaseConstructor.initialize()
+    }
+
+    // Room.databaseBuilder is an inline reified function and throws when
+    // invoked reflectively. Instantiate its non-reified internal Builder
+    // constructor instead, passing the concrete generated database KClass.
+    val builderClass = Class.forName("androidx.room3.RoomDatabase\$Builder")
+    val constructor = builderClass.declaredConstructors.first { candidate ->
+        candidate.parameterTypes.size == 3
     }
     @Suppress("UNCHECKED_CAST")
-    return databaseBuilder.invoke(room, dbPath, factory) as RoomDatabase.Builder<PulseBarRoomDatabase>
+    return constructor.newInstance(
+        PulseBarRoomDatabase::class,
+        dbPath,
+        factory,
+    ) as RoomDatabase.Builder<PulseBarRoomDatabase>
 }

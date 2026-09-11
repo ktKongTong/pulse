@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package pulsebar.desktopipc.v1;
+
+option java_multiple_files = true;
+option java_package = "io.github.kt.pulsebar.desktopipc.v1";
+option csharp_namespace = "PulseBar.DesktopIpc.V1";
+
+// First formal desktop IPC slice. This contract is deliberately small: it
+// validates the adapter boundary without exposing Kotlin object graphs.
+service DesktopRuntime {
+  // Snapshot-first: the first message is the current state, followed by
+  // conflated state changes.
+  rpc WatchRuntimeState(WatchRequest) returns (stream RuntimeStateSnapshot);
+  rpc WatchConfig(WatchRequest) returns (stream ConfigSnapshot);
+  rpc WatchConnectionState(WatchRequest) returns (stream ConnectionStateSnapshot);
+
+  // WinUI/Windows platform events enter the Kotlin runtime as a stream.
+  rpc PublishPlatformEvents(stream PlatformEvent) returns (PublishSummary);
+  rpc PublishUserCommands(stream UserCommand) returns (PublishSummary);
+}
+
+message WatchRequest {
+  string protocol_version = 1;
+  string auth_token = 2;
+}
+
+message RuntimeStateSnapshot {
+  uint64 revision = 1;
+  uint64 tick_count = 2;
+  string frontmost_app = 3;
+  uint32 platform_event_count = 4;
+}
+
+message PlatformEvent {
+  string auth_token = 1;
+
+  oneof event {
+    FrontmostAppChanged frontmost_app_changed = 2;
+  }
+}
+
+message FrontmostAppChanged {
+  string app_id = 1;
+}
+
+message ConfigSnapshot {
+  uint64 revision = 1;
+  string url = 2;
+  string device_id = 3;
+  string api_key = 4;
+  bool enabled = 5;
+  uint32 idle_threshold_seconds = 6;
+  uint32 change_stability_millis = 7;
+}
+
+message ConnectionStateSnapshot {
+  uint64 revision = 1;
+  string phase = 2;
+  string url = 3;
+  bool enabled = 4;
+  uint64 reconnect_count = 5;
+  uint32 reconnect_attempt = 6;
+  string last_error_message = 7;
+}
+
+message UserCommand {
+  string auth_token = 1;
+
+  oneof command {
+    UpdateConfig update_config = 2;
+    Connect connect = 3;
+    Disconnect disconnect = 4;
+    SetEndpointEnabled set_endpoint_enabled = 5;
+  }
+}
+
+message UpdateConfig {
+  string url = 1;
+  string device_id = 2;
+  string api_key = 3;
+  bool enabled = 4;
+  uint32 idle_threshold_seconds = 5;
+  uint32 change_stability_millis = 6;
+}
+
+message Connect {}
+message Disconnect {}
+
+message SetEndpointEnabled {
+  bool enabled = 1;
+}
+
+message PublishSummary {
+  uint32 accepted_events = 1;
+}

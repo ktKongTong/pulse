@@ -1,0 +1,51 @@
+<UserControl
+    x:Class="PulseBar.Windows.Runtime.StatusPopover"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Width="390">
+    <Border Background="#F7F8FC" CornerRadius="14" Padding="18,17,18,16">
+        <StackPanel Spacing="0">
+            <Grid Margin="2,0,2,15">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="50" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border Width="46" Height="46" Background="#1B1D24" CornerRadius="11">
+                    <TextBlock Text="Z" Foreground="White" FontSize="23" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                    <TextBlock Text="Zed" FontSize="19" FontWeight="SemiBold" Foreground="#15171C" />
+                    <TextBlock Text="Current focus" FontSize="11" Foreground="#747782" />
+                </StackPanel>
+            </Grid>
+
+            <Border Height="1" Background="#D7DAE2" Margin="0,0,0,15" />
+
+            <Grid Height="126" Margin="0,0,0,15" ColumnSpacing="14">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="112" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border Background="#252942" CornerRadius="11">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
+                        <TextBlock Text="♫" Foreground="#B8C9FF" FontSize="28" HorizontalAlignment="Center" />
+                        <TextBlock Text="NOW PLAYING" Foreground="#DDE5FF" FontSize="10" FontWeight="SemiBold" CharacterSpacing="80" />
+                    </StackPanel>
+                </Border>
+                <StackPanel Grid.Column="1" Spacing="7" VerticalAlignment="Center">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="渉り星 (feat. Sando Aoi &amp; 久凪夜)" FontSize="13" FontWeight="SemiBold" Foreground="#15171C" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="Islet" FontSize="12" Foreground="#747782" />
+                    </StackPanel>
+                    <Grid Height="27"><TextBlock Text="◀◀" FontSize="16" Foreground="#50535B" VerticalAlignment="Center" /><TextBlock Text="Ⅱ" HorizontalAlignment="Center" FontSize="22" FontWeight="Bold" Foreground="#272930" /><TextBlock Text="▶▶" HorizontalAlignment="Right" FontSize="16" Foreground="#50535B" VerticalAlignment="Center" /></Grid>
+                    <Grid Height="5"><Border Background="#E1E4EC" CornerRadius="3" /><Border Background="#0A84FF" CornerRadius="3" Width="205" HorizontalAlignment="Left" /></Grid>
+                    <Grid><TextBlock Text="4:31" FontSize="11" FontWeight="SemiBold" Foreground="#747782" /><TextBlock Text="−0:22" HorizontalAlignment="Right" FontSize="11" FontWeight="SemiBold" Foreground="#747782" /></Grid>
+                </StackPanel>
+            </Grid>
+
+            <Border Height="1" Background="#D7DAE2" Margin="0,0,0,13" />
+
+            <StackPanel Spacing="13">
+                <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="32" Height="32" Background="#E7EEF1" CornerRadius="9"><TextBlock Text="L" FontWeight="SemiBold" Foreground="#7C8D9A" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><StackPanel Grid.Column="1" Spacing="5"><Grid><TextBlock Text="loginwindow" FontSize="14" FontWeight="SemiBold" Foreground="#15171C" /><TextBlock Text="9h 15m" HorizontalAlignment="Right" FontSize="13" Foreground="#747782" /></Grid><Grid Height="5"><Border Background="#E1E4EC" CornerRadius="3" /><Border Background="#0A84FF" CornerRadius="3" Width="195" HorizontalAlignment="Left" /></Grid><TextBlock Text="74%" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#747782" Margin="0,-2,0,0" /></StackPanel></Grid>
+                <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="32" Height="32" Background="#FFFFFF" CornerRadius="9"><TextBlock Text="C" FontWeight="SemiBold" Foreground="#4285F4" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><StackPanel Grid.Column="1" Spacing="5"><Grid><TextBlock Text="Google Chrome" FontSize="14" FontWeight="SemiBold" Foreground="#15171C" /><TextBlock Text="1h 52m" HorizontalAlignment="Right" FontSize="13" Foreground="#747782" /></Grid><Grid Height="5"><Border Background="#E1E4EC" CornerRadius="3" /><Border Background="#0A84FF" CornerRadius="3" Width="39" HorizontalAlignment="Left" /></Grid><TextBlock Text="15%" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#747782" Margin="0,-2,0,0" /></StackPanel></Grid>
+                <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="32" Height="32" Background="#102031" CornerRadius="9"><TextBlock Text="WS" FontSize="10" FontWeight="SemiBold" Foreground="#55B6FF" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><StackPanel Grid.Column="1" Spacing="5"><Grid><TextBlock Text="WebStorm" FontSize="14" FontWeight="SemiBold" Foreground="#15171C" /><TextBlock Text="24m" HorizontalAlignment="Right" FontSize="13" Foreground="#747782" /></Grid><Grid Height="5"><Border Background="#E1E4EC" CornerRadius="3" /><Border Background="#0A84FF" CornerRadius="3" Width="10" HorizontalAlignment="Left" /></Grid><TextBlock Text="3%" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#747782" Margin="0,-2,0,0" /></StackPanel></Grid>
+                <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="32" Height="32" Background="#FFFFFF" CornerRadius="9"><TextBlock Text="AI" FontSize="10" FontWeight="SemiBold" Foreground="#535963" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><StackPanel Grid.Column="1" Spacing="5"><Grid><TextBlock Text="ChatGPT" FontSize="14" FontWeight="SemiBold" Foreground="#15171C" /><TextBlock Text="23m" HorizontalAlignment="Right" FontSize="13" Foreground="#747782" /></Grid><Grid Height="5"><Border Background="#E1E4EC" CornerRadius="3" /><Border Background="#0A84FF" CornerRadius="3" Width="10" HorizontalAlignment="Left" /></Grid><TextBlock Text="3%" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#747782" Margin="0,-2,0,0" /></StackPanel></Grid>
+                <Grid ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="32" Height="32" Background="#1B1D24" CornerRadius="9"><TextBlock Text="Z" FontWeight="SemiBold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><StackPanel Grid.Column="1" Spacing="5"><Grid><TextBlock Text="Zed" FontSize="14" FontWeight="SemiBold" Foreground="#15171C" /><TextBlock Text="11m" HorizontalAlignment="Right" FontSize="13" Foreground="#747782" /></Grid><Grid Height="5"><Border Background="#E1E4EC" CornerRadius="3" /><Border Background="#0A84FF" CornerRadius="3" Width="7" HorizontalAlignment="Left" /></Grid><TextBlock Text="2%" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#747782" Margin="0,-2,0,0" /></StackPanel></Grid>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</UserControl>

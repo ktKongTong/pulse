@@ -62,6 +62,12 @@ kotlin {
             }
         }
 
+        val jvmMain by getting {
+            dependencies {
+                implementation(libs.ktor.client.cio)
+            }
+        }
+
         val jvmTest by getting {
             dependencies {
                 implementation(kotlin("test-junit"))

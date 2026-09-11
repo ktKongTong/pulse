@@ -1,33 +1,27 @@
 package io.github.kt.pulsebar.flowipc
 
+import io.github.kt.pulsebar.desktopipc.RealDesktopRuntimeService
+import io.github.kt.pulsebar.export.PulseBarBridge
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import java.net.InetSocketAddress
+import java.util.UUID
 
-/**
- * Loopback-only and unauthenticated on a fixed port: acceptable for a spike,
- * not for the real daemon. The real one should bind port 0 and hand the port
- * plus an auth token to the UI process during startup handshake.
- */
-const val DEMO_DAEMON_PORT = 56180
+const val DESKTOP_IPC_PROTOCOL = "desktop-ipc-v1"
 
 fun main() {
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val runtime = DemoRuntime(scope)
+    val bridge = PulseBarBridge(initialMedia = null)
+    val authToken = UUID.randomUUID().toString()
     val server = NettyServerBuilder
-        .forAddress(InetSocketAddress("127.0.0.1", DEMO_DAEMON_PORT))
-        .addService(FlowBridgeDemoService(runtime))
+        .forAddress(InetSocketAddress("127.0.0.1", 0))
+        .addService(RealDesktopRuntimeService(bridge, authToken))
         .build()
         .start()
 
-    println("[daemon] FlowBridgeDemo listening on 127.0.0.1:$DEMO_DAEMON_PORT (Ctrl+C to stop)")
+    println("[daemon] PulseBarBridge + DesktopRuntime listening on 127.0.0.1:${server.port}")
+    println("PULSEBAR_DAEMON_READY port=${server.port} token=$authToken protocol=$DESKTOP_IPC_PROTOCOL")
     Runtime.getRuntime().addShutdownHook(
         Thread {
             server.shutdownNow()
-            scope.cancel()
         },
     )
     server.awaitTermination()

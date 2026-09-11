@@ -3,7 +3,7 @@
 归属：desktop-app
 代码范围：`flowIpcDemo`（IPC 验证 spike）、`windowsApp`/`MyWinUIApp`（WinUI3 spike）、未来的 Windows 客户端
 状态：active
-验证：`./gradlew :flowIpcDemo:test`；Windows 实机双进程实测（2026-09，见 §4）
+验证：`./gradlew :flowIpcDemo:test`；Windows ARM64 本地盘上的 daemon/WinUI 构建与 real-runtime IPC slice 已验证（2026-09，见 §4）；消融记录见 [`docs/plans/active/windows-kotlin-ipc-ablation.md`](../../plans/active/windows-kotlin-ipc-ablation.md)
 
 ## 1. 背景与问题
 
@@ -35,7 +35,9 @@ Pulse 需要 Windows 客户端。目标是复用 `common` 里的 Kotlin shared r
 
 ## 4. 已验证结论（flowIpcDemo，2026-09）
 
-Spike 位于 `flowIpcDemo/`，自动化测试在真实 loopback socket 上运行；Windows 实机用 `runDaemon` + .NET 8 控制台客户端复测通过。验证的四条 Flow 语义：
+实现位于 `flowIpcDemo/` 和 `windowsApp/`：自动化测试在真实 loopback socket 上运行，Windows ARM64 build 已通过；daemon 入口现在持有真实 `PulseBarBridge`，WinUI 通过 `RuntimeAdapter` 自动 spawn、读取 port 0/token handshake，并订阅 runtime/config/connection streams。`DemoRuntime` 仍保留为 transport regression fixture。
+
+验证的四条 Flow 语义：
 
 1. **快照优先**：新订阅者第一条消息就是当前状态（StateFlow replay 语义的契约化替代，实现上直接 return StateFlow 即可获得）。
 2. **上行事件流**：.NET client-streaming 在 Kotlin 侧以原生 `Flow<PlatformEvent>` 到达，无手写泵循环。
@@ -46,15 +48,15 @@ Spike 位于 `flowIpcDemo/`，自动化测试在真实 loopback socket 上运行
 
 关键版本：Kotlin 2.4.0 / coroutines 1.11.0；grpc-java 1.84.0、grpc-kotlin 1.5.0、protobuf 4.36.1、protobuf-gradle-plugin 0.10.0；.NET 侧 Grpc.Net.Client 2.71.0、Google.Protobuf 3.30.2、Grpc.Tools 2.72.0。
 
-## 5. 真实实现的约束（从 spike 得出，尚未实现）
+## 5. 真实实现的约束与当前状态
 
-- **契约形状**：现有 `export/Bridge.kt` 的 `connectionStates: Flow<Map<String, Flow<ConnectionState>>>` 这类嵌套 Flow 无法跨 IPC，必须拍平成键控事件流或单流入口；这个清理对 Swift Export 也有益，建议先做。
-- **握手**：真实 daemon 应 bind 端口 0，启动时把端口 + auth token 交给 UI 进程（demo 用固定端口 56180 无认证，仅限验证）。传输只能用 loopback TCP：grpc-java 不支持 Windows named pipe。
-- **重连语义**：进程内 Flow 永不断线，IPC 流会断。UI 侧需要一个统一的自动重订阅 store adapter（对应 macOS 的 `MonitorStore` 角色，多一个断线重连职责）；快照优先契约保证重订阅后状态自愈。
-- **进程生命周期**：UI 进程作为 owner spawn daemon 子进程并看护重启；daemon 用 jlink 裁剪 JDK 随 app 分发。冷启动时间和崩溃恢复需要单独 spike。
-- **常驻内存**：JVM daemon 空载 RSS 预计 100MB+ 量级，jlink + `-Xmx` 可压缩；如未来不可接受，GraalVM native-image 是备选出口（业务代码不重写）。
+- **契约形状**：现有 `export/Bridge.kt` 的 `connectionStates: Flow<Map<String, Flow<ConnectionState>>>` 这类嵌套 Flow 无法跨 IPC，必须拍平成键控事件流或单流入口；当前首版只暴露已物化的 runtime/config/connection snapshots。
+- **握手**：真实 daemon 已 bind 端口 0，并通过 `PULSEBAR_DAEMON_READY` 将端口、auth token 和 protocol version 交给 UI。传输只能用 loopback TCP：grpc-java 不支持 Windows named pipe。
+- **重连语义**：`DesktopIpcTransport` 现在承接单次 IPC session，`RuntimeConnection` 承接连接状态、session 重启和基础指数 backoff；`RuntimeAdapter` 只保留 PulseBar domain 映射。daemon 崩溃恢复、外部 daemon ownership 的完整产品策略和实机验证仍未完成。
+- **进程生命周期**：当前 UI 进程作为 owner spawn daemon，并在关闭时终止其进程；明确的 bridge close API、jlink 分发、冷启动和崩溃恢复仍需单独验证。
+- **常驻内存**：JVM daemon 空载 RSS、jlink 裁剪和发布体积尚未实测；如未来不可接受，GraalVM native-image 是备选出口。
 - **Tray**：WinUI3 没有一等 tray 支持，需要 H.NotifyIcon 或 Win32 interop；对 menubar/tray 形态的 app 这是核心路径，应尽早验证。
-- **JVM 版本**：daemon 路线下 `common` 的 `jvmTarget 1.8`（IKVM 遗留）应解除，改用现代 JDK。
+- **JVM 版本**：daemon 路线下 `common` 的 jvm target 现代化仍是独立收尾项。
 
 ## 6. 已知工程坑
 
@@ -64,6 +66,7 @@ Spike 位于 `flowIpcDemo/`，自动化测试在真实 loopback socket 上运行
 
 ## 7. 后续
 
-- 技术验证迁移到独立 repo 继续（Windows 本地盘 checkout + 远程 thread）；本仓库的 `flowIpcDemo/` 作为已验证基线保留。
-- 下一批验证目标：tray（H.NotifyIcon）、daemon 生命周期管理（spawn/看护/冷启动）、jlink 打包体积与内存实测、端口 0 + token 握手。
+- 本仓库的 `flowIpcDemo/` 保留为 transport regression baseline；正式 Windows 入口仍在逐步产品化。
+- 下一批验证目标：tray（H.NotifyIcon）、正式 daemon 生命周期管理（spawn/看护/冷启动）、jlink 打包体积与内存、崩溃恢复和真实 Windows platform events。
+- 消融实验记录见 [`docs/plans/active/windows-kotlin-ipc-ablation.md`](../../plans/active/windows-kotlin-ipc-ablation.md)。
 - 正式 IPC 契约设计稿落地时放 `docs/desktop-app/design/`，并同步更新 `architecture.md` 的系统分层。
