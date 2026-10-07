@@ -17,8 +17,8 @@ catalogs:
       version: 4.4.3
   hono:
     hono:
-      specifier: ^4.12.15
-      version: 4.12.22
+      specifier: ^4.13.7
+      version: 4.13.13
   react:
     '@types/react':
       specifier: ^19
@@ -89,10 +89,10 @@ importers:
         version: 2.1.1
       hono:
         specifier: catalog:hono
-        version: 4.12.22
+        version: 4.13.13
       isbot:
         specifier: latest
-        version: 5.1.40
+        version: 5.2.2
       lucide-react:
         specifier: ^1.8.0
         version: 1.16.0(react@19.2.4)
@@ -165,7 +165,7 @@ importers:
         version: link:../../packages/v2/realtime-protocol
       hono:
         specifier: catalog:hono
-        version: 4.12.22
+        version: 4.13.13
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -1725,12 +1725,12 @@ packages:
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
-  hono@4.12.22:
-    resolution: {integrity: sha512-7fvVPbB92zNRsQke+uiRGwtTuef0tB2Dg4hWxYfFNvkQhIltWoyi0ONReM5LWA+jJWS3nfT5lTq+qbsIpX0IQw==}
+  hono@4.13.13:
+    resolution: {integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==}
     engines: {node: '>=16.9.0'}
 
-  isbot@5.1.40:
-    resolution: {integrity: sha512-yNeeynhhtIVRBk12tBV4eHNxwB42HzR4Q3Ea7vCOiJhImGaAIdIMrbJtacQlBizGLjUPw+akkFI5Dn9T70XoVQ==}
+  isbot@5.2.2:
+    resolution: {integrity: sha512-iQcBXcd+Rv/pkubRyGh2utW2j1oPG5hZY6TUhVPpqK4G+o3IbxpJNx04hgksjc/N7GK5pEorUxDeg31cFgEk/w==}
     engines: {node: '>=18'}
 
   jiti@2.7.0:
@@ -2931,7 +2931,7 @@ snapshots:
       dedent: 1.7.2
       es-module-lexer: 1.7.0
       exit-hook: 2.2.1
-      isbot: 5.1.40
+      isbot: 5.2.2
       jsesc: 3.0.2
       lodash: 4.18.1
       p-map: 7.0.4
@@ -3464,9 +3464,9 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  hono@4.12.22: {}
+  hono@4.13.13: {}
 
-  isbot@5.1.40: {}
+  isbot@5.2.2: {}
 
   jiti@2.7.0: {}
 

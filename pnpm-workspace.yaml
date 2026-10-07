@@ -30,7 +30,7 @@ catalogs:
     "@react-router/node": "^7.14.2"
     "@react-router/dev": "^7.14.2"
   hono:
-    hono: ^4.12.15
+    hono: ^4.13.7
   tailwindcss:
     "@tailwindcss/vite": "^4.2.4"
     "tailwindcss": "^4.2.4"
